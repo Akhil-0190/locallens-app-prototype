@@ -47,13 +47,13 @@ To prevent key theft, quota exhaustion, and billing abuse:
 
 ## 3. Required Google Cloud Enablement Steps
 
-The Google Cloud Project administrator must enable the following APIs in the Google Cloud Console for project `neighborhoodguideapp`:
+The Google Cloud Project administrator must enable the following APIs in the Google Cloud Console for project `neighborhoodguideapp-35856`:
 
 1. **Enable Services:**
    ```bash
-   gcloud services enable places.googleapis.com --project neighborhoodguideapp
-   gcloud services enable routes.googleapis.com --project neighborhoodguideapp
-   gcloud services enable maps-android-backend.googleapis.com --project neighborhoodguideapp
+   gcloud services enable places.googleapis.com --project neighborhoodguideapp-35856
+   gcloud services enable routes.googleapis.com --project neighborhoodguideapp-35856
+   gcloud services enable maps-android-backend.googleapis.com --project neighborhoodguideapp-35856
    ```
 2. **Billing Requirement:**
    - Link an active billing account to the Google Cloud project (Google Maps Platform provides a $200 monthly free tier credit).
