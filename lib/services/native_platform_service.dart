@@ -44,37 +44,43 @@ class AICoreAvailabilityResult {
 }
 
 class DeviceAICapabilities {
-  final int apiLevel;
+  final bool hasNpu;
   final int ramAvailableMb;
+  final int aicoreVersion;
+  final List<String> supportedFeatures;
+  final int apiLevel;
   final int totalRamMb;
   final bool aicoreInstalled;
-  final List<String> supportedRuntimes;
   final bool npuDetectionSupported;
   final String? npuHardwareReported;
   final String? hardwarePlatform;
 
   const DeviceAICapabilities({
-    required this.apiLevel,
+    required this.hasNpu,
     required this.ramAvailableMb,
-    required this.totalRamMb,
-    required this.aicoreInstalled,
-    required this.supportedRuntimes,
+    required this.aicoreVersion,
+    required this.supportedFeatures,
+    this.apiLevel = 0,
+    this.totalRamMb = 0,
+    this.aicoreInstalled = false,
     this.npuDetectionSupported = false,
     this.npuHardwareReported,
     this.hardwarePlatform,
   });
 
   factory DeviceAICapabilities.fromMap(Map<dynamic, dynamic> map) {
-    final runtimes = (map['supportedRuntimes'] as List?)
+    final features = (map['supportedFeatures'] ?? map['supportedRuntimes'] as List?)
             ?.map((e) => e.toString())
             .toList() ??
         [];
     return DeviceAICapabilities(
-      apiLevel: (map['apiLevel'] as num?)?.toInt() ?? 0,
+      hasNpu: map['hasNpu'] as bool? ?? false,
       ramAvailableMb: (map['ramAvailableMb'] as num?)?.toInt() ?? 0,
+      aicoreVersion: (map['aicoreVersion'] as num?)?.toInt() ?? 0,
+      supportedFeatures: features,
+      apiLevel: (map['apiLevel'] as num?)?.toInt() ?? 0,
       totalRamMb: (map['totalRamMb'] as num?)?.toInt() ?? 0,
       aicoreInstalled: map['aicoreInstalled'] as bool? ?? false,
-      supportedRuntimes: runtimes,
       npuDetectionSupported: map['npuDetectionSupported'] as bool? ?? false,
       npuHardwareReported: map['npuHardwareReported'] as String?,
       hardwarePlatform: map['hardwarePlatform'] as String?,
@@ -173,11 +179,13 @@ class NativePlatformService {
   Future<DeviceAICapabilities> getDeviceAICapabilities() async {
     if (_isTestMode) {
       return const DeviceAICapabilities(
-        apiLevel: 34,
+        hasNpu: false,
         ramAvailableMb: 4096,
+        aicoreVersion: 0,
+        supportedFeatures: ['LLAMA_CPP_GEMMA4_GGUF'],
+        apiLevel: 34,
         totalRamMb: 8192,
         aicoreInstalled: false,
-        supportedRuntimes: ['LLAMA_CPP_GEMMA4_GGUF'],
         npuDetectionSupported: false,
       );
     }
@@ -192,11 +200,13 @@ class NativePlatformService {
     } catch (_) {}
 
     return const DeviceAICapabilities(
-      apiLevel: 0,
+      hasNpu: false,
       ramAvailableMb: 0,
+      aicoreVersion: 0,
+      supportedFeatures: [],
+      apiLevel: 0,
       totalRamMb: 0,
       aicoreInstalled: false,
-      supportedRuntimes: [],
       npuDetectionSupported: false,
     );
   }
@@ -242,6 +252,7 @@ class NativePlatformService {
         'success': false,
         'code': 'MODEL_NOT_DOWNLOADED',
         'isLocalInference': false,
+        'modelUsed': 'NONE (Unassisted Fallback)',
         'summary': '',
         'keyHighlights': <String>[],
         'message':
@@ -282,6 +293,7 @@ class NativePlatformService {
         'success': false,
         'code': 'MODEL_NOT_DOWNLOADED',
         'isLocalInference': false,
+        'modelUsed': 'NONE (Unassisted Fallback)',
         'keywords': <String>[],
         'message':
             'On-device keyword extraction model binary pending from Developer B. Running in unassisted mode.',

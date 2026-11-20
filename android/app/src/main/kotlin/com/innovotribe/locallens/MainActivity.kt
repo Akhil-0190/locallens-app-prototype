@@ -96,31 +96,37 @@ class MainActivity : FlutterActivity() {
                     val apiLevel = Build.VERSION.SDK_INT
 
                     var aicoreInstalled = false
+                    var aicoreVersion = 0
                     try {
-                        context.packageManager.getPackageInfo("com.google.android.aicore", 0)
+                        val pInfo = context.packageManager.getPackageInfo("com.google.android.aicore", 0)
                         aicoreInstalled = true
+                        aicoreVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            pInfo.longVersionCode.toInt()
+                        } else {
+                            @Suppress("DEPRECATION")
+                            pInfo.versionCode
+                        }
                     } catch (_: Exception) {}
 
                     // Frozen architectures supported in spec
-                    val supportedRuntimes = mutableListOf<String>()
+                    val supportedFeatures = mutableListOf<String>()
                     if (apiLevel >= 34 && aicoreInstalled) {
-                        supportedRuntimes.add("AICORE_GEMINI_NANO")
+                        supportedFeatures.add("AICORE_GEMINI_NANO")
                     }
                     if (totalRamMb >= 3000) {
                         // llama.cpp Unsloth GGUF edge execution boundary
-                        supportedRuntimes.add("LLAMA_CPP_GEMMA4_GGUF")
+                        supportedFeatures.add("LLAMA_CPP_GEMMA4_GGUF")
                     }
 
+                    // Restored originally agreed B6 schema with honest unavailable/unknown handling
                     val response = mapOf(
-                        "apiLevel" to apiLevel,
+                        "hasNpu" to false, // Honest handling: Standard Android SDK lacks public NPU API without vendor proprietary HAL
                         "ramAvailableMb" to availRamMb,
+                        "aicoreVersion" to aicoreVersion,
+                        "supportedFeatures" to supportedFeatures,
+                        "apiLevel" to apiLevel,
                         "totalRamMb" to totalRamMb,
-                        "aicoreInstalled" to aicoreInstalled,
-                        "supportedRuntimes" to supportedRuntimes,
-                        "npuDetectionSupported" to false,
-                        "npuHardwareReported" to null,
-                        "hardwarePlatform" to Build.HARDWARE,
-                        "npuNotice" to "Standard Android SDK does not expose public NPU query API without vendor proprietary HAL drivers"
+                        "aicoreInstalled" to aicoreInstalled
                     )
                     result.success(response)
                 }
@@ -146,13 +152,14 @@ class MainActivity : FlutterActivity() {
                     val spotName = call.argument<String>("spotName") ?: ""
                     val language = call.argument<String>("language") ?: "en"
 
-                    // Contract with Developer B: Returns structured unassisted response until model binary is provided.
+                    // Contract with Developer B: Returns structured unassisted response with modelUsed
                     val response = mapOf(
-                        "success" to false,
-                        "code" to "MODEL_NOT_DOWNLOADED",
-                        "isLocalInference" to false,
                         "summary" to "",
                         "keyHighlights" to emptyList<String>(),
+                        "isLocalInference" to false,
+                        "modelUsed" to "NONE (Unassisted Fallback)",
+                        "success" to false,
+                        "code" to "MODEL_NOT_DOWNLOADED",
                         "message" to "On-device model for note summarization pending from Developer B (Gemma 4 GGUF/llama.cpp or AICore). Running in unassisted mode.",
                         "spotName" to spotName,
                         "language" to language,
@@ -164,12 +171,13 @@ class MainActivity : FlutterActivity() {
                 "extractOfflineKeywords" -> {
                     val text = call.argument<String>("text") ?: ""
 
-                    // Contract with Developer B: Returns structured unassisted response until model binary is provided.
+                    // Contract with Developer B: Returns structured unassisted response with modelUsed
                     val response = mapOf(
+                        "keywords" to emptyList<String>(),
+                        "isLocalInference" to false,
+                        "modelUsed" to "NONE (Unassisted Fallback)",
                         "success" to false,
                         "code" to "MODEL_NOT_DOWNLOADED",
-                        "isLocalInference" to false,
-                        "keywords" to emptyList<String>(),
                         "message" to "On-device keyword extraction model binary pending from Developer B. Running in unassisted mode.",
                         "inputLength" to text.length
                     )

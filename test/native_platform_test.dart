@@ -13,8 +13,11 @@ void main() {
       expect(netStatus, DeviceNetworkStatus.wifi);
 
       final aiCaps = await service.getDeviceAICapabilities();
+      expect(aiCaps.hasNpu, isFalse); // Restored original field: honest unavailable handling
+      expect(aiCaps.ramAvailableMb, greaterThan(0)); // Restored original field
+      expect(aiCaps.aicoreVersion, 0); // Restored original field: 0 when uninstalled
+      expect(aiCaps.supportedFeatures, contains('LLAMA_CPP_GEMMA4_GGUF')); // Restored original field
       expect(aiCaps.apiLevel, 34);
-      expect(aiCaps.supportedRuntimes, contains('LLAMA_CPP_GEMMA4_GGUF'));
       expect(aiCaps.npuDetectionSupported, isFalse); // No fabricated NPU detection
 
       final aicoreResult = await service.checkAICoreAvailability();
@@ -36,6 +39,7 @@ void main() {
       expect(summaryRes['success'], isFalse);
       expect(summaryRes['code'], 'MODEL_NOT_DOWNLOADED');
       expect(summaryRes['isLocalInference'], isFalse);
+      expect(summaryRes['modelUsed'], 'NONE (Unassisted Fallback)'); // Restored original field
       expect(summaryRes['spotName'], 'CTR Shri Sagar');
 
       final keywordsRes = await service.extractOfflineKeywords(
@@ -44,6 +48,7 @@ void main() {
       expect(keywordsRes['success'], isFalse);
       expect(keywordsRes['code'], 'MODEL_NOT_DOWNLOADED');
       expect(keywordsRes['isLocalInference'], isFalse);
+      expect(keywordsRes['modelUsed'], 'NONE (Unassisted Fallback)'); // Restored original field
     });
 
     test('executeOfflineInference strictly refuses to fabricate inference when model is uninstalled', () async {

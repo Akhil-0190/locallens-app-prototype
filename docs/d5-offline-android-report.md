@@ -53,7 +53,9 @@ All 7 mandatory review corrections and architectural guidelines have been strict
     - `getNetworkStatus`: Uses Android `ConnectivityManager` (`WIFI`, `CELLULAR`, `OFFLINE`).
   - `com.innovotribe.locallens/native_ai`:
     - `checkAICoreAvailability`: Inspects `Build.VERSION.SDK_INT >= 34` and `PackageManager` for `com.google.android.aicore`.
-    - `getDeviceAICapabilities`: Returns RAM info, API level, and supported runtimes (`AICORE_GEMINI_NANO`, `LLAMA_CPP_GEMMA4_GGUF`).
+    - `getDeviceAICapabilities`: Restores B's exact agreed schema: `hasNpu` (honest handling: false/unknown via standard SDK), `ramAvailableMb` (int), `aicoreVersion` (int), `supportedFeatures` (list: `AICORE_GEMINI_NANO`, `LLAMA_CPP_GEMMA4_GGUF`).
+    - `summarizeOfflineNote`: Restores exact agreed response including `modelUsed` ("NONE (Unassisted Fallback)"), `summary`, `keyHighlights`, `isLocalInference: false`, and `code: "MODEL_NOT_DOWNLOADED"`.
+    - `extractOfflineKeywords`: Restores exact agreed response including `modelUsed`, `keywords`, `isLocalInference: false`.
     - `getNativeAiStatus`: Returns discrete states (`UNSUPPORTED_DEVICE`, `AICORE_NOT_INSTALLED`, `MODEL_NOT_AVAILABLE`, `INFERENCE_ACTIVE`).
     - `executeOfflineInference`: Refuses to fabricate inference; returns structured `MODEL_NOT_DOWNLOADED` status while model binaries/execution are pending from Developer B.
 
