@@ -224,6 +224,10 @@ Extract verbatim transcription, cultural translation, and supported practical de
       throw new Error(`Failed to parse AI response as JSON: ${parseErr.message}`);
     }
 
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('AI response is not a valid JSON object');
+    }
+
     // Check if the AI marked the audio as invalid/corrupt/silent
     if (parsed.isValidSpotAudio === false) {
       return {
@@ -247,15 +251,36 @@ Extract verbatim transcription, cultural translation, and supported practical de
     }
 
     // Map and validate practical details using Developer A's canonical ExtractedPracticalDetailsSchema
-    const rawPractical = parsed.practicalDetails || {};
+    const rawPractical = (typeof parsed.practicalDetails === 'object' && parsed.practicalDetails !== null && !Array.isArray(parsed.practicalDetails))
+      ? parsed.practicalDetails
+      : {};
+
+    const rawOpeningHours = typeof rawPractical.openingHoursMentioned === 'string' && rawPractical.openingHoursMentioned.trim().length > 0
+      ? rawPractical.openingHoursMentioned.trim()
+      : undefined;
+
+    const rawPriceLevel = typeof rawPractical.priceLevelNote === 'string' && rawPractical.priceLevelNote.trim().length > 0
+      ? rawPractical.priceLevelNote.trim()
+      : undefined;
+
+    const rawDishes = Array.isArray(rawPractical.signatureDishesOrItems)
+      ? rawPractical.signatureDishesOrItems
+          .filter((item: any): item is string => typeof item === 'string' && item.trim().length > 0)
+          .map((item: string) => item.trim())
+      : [];
+
+    const rawTips = Array.isArray(rawPractical.insiderTips)
+      ? rawPractical.insiderTips
+          .filter((item: any): item is string => typeof item === 'string' && item.trim().length > 0)
+          .map((item: string) => item.trim())
+      : [];
+
     const practicalDetails: ExtractedPracticalDetails = ExtractedPracticalDetailsSchema.parse({
-      openingHoursMentioned: rawPractical.openingHoursMentioned || undefined,
-      signatureDishesOrItems: Array.isArray(rawPractical.signatureDishesOrItems)
-        ? rawPractical.signatureDishesOrItems
-        : [],
-      priceLevelNote: rawPractical.priceLevelNote || undefined,
+      openingHoursMentioned: rawOpeningHours,
+      signatureDishesOrItems: rawDishes,
+      priceLevelNote: rawPriceLevel,
       cashOnlyWarning: Boolean(rawPractical.cashOnlyWarning),
-      insiderTips: Array.isArray(rawPractical.insiderTips) ? rawPractical.insiderTips : [],
+      insiderTips: rawTips,
     });
 
     const confidenceScore = typeof parsed.confidenceScore === 'number'

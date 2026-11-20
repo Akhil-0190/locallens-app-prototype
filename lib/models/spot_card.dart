@@ -131,12 +131,16 @@ class ContributorAttribution {
   final String displayName;
   final String badgeTitle;
   final bool isVerifiedResident;
+  final String reputationTier;
+  final int approvedGemsCount;
 
   const ContributorAttribution({
     required this.userId,
     required this.displayName,
     this.badgeTitle = 'Neighborhood Insider',
     this.isVerifiedResident = true,
+    this.reputationTier = 'COMMUNITY_SCOUT',
+    this.approvedGemsCount = 0,
   });
 
   factory ContributorAttribution.fromMap(Map<String, dynamic> data) {
@@ -145,6 +149,8 @@ class ContributorAttribution {
       displayName: data['displayName'] ?? 'Local Resident',
       badgeTitle: data['badgeTitle'] ?? 'Neighborhood Insider',
       isVerifiedResident: data['isVerifiedResident'] ?? true,
+      reputationTier: data['reputationTier'] ?? 'COMMUNITY_SCOUT',
+      approvedGemsCount: (data['approvedGemsCount'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -153,5 +159,7 @@ class ContributorAttribution {
     'displayName': displayName,
     'badgeTitle': badgeTitle,
     'isVerifiedResident': isVerifiedResident,
+    'reputationTier': reputationTier,
+    'approvedGemsCount': approvedGemsCount,
   };
 }

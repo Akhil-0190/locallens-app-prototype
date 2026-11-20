@@ -458,4 +458,105 @@ class ContributionService {
       yield updatedDoc;
     }
   }
+
+  /// Lists all contributions authored by the current authenticated user.
+  /// Calls A3 Cloud Function `Contributions-listMyContributions`.
+  Future<List<ContributionDocument>> listMyContributions() async {
+    if (isTestMode) {
+      if (_recentContributions.isNotEmpty) {
+        return List.unmodifiable(_recentContributions);
+      }
+      return [
+        ContributionDocument(
+          contributionId: 'contrib_sample_1',
+          submission: const ContributorSubmissionInput(
+            mapsLink: 'https://maps.google.com/?cid=101',
+            infoParagraph: 'Historic filter coffee roaster established in 1948.',
+            contributorId: 'usr_blr_782914',
+          ),
+          status: ContributionStatus.verified,
+          groundedPlaceId: 'place_blr_coffee_101',
+          createdAt: DateTime.now().subtract(const Duration(days: 3)),
+          updatedAt: DateTime.now().subtract(const Duration(days: 2)),
+        ),
+        ContributionDocument(
+          contributionId: 'contrib_sample_2',
+          submission: const ContributorSubmissionInput(
+            mapsLink: 'https://maps.google.com/?cid=102',
+            infoParagraph: 'Authentic flower market alley near the temple.',
+            contributorId: 'usr_blr_782914',
+          ),
+          status: ContributionStatus.aiAnalyzed,
+          createdAt: DateTime.now().subtract(const Duration(days: 1)),
+          updatedAt: DateTime.now().subtract(const Duration(hours: 12)),
+        ),
+        ContributionDocument(
+          contributionId: 'contrib_sample_3',
+          submission: const ContributorSubmissionInput(
+            mapsLink: 'https://maps.google.com/?cid=103',
+            infoParagraph: 'Commercial chain store claiming heritage recipes.',
+            contributorId: 'usr_blr_782914',
+          ),
+          status: ContributionStatus.rejected,
+          rejectionReason: 'Does not meet local artisanal heritage threshold (commercial franchise).',
+          createdAt: DateTime.now().subtract(const Duration(days: 5)),
+          updatedAt: DateTime.now().subtract(const Duration(days: 4)),
+        ),
+      ];
+    }
+
+    final functions = _functions;
+    if (functions == null) {
+      throw const AuthenticationRequiredException('Firebase Functions instance not available.');
+    }
+
+    final callable = functions.httpsCallable('Contributions-listMyContributions');
+    final result = await callable.call<Map<String, dynamic>>({});
+    final responseMap = Map<String, dynamic>.from(result.data);
+    final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+    final rawContributions = dataMap['contributions'] as List? ?? [];
+
+    final List<ContributionDocument> contributions = [];
+    for (final raw in rawContributions) {
+      if (raw is Map) {
+        final cMap = Map<String, dynamic>.from(raw);
+        final id = cMap['contributionId'] as String? ?? '';
+        contributions.add(ContributionDocument.fromMap(id, cMap));
+      }
+    }
+    return contributions;
+  }
+
+  /// Fetches latest status of a specific contribution via `Contributions-getContributionStatus`.
+  Future<ContributionDocument> getContributionStatus(String contributionId) async {
+    if (isTestMode) {
+      final found = _recentContributions.where((c) => c.contributionId == contributionId);
+      if (found.isNotEmpty) return found.first;
+      return ContributionDocument(
+        contributionId: contributionId,
+        submission: const ContributorSubmissionInput(
+          mapsLink: 'https://maps.google.com/?cid=mock',
+          infoParagraph: 'Mock local spot details.',
+          contributorId: 'usr_blr_782914',
+        ),
+        status: ContributionStatus.submitted,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+    }
+
+    final functions = _functions;
+    if (functions == null) {
+      throw const AuthenticationRequiredException('Firebase Functions instance not available.');
+    }
+
+    final callable = functions.httpsCallable('Contributions-getContributionStatus');
+    final result = await callable.call<Map<String, dynamic>>({
+      'contributionId': contributionId,
+    });
+    final responseMap = Map<String, dynamic>.from(result.data);
+    final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+    final contributionMap = Map<String, dynamic>.from(dataMap['contribution'] as Map? ?? {});
+    return ContributionDocument.fromMap(contributionId, contributionMap);
+  }
 }

@@ -22,7 +22,12 @@ import { defaultPaymentAdapter } from '../adapters/sandbox-payment-adapter.js';
 import { validateSettlementEnvironment } from '../config/payment-environment.js';
 
 export function isProductionEnvironment(): boolean {
-  return process.env.NODE_ENV === 'production' || process.env.PAYMENT_ENV === 'production';
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.PAYMENT_ENV === 'production' ||
+    process.env.PAYMENT_ENV === 'LIVE' ||
+    Boolean(process.env.K_SERVICE || process.env.FUNCTION_TARGET || process.env.FIREBASE_CONFIG)
+  );
 }
 
 export interface InitiateTipInput {

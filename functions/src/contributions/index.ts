@@ -12,6 +12,8 @@ export {
   submitContribution,
   getContributionStatus,
   listMyContributions,
+  updateContribution,
+  retractContribution,
   recordAssetUpload,
   saveAiResult,
   markAssetAsFailed,
@@ -29,6 +31,8 @@ export {
   getContribution,
   listUserContributions,
   updateContributionStatus,
+  updateContributionContent,
+  retractContributionData,
 } from './services/contribution-persistence.service.js';
 
 export {

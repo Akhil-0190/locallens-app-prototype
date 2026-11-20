@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import {
   ContributorSubmissionInputSchema,
   UserRoleSchema,
+  UserRole,
   VoicePhotoAssetDocumentSchema,
   ApiSuccessResponse,
   ApiErrorResponse,
@@ -29,6 +30,8 @@ import {
   createContribution,
   getContribution,
   listUserContributions,
+  updateContributionContent,
+  retractContributionData,
 } from '../services/contribution-persistence.service.js';
 import {
   recordAssetUpload as persistAsset,
@@ -519,6 +522,93 @@ export const markAssetAsFailed = onCall(
     }
   }
 );
+
+/**
+ * Callable: updateContribution (A5-V-02)
+ * Contributor updates content of an existing submission.
+ * Enforces ownership, schema validation, audit logging, and resets verification state.
+ */
+export const updateContribution = onCall(async (request) => {
+  const startMs = Date.now();
+  const reqId = requestId();
+
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { contributionId, updates } = (request.data as Record<string, unknown>) || {};
+  if (!contributionId || typeof contributionId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid contributionId string is required.');
+  }
+  if (!updates || typeof updates !== 'object') {
+    throw new HttpsError('invalid-argument', 'Valid updates payload object is required.');
+  }
+
+  try {
+    const updated = await updateContributionContent(
+      contributionId,
+      request.auth.uid,
+      updates as { mapsLink?: string; infoParagraph?: string; photoUrls?: string[]; audioNoteUrl?: string }
+    );
+
+    await writeAuditLog(
+      'CONTRIBUTION_UPDATED',
+      request.auth.uid,
+      contributionId,
+      'contribution',
+      { updatedFields: Object.keys(updates) }
+    );
+
+    return successEnvelope(updated, startMs);
+  } catch (err: unknown) {
+    logger.error('updateContribution error', { err });
+    const { envelope, httpsCode } = mapErrorToEnvelope(err, reqId);
+    throw new HttpsError(httpsCode, envelope.error.message, envelope);
+  }
+});
+
+/**
+ * Callable: retractContribution (A5-V-02)
+ * Contributor or moderator retracts a submitted contribution.
+ */
+export const retractContribution = onCall(async (request) => {
+  const startMs = Date.now();
+  const reqId = requestId();
+
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { contributionId, reason } = (request.data as Record<string, unknown>) || {};
+  if (!contributionId || typeof contributionId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid contributionId string is required.');
+  }
+
+  const role = ((request.auth.token?.role as string) || 'TRAVELER') as UserRole;
+
+  try {
+    const retracted = await retractContributionData(
+      contributionId,
+      request.auth.uid,
+      role,
+      typeof reason === 'string' ? reason : undefined
+    );
+
+    await writeAuditLog(
+      'CONTRIBUTION_RETRACTED',
+      request.auth.uid,
+      contributionId,
+      'contribution',
+      { reason: reason || 'Retracted by contributor' }
+    );
+
+    return successEnvelope(retracted, startMs);
+  } catch (err: unknown) {
+    logger.error('retractContribution error', { err });
+    const { envelope, httpsCode } = mapErrorToEnvelope(err, reqId);
+    throw new HttpsError(httpsCode, envelope.error.message, envelope);
+  }
+});
 
 // Re-export type helper
 type VoicePhotoAssetDocumentSchema = typeof VoicePhotoAssetDocumentSchema;
