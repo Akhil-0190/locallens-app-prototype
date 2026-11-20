@@ -98,6 +98,10 @@ void main() {
       // 5. Verify Domain 07 Venue Capacity Warning & Plan-B Action
       expect(find.text('Venue Alert: High Crowd Capacity'), findsOneWidget);
       expect(find.text('Request Plan-B Reroute'), findsOneWidget);
+      expect(
+        find.text('[Sample C4: Throttled — Redirecting to Plan-B alternative]'),
+        findsOneWidget,
+      );
 
       // 6. Verify Local Audio Guidance floating bar
       expect(find.text('Local Audio Walking Guide'), findsOneWidget);
@@ -154,7 +158,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text('[Sample AI: Simulated B5 response pending live Gemini Live integration]'),
+        find.text('[Sample AI: Simulated B5 response]'),
         findsOneWidget,
       );
       expect(find.byType(TextField), findsOneWidget);
@@ -173,7 +177,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text('[Sample AI: Simulated B5 response — live multimodal vision pending]'),
+        find.text('[Sample AI: Simulated B5 response]'),
         findsOneWidget,
       );
       expect(find.text('Capture Sign'), findsOneWidget);

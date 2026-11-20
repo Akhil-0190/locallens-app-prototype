@@ -260,6 +260,7 @@ class DisruptionAlert {
   final List<AlternativeOption> alternativeOptions;
   final String activeFrom;
   final String expiresAt;
+  final String reportedAt;
 
   const DisruptionAlert({
     required this.disruptionId,
@@ -271,6 +272,7 @@ class DisruptionAlert {
     this.alternativeOptions = const [],
     required this.activeFrom,
     required this.expiresAt,
+    this.reportedAt = '',
   });
 
   factory DisruptionAlert.fromMap(Map<String, dynamic> map) {
@@ -288,6 +290,7 @@ class DisruptionAlert {
           .toList(),
       activeFrom: map['activeFrom']?.toString() ?? '',
       expiresAt: map['expiresAt']?.toString() ?? '',
+      reportedAt: map['reportedAt']?.toString() ?? '',
     );
   }
 }

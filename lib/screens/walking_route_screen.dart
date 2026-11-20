@@ -380,7 +380,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                           ),
                           subtitle: isConstrained
                               ? Text(
-                                  'C4 Status: Throttled (12/12 visitors)',
+                                  '[Sample C4: Throttled — Redirecting to Plan-B alternative]',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.red.shade700,
@@ -388,10 +388,11 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                   ),
                                 )
                               : const Text(
-                                  'C4 Status: Available (4/12 visitors)',
+                                  '[Sample C4: Spacious & authentic (4/12 visitors)]',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.green,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                           trailing: const Icon(Icons.chevron_right, size: 18),
@@ -799,7 +800,7 @@ class _StreetAssistanceSheetState
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '[Sample AI: Simulated B5 response pending live Gemini Live integration]',
+                                '[Sample AI: Simulated B5 response]',
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: Colors.blue.shade900,
@@ -875,7 +876,7 @@ class _StreetAssistanceSheetState
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '[Sample AI: Simulated B5 response — live multimodal vision pending]',
+                                '[Sample AI: Simulated B5 response]',
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: Colors.blue.shade900,
