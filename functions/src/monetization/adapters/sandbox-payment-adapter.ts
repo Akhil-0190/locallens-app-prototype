@@ -117,33 +117,11 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
    * Executes a simulated payment refund.
    * Provides durable idempotency across Cloud Functions instances and restarts
    * by persisting simulated refund records to Firestore (`_sandbox_simulated_refunds`).
+   * Fail-Closed: Never falls back to in-memory generation if persistence fails.
    */
   public async refundPayment(
     params: RefundPaymentParams
   ): Promise<PaymentRefundResult> {
-    if (params.idempotencyKey) {
-      // 1. Fast in-memory check
-      const cached = this.simulatedRefunds.get(params.idempotencyKey);
-      if (cached) {
-        return cached;
-      }
-
-      // 2. Durable Firestore check across instances and restarts
-      if (this.firestoreDb) {
-        try {
-          const docRef = this.firestoreDb.collection('_sandbox_simulated_refunds').doc(params.idempotencyKey);
-          const snap = await docRef.get();
-          if (snap.exists) {
-            const persisted = snap.data() as PaymentRefundResult;
-            this.simulatedRefunds.set(params.idempotencyKey, persisted);
-            return persisted;
-          }
-        } catch {
-          // Fall through safely if Firestore read fails
-        }
-      }
-    }
-
     if (!params.gatewayReference.startsWith('sandbox_sim_')) {
       return {
         refunded: false,
@@ -155,14 +133,33 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
       };
     }
 
-    // 3. Atomic transaction check-and-create across instances
-    if (params.idempotencyKey && this.firestoreDb) {
+    if (params.idempotencyKey) {
+      // 1. Fast in-memory check if already cached in this instance
+      const cached = this.simulatedRefunds.get(params.idempotencyKey);
+      if (cached) {
+        return cached;
+      }
+
+      // 2. Durable Firestore check & transaction
+      if (!this.firestoreDb) {
+        return {
+          refunded: false,
+          refundReference: '',
+          paymentMode: this.mode,
+          amountInr: 0,
+          failureReason: 'Durable persistence failure: Firestore instance not configured for sandbox refund idempotency.',
+          isSimulated: true,
+        };
+      }
+
       try {
         const docRef = this.firestoreDb.collection('_sandbox_simulated_refunds').doc(params.idempotencyKey);
+
+        // Transactional atomic check-and-create across instances
         const result = await this.firestoreDb.runTransaction(async (tx) => {
-          const snap = await tx.get(docRef);
-          if (snap.exists) {
-            return snap.data() as PaymentRefundResult;
+          const liveSnap = await tx.get(docRef);
+          if (liveSnap.exists) {
+            return liveSnap.data() as PaymentRefundResult;
           }
           const shortRef = randomUUID().replace(/-/g, '').slice(0, 10);
           const newResult: PaymentRefundResult = {
@@ -179,13 +176,22 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
 
         this.simulatedRefunds.set(params.idempotencyKey, result);
         return result;
-      } catch {
-        // Fall back to local simulation if Firestore transaction fails
+      } catch (err: any) {
+        // Critical: Fail-closed. Never fall back to in-memory refund generation on persistence failure.
+        return {
+          refunded: false,
+          refundReference: '',
+          paymentMode: this.mode,
+          amountInr: 0,
+          failureReason: `Durable persistence failure: ${err?.message || 'Failed to establish durable refund record in Firestore.'}`,
+          isSimulated: true,
+        };
       }
     }
 
+    // Un-keyed path (non-idempotent)
     const shortRef = randomUUID().replace(/-/g, '').slice(0, 10);
-    const result: PaymentRefundResult = {
+    return {
       refunded: true,
       refundReference: `sandbox_sim_ref_${shortRef}`,
       paymentMode: this.mode,
@@ -193,12 +199,6 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
       refundedAt: new Date().toISOString(),
       isSimulated: true,
     };
-
-    if (params.idempotencyKey) {
-      this.simulatedRefunds.set(params.idempotencyKey, result);
-    }
-
-    return result;
   }
 }
 

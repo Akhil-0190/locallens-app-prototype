@@ -889,8 +889,45 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
     });
 
+    // Shared helper for durable sandbox refund test simulation
+    const createMockRefundFirestore = (sharedStorage = new Map<string, any>()) => {
+      let queue = Promise.resolve();
+      return {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            id: docId,
+            get: async () => ({
+              exists: sharedStorage.has(`${col}/${docId}`),
+              data: () => sharedStorage.get(`${col}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          return new Promise((resolve, reject) => {
+            queue = queue.then(async () => {
+              try {
+                const tx = {
+                  get: async (docRef: any) => ({
+                    exists: sharedStorage.has(`_sandbox_simulated_refunds/${docRef.id}`),
+                    data: () => sharedStorage.get(`_sandbox_simulated_refunds/${docRef.id}`),
+                  }),
+                  set: (docRef: any, data: any) => {
+                    sharedStorage.set(`_sandbox_simulated_refunds/${docRef.id}`, data);
+                  },
+                };
+                const res = await fn(tx);
+                resolve(res);
+              } catch (err) {
+                reject(err);
+              }
+            });
+          });
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+    };
+
     test('Guidance refund idempotency: Repeated refund calls with same idempotencyKey return identical result', async () => {
-      const adapter = new SandboxPaymentAdapter();
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
       const idempotencyKey = 'ref_guidance_blr_idem_01';
 
       const firstRefund = await adapter.refundPayment({
@@ -973,34 +1010,254 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual(refund2.isSimulated, true);
     });
 
-    test('Sandbox refund persistence failure falls back safely to in-memory generation', async () => {
-      // Mock Firestore that throws error on read/transaction
+    test('1. Firestore persistence failure returns an explicit error rather than an in-memory success', async () => {
+      // Mock Firestore that fails persistence
       const failingFirestore = {
         collection: () => ({
           doc: () => ({
             get: async () => {
-              throw new Error('Firestore connection timeout');
+              throw new Error('Firestore connection unavailable (ETIMEDOUT)');
             },
           }),
         }),
         runTransaction: async () => {
-          throw new Error('Firestore transaction aborted');
+          throw new Error('Firestore transaction failed: Lock acquisition timeout');
         },
       } as unknown as FirebaseFirestore.Firestore;
 
       const adapter = new SandboxPaymentAdapter(failingFirestore);
       const refund = await adapter.refundPayment({
-        transactionId: 'guidance_blr_fallback_01',
-        gatewayReference: 'sandbox_sim_guidance_fallback_01',
+        transactionId: 'guidance_blr_failpersist_01',
+        gatewayReference: 'sandbox_sim_guidance_failpersist_01',
         amountInr: 500,
-        reason: 'Cancellation under degraded database connectivity',
-        idempotencyKey: 'ref_guidance_fallback_01',
+        reason: 'Cancellation test during database failure',
+        idempotencyKey: 'ref_guidance_failpersist_01',
       });
 
-      // Must complete safely via fallback without throwing
-      assert.strictEqual(refund.refunded, true);
-      assert.strictEqual(refund.amountInr, 500);
-      assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
+      // Must return explicit failure; never silent in-memory success
+      assert.strictEqual(refund.refunded, false, 'Refund must not report success without confirmed persistence');
+      assert.strictEqual(refund.refundReference, '', 'Refund reference must be empty on persistence failure');
+      assert.ok(
+        refund.failureReason?.includes('Durable persistence failure'),
+        `Expected failureReason to indicate persistence failure, got: ${refund.failureReason}`
+      );
+    });
+
+    test('2. Retrying the same idempotency key after Firestore recovers returns the original persisted refund', async () => {
+      const mockStorage = new Map<string, any>();
+      let isFirestoreHealthy = false;
+
+      const recoverableFirestore = {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            get: async () => {
+              if (!isFirestoreHealthy) throw new Error('Firestore cluster unavailable');
+              return {
+                exists: mockStorage.has(`${col}/${docId}`),
+                data: () => mockStorage.get(`${col}/${docId}`),
+              };
+            },
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          if (!isFirestoreHealthy) throw new Error('Firestore cluster unavailable');
+          const tx = {
+            get: async (docRef: any) => ({
+              exists: mockStorage.has(`_sandbox_simulated_refunds/ref_recover_01`),
+              data: () => mockStorage.get(`_sandbox_simulated_refunds/ref_recover_01`),
+            }),
+            set: (docRef: any, data: any) => {
+              mockStorage.set(`_sandbox_simulated_refunds/ref_recover_01`, data);
+            },
+          };
+          return fn(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const adapter = new SandboxPaymentAdapter(recoverableFirestore);
+      const idempotencyKey = 'ref_recover_01';
+
+      // Attempt 1: Database down -> Returns error
+      const failedAttempt = await adapter.refundPayment({
+        transactionId: 'guidance_blr_recover_01',
+        gatewayReference: 'sandbox_sim_guidance_recover_01',
+        amountInr: 750,
+        reason: 'Attempt during network failure',
+        idempotencyKey,
+      });
+      assert.strictEqual(failedAttempt.refunded, false);
+
+      // Database recovers!
+      isFirestoreHealthy = true;
+
+      // Attempt 2: Initial successful persistence
+      const successfulAttempt = await adapter.refundPayment({
+        transactionId: 'guidance_blr_recover_01',
+        gatewayReference: 'sandbox_sim_guidance_recover_01',
+        amountInr: 750,
+        reason: 'Retry after recovery',
+        idempotencyKey,
+      });
+      assert.strictEqual(successfulAttempt.refunded, true);
+      assert.ok(successfulAttempt.refundReference.startsWith('sandbox_sim_ref_'));
+
+      // Attempt 3: Subsequent retry retrieves identical persisted refund
+      const replayAttempt = await adapter.refundPayment({
+        transactionId: 'guidance_blr_recover_01',
+        gatewayReference: 'sandbox_sim_guidance_recover_01',
+        amountInr: 750,
+        reason: 'Duplicate retry from network layer',
+        idempotencyKey,
+      });
+      assert.strictEqual(replayAttempt.refunded, true);
+      assert.strictEqual(replayAttempt.refundReference, successfulAttempt.refundReference);
+      assert.strictEqual(replayAttempt.amountInr, successfulAttempt.amountInr);
+    });
+
+    test('3. Two adapter instances using the same Firestore records return the same refund reference', async () => {
+      const mockStorage = new Map<string, any>();
+      const sharedFirestore = {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            get: async () => ({
+              exists: mockStorage.has(`${col}/${docId}`),
+              data: () => mockStorage.get(`${col}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          const tx = {
+            get: async () => ({
+              exists: mockStorage.has('_sandbox_simulated_refunds/ref_instances_01'),
+              data: () => mockStorage.get('_sandbox_simulated_refunds/ref_instances_01'),
+            }),
+            set: (_: any, data: any) => {
+              mockStorage.set('_sandbox_simulated_refunds/ref_instances_01', data);
+            },
+          };
+          return fn(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const idempotencyKey = 'ref_instances_01';
+
+      // Instance 1 processes refund
+      const adapter1 = new SandboxPaymentAdapter(sharedFirestore);
+      const refund1 = await adapter1.refundPayment({
+        transactionId: 'guidance_blr_instances_01',
+        gatewayReference: 'sandbox_sim_guidance_instances_01',
+        amountInr: 1200,
+        reason: 'Instance 1 cancellation',
+        idempotencyKey,
+      });
+      assert.strictEqual(refund1.refunded, true);
+
+      // Instance 2 starts with zero in-memory state (new Cloud Function instance)
+      const adapter2 = new SandboxPaymentAdapter(sharedFirestore);
+      const refund2 = await adapter2.refundPayment({
+        transactionId: 'guidance_blr_instances_01',
+        gatewayReference: 'sandbox_sim_guidance_instances_01',
+        amountInr: 1200,
+        reason: 'Instance 2 cancellation retry',
+        idempotencyKey,
+      });
+
+      assert.strictEqual(refund2.refunded, true);
+      assert.strictEqual(refund2.refundReference, refund1.refundReference);
+      assert.strictEqual(refund2.amountInr, 1200);
+    });
+
+    test('4. Concurrent requests using the same key cannot create different refund records', async () => {
+      const mockStorage = new Map<string, any>();
+      const transactionalFirestore = createMockRefundFirestore(mockStorage);
+      const adapter = new SandboxPaymentAdapter(transactionalFirestore);
+      const idempotencyKey = 'ref_concurrent_01';
+
+      // Send 5 concurrent refund operations with the same idempotency key
+      const results = await Promise.all([
+        adapter.refundPayment({
+          transactionId: 'guidance_blr_conc_01',
+          gatewayReference: 'sandbox_sim_guidance_conc_01',
+          amountInr: 900,
+          reason: 'Concurrent request 1',
+          idempotencyKey,
+        }),
+        adapter.refundPayment({
+          transactionId: 'guidance_blr_conc_01',
+          gatewayReference: 'sandbox_sim_guidance_conc_01',
+          amountInr: 900,
+          reason: 'Concurrent request 2',
+          idempotencyKey,
+        }),
+        adapter.refundPayment({
+          transactionId: 'guidance_blr_conc_01',
+          gatewayReference: 'sandbox_sim_guidance_conc_01',
+          amountInr: 900,
+          reason: 'Concurrent request 3',
+          idempotencyKey,
+        }),
+      ]);
+
+      assert.strictEqual(results.length, 3);
+      for (const res of results) {
+        assert.strictEqual(res.refunded, true);
+        assert.strictEqual(res.refundReference, results[0].refundReference);
+        assert.strictEqual(res.amountInr, 900);
+      }
+    });
+
+    test('5. An interrupted operation does not result in a second simulated refund when retried', async () => {
+      const mockStorage = new Map<string, any>();
+      const existingReference = 'sandbox_sim_ref_orig_interrupted_999';
+
+      // Pre-seed storage simulating a previous adapter run that persisted the refund before caller crashed
+      mockStorage.set('_sandbox_simulated_refunds/ref_interrupted_01', {
+        refunded: true,
+        refundReference: existingReference,
+        paymentMode: 'SANDBOX',
+        amountInr: 650,
+        refundedAt: '2026-11-20T12:00:00.000Z',
+        isSimulated: true,
+      });
+
+      const sharedFirestore = {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            get: async () => ({
+              exists: mockStorage.has(`${col}/${docId}`),
+              data: () => mockStorage.get(`${col}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          const key = '_sandbox_simulated_refunds/ref_interrupted_01';
+          const tx = {
+            get: async () => ({
+              exists: mockStorage.has(key),
+              data: () => mockStorage.get(key),
+            }),
+            set: (_: any, data: any) => {
+              mockStorage.set(key, data);
+            },
+          };
+          return fn(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      // Fresh adapter with zero in-memory cache receives retry
+      const freshAdapter = new SandboxPaymentAdapter(sharedFirestore);
+      const retriedRefund = await freshAdapter.refundPayment({
+        transactionId: 'guidance_blr_interrupted_01',
+        gatewayReference: 'sandbox_sim_guidance_interrupted_01',
+        amountInr: 650,
+        reason: 'Recovery retry following client process restart',
+        idempotencyKey: 'ref_interrupted_01',
+      });
+
+      // Must return original reference; must NOT generate a new reference
+      assert.strictEqual(retriedRefund.refunded, true);
+      assert.strictEqual(retriedRefund.refundReference, existingReference);
+      assert.strictEqual(retriedRefund.amountInr, 650);
     });
 
     test('Guidance refund concurrency lock: In-flight PENDING refund blocks concurrent attempts within timeout', () => {
@@ -1085,7 +1342,7 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(booking));
 
       // Retry executes refund successfully using the deterministic key
-      const adapter = new SandboxPaymentAdapter();
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
       const recoveryRefund = await adapter.refundPayment({
         transactionId: booking.bookingId,
         gatewayReference: booking.paymentGatewayReference || '',

@@ -83,6 +83,7 @@ When a traveler initiates audio navigation (Domain 08) or downloads an offline p
 2. **Explicit Reference Naming:** Sandbox transactions carry `sandbox_sim_...` references.
 3. **Transparent Status:** Mock activation does not generate bank settlement or fake gateway claims.
 4. **Durable Sandbox Refund Idempotency:** Sandbox simulated refunds are durably persisted to `_sandbox_simulated_refunds/{idempotencyKey}` via atomic Firestore transactions, ensuring cross-instance idempotency and resilience to Cloud Functions cold-starts or restarts without double-disbursement.
+5. **Fail-Closed Persistence Invariant:** Persistence failure never falls back to in-memory refund generation. If Firestore cannot confirm durability, an explicit persistence error is returned to prevent uncommitted or non-idempotent refund issuance.
 
 ---
 
