@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Baseline security: default deny-all.
+    // Specific storage rules will be defined alongside asset upload contracts.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
