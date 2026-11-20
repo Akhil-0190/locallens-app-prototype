@@ -1,1 +1,12 @@
-{}
+{
+  "name": "neighborhoodguide-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Neighborhood Guide App - Monorepo root",
+  "scripts": {
+    "functions:build": "npm --prefix functions run build",
+    "functions:lint": "npm --prefix functions run lint",
+    "functions:test": "npm --prefix functions run test",
+    "emulators": "firebase emulators:start --only auth,firestore,functions,storage"
+  }
+}
