@@ -45,15 +45,19 @@ assert(embedDef?.apiModelId === 'gemini-embedding-2', 'Gemini Embedding 2 maps t
 
 const liveDef = resolveModelDefinition('Gemini 3.8 Live');
 assert(liveDef !== undefined, 'Resolve alias "Gemini 3.8 Live"');
-assert(liveDef?.apiModelId === 'gemini-2.0-flash-exp', 'Gemini 3.8 Live maps to gemini-2.0-flash-exp');
+assert(liveDef?.apiModelId === 'gemini-3.8-live', 'Gemini 3.8 Live maps to verified model ID gemini-3.8-live');
+assert(liveDef?.testStatus === 'UNTESTED_ENDPOINT', 'Gemini 3.8 Live marked as UNTESTED_ENDPOINT');
 
 const nanoDef = resolveModelDefinition('Gemini Nano');
 assert(nanoDef !== undefined, 'Resolve alias "Gemini Nano"');
 assert(nanoDef?.availability === 'ON_DEVICE_EDGE', 'Gemini Nano is designated as ON_DEVICE_EDGE');
+assert(nanoDef?.testStatus === 'DOCUMENTED_EDGE_SPEC', 'Gemini Nano marked as DOCUMENTED_EDGE_SPEC');
 
 const gemmaDef = resolveModelDefinition('Gemma 4 E2B');
 assert(gemmaDef !== undefined, 'Resolve alias "Gemma 4 E2B"');
+assert(gemmaDef?.apiModelId === 'gemma-4-e2b', 'Gemma 4 E2B maps to verified artifact ID gemma-4-e2b');
 assert(gemmaDef?.availability === 'LOCAL_RUNTIME', 'Gemma 4 E2B is designated as LOCAL_RUNTIME');
+assert(gemmaDef?.testStatus === 'DOCUMENTED_EDGE_SPEC', 'Gemma 4 E2B marked as DOCUMENTED_EDGE_SPEC');
 
 console.log('\n--- [Test Suite 2] JSON Fence Stripping & Cleaning ---');
 

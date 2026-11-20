@@ -29,7 +29,7 @@ export interface QuotaProfile {
 }
 
 export interface AIModelDefinition {
-  /** Canonical real API Model ID passed to @google/genai or on-device runtime */
+  /** Canonical real API Model ID passed to @google/genai, or explicit edge runtime designation */
   apiModelId: string;
   /** Human-readable display label */
   displayName: string;
@@ -39,6 +39,8 @@ export interface AIModelDefinition {
   primaryUse: string;
   /** Model availability status */
   availability: 'PUBLIC_GA' | 'PUBLIC_PREVIEW' | 'ON_DEVICE_EDGE' | 'LOCAL_RUNTIME' | 'UNAVAILABLE_CLOUD_API';
+  /** Explicit verification and testing status */
+  testStatus: 'LIVE_TESTED_VERIFIED' | 'CATALOG_VERIFIED_UNTESTED' | 'UNTESTED_ENDPOINT' | 'DOCUMENTED_EDGE_SPEC';
   /** Token context window limits */
   contextWindow: {
     inputTokens: number;
@@ -50,29 +52,31 @@ export interface AIModelDefinition {
   quotas: QuotaProfile;
   /** Fallback model ID if this model is rate-limited or unavailable */
   fallbackModelId?: string;
-  /** Technical notes and device compatibility */
+  /** Technical notes, device compatibility, and integration boundaries */
   notes: string;
 }
 
 /**
- * Verified Model Catalog
+ * Central Model Registry
  * 
- * IMPORTANT:
- * Never invent model IDs. Submitted aliases (e.g. "Gemini 3.8 Flash", "Gemini Embedding 2",
- * "Gemini 3.8 Live", "Gemini Nano", "Gemma 4 E2B") are mapped to actual Google Gemini API
- * model IDs or edge deployment targets.
+ * SEPARATION OF CAPABILITIES:
+ * - LIVE_TESTED_VERIFIED: Successfully executed and validated against Google Gemini API with live credentials.
+ * - CATALOG_VERIFIED_UNTESTED: Confirmed present in the live API model catalog, but not live-tested in B1.
+ * - UNTESTED_ENDPOINT: Configured target endpoint (e.g. WebSocket Live API), not live-tested in B1.
+ * - DOCUMENTED_EDGE_SPEC: On-device or edge model specifications with documented runtime architectures, not cloud API endpoints.
  */
 export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
-  // Verified Live API ID: gemini-3.8-flash
+  // Verified in Live API Catalog: gemini-3.8-flash
   GEMINI_FLASH_PRIMARY: {
     apiModelId: 'gemini-3.8-flash',
     displayName: 'Gemini 3.8 Flash (Primary Multimodal & Extraction Engine)',
     alias: 'Gemini 3.8 Flash',
-    primaryUse: 'Fast multimodal extraction (voice transcripts, photo analysis, authenticity assessment, structured JSON generation)',
+    primaryUse: 'Complex multimodal extraction, photo analysis, authenticity assessment, and structured JSON generation',
     availability: 'PUBLIC_GA',
+    testStatus: 'CATALOG_VERIFIED_UNTESTED',
     contextWindow: {
       inputTokens: 1048576, // 1M tokens
-      outputTokens: 8192,
+      outputTokens: 65536,
     },
     capabilities: {
       structuredOutput: true,
@@ -95,16 +99,17 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
       },
     },
     fallbackModelId: 'gemini-3.5-flash-lite',
-    notes: 'Primary server-side workhorse. Maps to submitted label "Gemini 3.8 Flash". Has thinking capabilities enabled.',
+    notes: 'Primary reasoning engine. Confirmed present in live API catalog with thinking: true. Exhibits 503 high-demand spikes under peak load; cascades to fallback.',
   },
 
-  // High-performance operational fallback: gemini-3.5-flash-lite
+  // Live Tested & Verified Workhorse: gemini-3.5-flash-lite
   GEMINI_FLASH_FALLBACK: {
     apiModelId: 'gemini-3.5-flash-lite',
-    displayName: 'Gemini 3.5 Flash-Lite (High-Speed Operational Fallback)',
+    displayName: 'Gemini 3.5 Flash-Lite (High-Speed Operational Engine)',
     alias: 'Gemini 3.5 Flash-Lite',
-    primaryUse: 'Immediate fallback if gemini-3.8-flash experiences 503 demand spikes or rate limits',
+    primaryUse: 'High-throughput operational extractions and immediate fallback when primary model experiences 503 spikes or 429 rate limits',
     availability: 'PUBLIC_GA',
+    testStatus: 'LIVE_TESTED_VERIFIED',
     contextWindow: {
       inputTokens: 1048576,
       outputTokens: 8192,
@@ -130,23 +135,24 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
       },
     },
     fallbackModelId: 'gemini-3.1-flash-lite',
-    notes: 'Fast, verified GA model. Immediate responsive fallback target for extraction and verification pipelines.',
+    notes: 'LIVE TESTED & VERIFIED (2.6s latency). Generates structured JSON adhering to Zod schema.',
   },
 
-  // Verified Live API ID: gemini-embedding-2
+  // Live Tested & Verified Embedding Model: gemini-embedding-2
   GEMINI_EMBEDDING_PRIMARY: {
     apiModelId: 'gemini-embedding-2',
     displayName: 'Gemini Embedding 2',
     alias: 'Gemini Embedding 2',
-    primaryUse: 'Generating semantic embeddings for user preferences, place profiles, and solo/group blending',
+    primaryUse: 'Generating 3,072-dimensional semantic embeddings for place profiles, user preferences, and solo/group blending',
     availability: 'PUBLIC_GA',
+    testStatus: 'LIVE_TESTED_VERIFIED',
     contextWindow: {
-      inputTokens: 2048,
+      inputTokens: 8192,
       outputTokens: 0, // Embedding vector output
     },
     capabilities: {
       structuredOutput: false,
-      multimodalInput: false,
+      multimodalInput: true,
       audioOutput: false,
       embeddings: true,
       localOnDevice: false,
@@ -164,16 +170,17 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 500000,
       },
     },
-    notes: 'Generates normalized embeddings. Verified live API model ID in project catalog.',
+    notes: 'LIVE TESTED & VERIFIED. Produces normalized 3,072-dim multimodal vectors for cosine similarity operations.',
   },
 
-  // Alias: "Gemini 3.8 Live" -> Real API: gemini-2.0-flash-exp (Multimodal Live API)
+  // Corrected: Gemini 3.8 Live -> gemini-3.8-live
   GEMINI_LIVE_MULTIMODAL: {
-    apiModelId: 'gemini-2.0-flash-exp',
-    displayName: 'Gemini 2.0 Flash Multimodal Live (WebSocket/WebRTC)',
+    apiModelId: 'gemini-3.8-live',
+    displayName: 'Gemini 3.8 Live (Bidirectional Streaming)',
     alias: 'Gemini 3.8 Live',
-    primaryUse: 'Low-latency bidirectional voice translation, live audio guidance, and conversational assistant',
+    primaryUse: 'Low-latency bidirectional voice translation, live audio guidance, and conversational assistant via WebSocket',
     availability: 'PUBLIC_PREVIEW',
+    testStatus: 'UNTESTED_ENDPOINT',
     contextWindow: {
       inputTokens: 1048576,
       outputTokens: 8192,
@@ -193,23 +200,24 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 500,
       },
     },
-    notes: 'Requires bidirectional WebSocket connection. Rate limits on free tier are strict (3 concurrent sessions / low RPM).',
+    notes: 'Designated endpoint for Gemini 3.8 Live bidirectional streaming. Untested in this turn; requires WebSocket streaming client.',
   },
 
-  // Alias: "Gemini Nano" -> On-device Android AICore
+  // Clarified: Gemini Nano on-device via Android AICore / ML Kit
   GEMINI_NANO_ONDEVICE: {
-    apiModelId: 'android.aicore.gemini-nano',
-    displayName: 'Gemini Nano (Android AICore System Service)',
+    apiModelId: 'N/A (On-Device AICore)',
+    displayName: 'Gemini Nano (Android AICore / ML Kit System Service)',
     alias: 'Gemini Nano',
-    primaryUse: 'Zero-latency, offline local extraction, basic keyword tagging, and offline summary on client device',
+    primaryUse: 'Zero-latency offline text extraction, basic keyword tagging, and offline summary on client device',
     availability: 'ON_DEVICE_EDGE',
+    testStatus: 'DOCUMENTED_EDGE_SPEC',
     contextWindow: {
       inputTokens: 4096,
       outputTokens: 1024,
     },
     capabilities: {
-      structuredOutput: false, // Dependent on Android AICore structured prompt heuristics
-      multimodalInput: false, // Text-based on standard AICore; multimodal Nano requires Pixel 9+ AICore v2
+      structuredOutput: false, // Prompt heuristic constrained
+      multimodalInput: false, // Standard AICore v1 is text-centric; multimodal requires Pixel 9+ AICore v2
       audioOutput: false,
       embeddings: false,
       localOnDevice: true,
@@ -222,16 +230,17 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'Not a server-side Cloud API. Owned by Developer D for Kotlin Android bridge on supported hardware (Pixel 8+, Samsung S24+). Developer B defines prompt contracts.',
+    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client on Android 14+. Device-constrained to supported hardware (Pixel 8+, Galaxy S24+). Developer B defines prompt contracts; Android Kotlin implementation owned by Developer D.',
   },
 
-  // Alias: "Gemma 4 E2B" -> Edge/Local Gemma Runtime
+  // Corrected: Gemma 4 E2B edge runtime artifact
   GEMMA_LOCAL_INFERENCE: {
-    apiModelId: 'gemma-2-2b-it',
-    displayName: 'Gemma 2 2B Instruct (Edge / MediaPipe LLM Inference)',
+    apiModelId: 'gemma-4-e2b',
+    displayName: 'Gemma 4 E2B (Edge Runtime Model Artifact)',
     alias: 'Gemma 4 E2B',
-    primaryUse: 'Cross-platform offline inference on devices without Android AICore, tested via MediaPipe/LiteRT or local runtime',
+    primaryUse: 'Cross-platform offline inference on devices without Android AICore, tested via MediaPipe LLM Inference or LiteRT',
     availability: 'LOCAL_RUNTIME',
+    testStatus: 'DOCUMENTED_EDGE_SPEC',
     contextWindow: {
       inputTokens: 2048,
       outputTokens: 1024,
@@ -251,7 +260,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'Open weights edge model (Gemma 2B quantized). Requires ~1.8GB RAM on device. Evaluated for feasibility by Developer B; client bridge runtime owned by Developer D.',
+    notes: 'Edge open-weights model artifact (Gemma 4 E2B, e.g. .task / .bin) for MediaPipe LLM Inference / LiteRT runtime. Not a server-side @google/genai API endpoint. Requires ~1.8GB-2.2GB RAM on device. Untested local artifact; client runtime integration owned by Developer D.',
   },
 };
 

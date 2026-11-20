@@ -37,9 +37,10 @@ async function runFoundationVerification() {
   for (const item of labelsToVerify) {
     const def = resolveModelDefinition(item.label);
     if (def) {
-      console.log(`   ✓ [${item.label}] -> API ID: "${def.apiModelId}" (${def.availability})`);
-      console.log(`     Display: ${def.displayName}`);
-      console.log(`     Primary: ${def.primaryUse}`);
+      console.log(`   ✓ [${item.label}] -> ID: "${def.apiModelId}" (${def.availability})`);
+      console.log(`     Test Status: ${def.testStatus}`);
+      console.log(`     Display:     ${def.displayName}`);
+      console.log(`     Primary:     ${def.primaryUse}`);
       if (def.quotas.freeTier) {
         console.log(`     Quotas:  ${def.quotas.freeTier.rpm} RPM | ${def.quotas.freeTier.rpd} RPD`);
       }

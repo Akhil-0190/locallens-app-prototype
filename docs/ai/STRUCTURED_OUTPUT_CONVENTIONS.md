@@ -4,6 +4,10 @@
 **Role:** Developer B (AI & Model Integration)  
 **SDK:** `@google/genai` (Official TypeScript SDK, Node.js 22+)  
 
+> [!IMPORTANT]
+> **Preliminary AI Schemas Notice:**  
+> The schemas defined in this document and in `functions/src/ai/schemas/types.ts` are **preliminary AI prompt/extraction contracts** owned by Developer B. They are **not** independently finalized replacements for Developer A's canonical Firebase/Firestore backend schemas. During Task B2, Developer B will coordinate with Developer A to reconcile and map these extraction outputs directly into Developer A's canonical contribution and place schemas (Task A2).
+
 ---
 
 ## 1. Core Principles

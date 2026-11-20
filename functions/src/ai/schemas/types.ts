@@ -1,13 +1,26 @@
 /**
- * Zod Schemas and TypeScript Types for AI Operations.
- * Enforces strict typing and structured JSON responses from Gemini.
+ * ==============================================================================
+ * PRELIMINARY AI SCHEMAS (Developer B Ownership)
+ * ==============================================================================
+ * ARCHITECTURAL CONTRACT NOTICE:
+ * These Zod schemas define preliminary AI prompt structures and structured
+ * extraction formats owned by Developer B (AI Integration).
+ * 
+ * They are NOT independently finalized replacements for Developer A's canonical
+ * backend Firestore/Firebase contracts.
+ * 
+ * During Task B2, Developer B will reconcile and map these preliminary AI output
+ * schemas directly to Developer A's canonical contribution and place schema
+ * contracts established under Task A2.
+ * ==============================================================================
  */
 
 import { z } from 'zod';
 
 /**
- * 1. Authenticity & Tourist Trap Assessment Schema
- * Used by Developer B for place authenticity scoring and evidence synthesis.
+ * 1. Preliminary Authenticity & Tourist Trap Assessment Schema
+ * Preliminary AI output schema used by Developer B for place authenticity scoring.
+ * To be aligned with Developer A's canonical Place/Review contracts in Task B2.
  */
 export const AuthenticityAssessmentSchema = z.object({
   placeName: z.string().describe('Name of the place or establishment being assessed'),
