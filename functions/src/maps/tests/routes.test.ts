@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
-import assert from 'node:assert';
-import { RoutesService } from '../services/routes.service.ts';
-import { SAMPLE_RAW_ROUTE_FIXTURE } from '../fixtures/sample-routes.fixture.ts';
+import * as assert from 'node:assert';
+import { RoutesService } from '../services/routes.service';
+import { SAMPLE_RAW_ROUTE_FIXTURE } from '../fixtures/sample-routes.fixture';
 
 describe('RoutesService', () => {
   it('should fall back gracefully to labeled mock walking route when API key is missing', async () => {

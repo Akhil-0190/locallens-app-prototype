@@ -3,17 +3,17 @@
  * Developer C - Google Maps Platform Integration
  */
 
-import { getMapsConfig, type MapsPlatformConfig } from '../config.ts';
+import { getMapsConfig, type MapsPlatformConfig } from '../config';
 import type {
   GooglePlaceNewRaw,
   NormalizedPlace,
   PlaceSearchNearbyRequest,
   PlaceSearchTextRequest,
   PlacesSearchResponse,
-} from '../types/places.types.ts';
-import { NormalizationService } from './normalization.service.ts';
-import { QuotaHandlerService } from './quota-handler.service.ts';
-import { SAMPLE_PLACES_FIXTURE } from '../fixtures/sample-places.fixture.ts';
+} from '../types/places.types';
+import { NormalizationService } from './normalization.service';
+import { QuotaHandlerService } from './quota-handler.service';
+import { SAMPLE_PLACES_FIXTURE } from '../fixtures/sample-places.fixture';
 
 export class PlacesService {
   private config: MapsPlatformConfig;

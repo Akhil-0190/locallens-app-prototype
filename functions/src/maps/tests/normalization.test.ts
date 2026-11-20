@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
-import assert from 'node:assert';
-import { NormalizationService } from '../services/normalization.service.ts';
-import type { GooglePlaceNewRaw } from '../types/places.types.ts';
+import * as assert from 'node:assert';
+import { NormalizationService } from '../services/normalization.service';
+import type { GooglePlaceNewRaw } from '../types/places.types';
 
 describe('NormalizationService', () => {
   describe('normalizeCoordinate', () => {

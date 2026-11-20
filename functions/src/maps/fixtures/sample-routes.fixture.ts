@@ -5,8 +5,8 @@
  * IMPORTANT: Labeled offline sample data representing Routes API output.
  */
 
-import type { GoogleRouteRaw, WalkingRoute } from '../types/routes.types.ts';
-import { NormalizationService } from '../services/normalization.service.ts';
+import type { GoogleRouteRaw, WalkingRoute } from '../types/routes.types';
+import { NormalizationService } from '../services/normalization.service';
 
 export const SAMPLE_RAW_ROUTE_FIXTURE: GoogleRouteRaw = {
   distanceMeters: 1150,

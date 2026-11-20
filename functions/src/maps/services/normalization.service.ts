@@ -7,8 +7,8 @@ import type {
   LatLng,
   NormalizedCoordinate,
   DistanceResult,
-} from '../types/coordinates.types.ts';
-import type { GooglePlaceNewRaw, NormalizedPlace } from '../types/places.types.ts';
+} from '../types/coordinates.types';
+import type { GooglePlaceNewRaw, NormalizedPlace } from '../types/places.types';
 
 export class NormalizationService {
   /**

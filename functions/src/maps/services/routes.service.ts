@@ -3,17 +3,17 @@
  * Developer C - Google Maps Platform Integration
  */
 
-import { getMapsConfig, type MapsPlatformConfig } from '../config.ts';
-import type { LatLng } from '../types/coordinates.types.ts';
+import { getMapsConfig, type MapsPlatformConfig } from '../config';
+import type { LatLng } from '../types/coordinates.types';
 import type {
   ComputeRoutesRequest,
   ComputeRoutesResponse,
   GoogleRouteRaw,
   WalkingRoute,
-} from '../types/routes.types.ts';
-import { NormalizationService } from './normalization.service.ts';
-import { QuotaHandlerService } from './quota-handler.service.ts';
-import { SAMPLE_NORMALIZED_WALKING_ROUTE } from '../fixtures/sample-routes.fixture.ts';
+} from '../types/routes.types';
+import { NormalizationService } from './normalization.service';
+import { QuotaHandlerService } from './quota-handler.service';
+import { SAMPLE_NORMALIZED_WALKING_ROUTE } from '../fixtures/sample-routes.fixture';
 
 export class RoutesService {
   private config: MapsPlatformConfig;

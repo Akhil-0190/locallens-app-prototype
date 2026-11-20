@@ -3,7 +3,7 @@
  * Developer C - Google Maps Platform Integration
  */
 
-import type { LatLng, NormalizedCoordinate } from './coordinates.types.ts';
+import type { LatLng, NormalizedCoordinate } from './coordinates.types';
 
 export interface LocalizedText {
   text: string;

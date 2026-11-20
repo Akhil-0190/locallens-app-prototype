@@ -3,8 +3,8 @@
  * Coordinated with Developer A
  */
 
-export * from './coordinates.types.ts';
-export * from './places.types.ts';
-export * from './routes.types.ts';
-export * from './crowd.types.ts';
-export * from './weather.types.ts';
+export * from './coordinates.types';
+export * from './places.types';
+export * from './routes.types';
+export * from './crowd.types';
+export * from './weather.types';

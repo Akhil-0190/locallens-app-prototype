@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
-import assert from 'node:assert';
-import { QuotaHandlerService } from '../services/quota-handler.service.ts';
+import * as assert from 'node:assert';
+import { QuotaHandlerService } from '../services/quota-handler.service';
 
 describe('QuotaHandlerService', () => {
   describe('classifyError', () => {
