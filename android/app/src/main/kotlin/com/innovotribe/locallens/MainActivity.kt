@@ -117,7 +117,10 @@ class MainActivity : FlutterActivity() {
                         "totalRamMb" to totalRamMb,
                         "aicoreInstalled" to aicoreInstalled,
                         "supportedRuntimes" to supportedRuntimes,
-                        "hasNpu" to (apiLevel >= 34 && (Build.HARDWARE.contains("qcom") || Build.HARDWARE.contains("tensor") || Build.HARDWARE.contains("exynos")))
+                        "npuDetectionSupported" to false,
+                        "npuHardwareReported" to null,
+                        "hardwarePlatform" to Build.HARDWARE,
+                        "npuNotice" to "Standard Android SDK does not expose public NPU query API without vendor proprietary HAL drivers"
                     )
                     result.success(response)
                 }
@@ -136,6 +139,41 @@ class MainActivity : FlutterActivity() {
                         else -> "MODEL_NOT_AVAILABLE" // Model binary not downloaded to device cache yet
                     }
                     result.success(state)
+                }
+
+                "summarizeOfflineNote" -> {
+                    val noteText = call.argument<String>("noteText") ?: ""
+                    val spotName = call.argument<String>("spotName") ?: ""
+                    val language = call.argument<String>("language") ?: "en"
+
+                    // Contract with Developer B: Returns structured unassisted response until model binary is provided.
+                    val response = mapOf(
+                        "success" to false,
+                        "code" to "MODEL_NOT_DOWNLOADED",
+                        "isLocalInference" to false,
+                        "summary" to "",
+                        "keyHighlights" to emptyList<String>(),
+                        "message" to "On-device model for note summarization pending from Developer B (Gemma 4 GGUF/llama.cpp or AICore). Running in unassisted mode.",
+                        "spotName" to spotName,
+                        "language" to language,
+                        "noteLength" to noteText.length
+                    )
+                    result.success(response)
+                }
+
+                "extractOfflineKeywords" -> {
+                    val text = call.argument<String>("text") ?: ""
+
+                    // Contract with Developer B: Returns structured unassisted response until model binary is provided.
+                    val response = mapOf(
+                        "success" to false,
+                        "code" to "MODEL_NOT_DOWNLOADED",
+                        "isLocalInference" to false,
+                        "keywords" to emptyList<String>(),
+                        "message" to "On-device keyword extraction model binary pending from Developer B. Running in unassisted mode.",
+                        "inputLength" to text.length
+                    )
+                    result.success(response)
                 }
 
                 "executeOfflineInference" -> {

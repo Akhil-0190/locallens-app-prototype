@@ -49,7 +49,9 @@ class DeviceAICapabilities {
   final int totalRamMb;
   final bool aicoreInstalled;
   final List<String> supportedRuntimes;
-  final bool hasNpu;
+  final bool npuDetectionSupported;
+  final String? npuHardwareReported;
+  final String? hardwarePlatform;
 
   const DeviceAICapabilities({
     required this.apiLevel,
@@ -57,7 +59,9 @@ class DeviceAICapabilities {
     required this.totalRamMb,
     required this.aicoreInstalled,
     required this.supportedRuntimes,
-    required this.hasNpu,
+    this.npuDetectionSupported = false,
+    this.npuHardwareReported,
+    this.hardwarePlatform,
   });
 
   factory DeviceAICapabilities.fromMap(Map<dynamic, dynamic> map) {
@@ -71,7 +75,9 @@ class DeviceAICapabilities {
       totalRamMb: (map['totalRamMb'] as num?)?.toInt() ?? 0,
       aicoreInstalled: map['aicoreInstalled'] as bool? ?? false,
       supportedRuntimes: runtimes,
-      hasNpu: map['hasNpu'] as bool? ?? false,
+      npuDetectionSupported: map['npuDetectionSupported'] as bool? ?? false,
+      npuHardwareReported: map['npuHardwareReported'] as String?,
+      hardwarePlatform: map['hardwarePlatform'] as String?,
     );
   }
 }
@@ -172,7 +178,7 @@ class NativePlatformService {
         totalRamMb: 8192,
         aicoreInstalled: false,
         supportedRuntimes: ['LLAMA_CPP_GEMMA4_GGUF'],
-        hasNpu: true,
+        npuDetectionSupported: false,
       );
     }
     try {
@@ -191,7 +197,7 @@ class NativePlatformService {
       totalRamMb: 0,
       aicoreInstalled: false,
       supportedRuntimes: [],
-      hasNpu: false,
+      npuDetectionSupported: false,
     );
   }
 
@@ -222,6 +228,81 @@ class NativePlatformService {
     } catch (_) {
       return NativeAiStatus.unsupportedDevice;
     }
+  }
+
+  /// Summarizes offline traveler note adhering to B6 contract.
+  /// Returns structured unassisted response until model binary is provided by Developer B.
+  Future<Map<String, dynamic>> summarizeOfflineNote({
+    required String noteText,
+    required String spotName,
+    String language = 'en',
+  }) async {
+    if (_isTestMode) {
+      return {
+        'success': false,
+        'code': 'MODEL_NOT_DOWNLOADED',
+        'isLocalInference': false,
+        'summary': '',
+        'keyHighlights': <String>[],
+        'message':
+            'On-device model for note summarization pending from Developer B (Gemma 4 GGUF/llama.cpp or AICore). Running in unassisted mode.',
+        'spotName': spotName,
+        'language': language,
+      };
+    }
+    try {
+      final result = await _aiChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'summarizeOfflineNote',
+        {
+          'noteText': noteText,
+          'spotName': spotName,
+          'language': language,
+        },
+      );
+      if (result != null) {
+        return Map<String, dynamic>.from(result);
+      }
+    } catch (_) {}
+
+    return {
+      'success': false,
+      'code': 'CHANNEL_ERROR',
+      'isLocalInference': false,
+      'message': 'Failed to communicate with native AI channel.',
+    };
+  }
+
+  /// Extracts offline keywords adhering to B6 contract.
+  /// Returns structured unassisted response until model binary is provided by Developer B.
+  Future<Map<String, dynamic>> extractOfflineKeywords({
+    required String text,
+  }) async {
+    if (_isTestMode) {
+      return {
+        'success': false,
+        'code': 'MODEL_NOT_DOWNLOADED',
+        'isLocalInference': false,
+        'keywords': <String>[],
+        'message':
+            'On-device keyword extraction model binary pending from Developer B. Running in unassisted mode.',
+      };
+    }
+    try {
+      final result = await _aiChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'extractOfflineKeywords',
+        {'text': text},
+      );
+      if (result != null) {
+        return Map<String, dynamic>.from(result);
+      }
+    } catch (_) {}
+
+    return {
+      'success': false,
+      'code': 'CHANNEL_ERROR',
+      'isLocalInference': false,
+      'message': 'Failed to communicate with native AI channel.',
+    };
   }
 
   /// Invokes on-device offline inference through the native bridge.
