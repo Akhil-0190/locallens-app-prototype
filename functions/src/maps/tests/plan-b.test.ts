@@ -18,6 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { WeatherService } from '../services/weather.service.js';
 import { PlanBReroutingService } from '../services/plan-b.service.js';
+import { CrowdManagementService } from '../services/crowd-management.service.js';
 import { RoutesService } from '../services/routes.service.js';
 import type { CanonicalRouteDocument } from '../../types/contracts/index.js';
 
@@ -357,6 +358,65 @@ describe('Task C5 - Weather, Closures & Plan-B Rerouting (Corrective Suite)', ()
 
       assert.strictEqual(rerouteResponse.isMockData, true);
       assert.strictEqual(rerouteResponse.updatedRoute.isMockData, true);
+    });
+
+    it('14. correctly aligns leg arrival times and alteration records when an intermediate stop is SKIPPED', async () => {
+      // 3-stop route: CTR -> Closed Stall (no alternative -> SKIPPED) -> Veena Stores
+      const threeStopRoute = await routesService.generateWalkingRoute({
+        title: '3-Stop Route',
+        neighborhood: 'Malleswaram',
+        stops: [
+          { placeId: 'place_ctr_shri_sagar', spotName: 'CTR Shri Sagar', coordinate: { latitude: 13.0075, longitude: 77.5714 } },
+          { placeId: 'place_closed_stall_01', spotName: 'Heritage Spice Stall', coordinate: { latitude: 13.0055, longitude: 77.5708 } },
+          { placeId: 'place_veena_stores', spotName: 'Veena Stores', coordinate: { latitude: 13.0082, longitude: 77.5703 } },
+        ],
+        allowMockFallback: true,
+      });
+
+      const startTimeIso = '2026-11-20T08:00:00.000Z';
+      const origFindAlts = CrowdManagementService.findAlternativesForVenue;
+      // Stub to return no alternatives for place_closed_stall_01 to force SKIPPED action
+      CrowdManagementService.findAlternativesForVenue = async (params: any) => {
+        if (params.placeId === 'place_closed_stall_01') return [];
+        return origFindAlts.call(CrowdManagementService, params);
+      };
+
+      try {
+        const rerouteResponse = await PlanBReroutingService.reroutePlanB({
+          originalRoute: threeStopRoute,
+          originalStartTime: startTimeIso,
+          disruptions: [
+            {
+              type: 'VENUE_CLOSED',
+              affectedPlaceId: 'place_closed_stall_01',
+              description: 'Permanently closed for renovations',
+              severity: 'SEVERE',
+              signalTimestamp: startTimeIso,
+            },
+          ],
+          allowMockFallback: true,
+        });
+
+        const alterations = rerouteResponse.alterations;
+        assert.strictEqual(alterations.length, 3);
+        assert.strictEqual(alterations[0].action, 'RETAINED');
+        assert.strictEqual(alterations[0].originalStopName, 'CTR Shri Sagar');
+        assert.strictEqual(alterations[1].action, 'SKIPPED');
+        assert.strictEqual(alterations[1].originalStopName, 'Heritage Spice Stall');
+        assert.strictEqual(alterations[2].action, 'RETAINED');
+        assert.strictEqual(alterations[2].originalStopName, 'Veena Stores');
+
+        // Updated route must only have 1 leg (CTR -> Veena Stores)
+        assert.strictEqual(rerouteResponse.updatedRoute.legs.length, 1);
+        const legDurationMs = (rerouteResponse.updatedRoute.legs[0].durationSeconds || 0) * 1000;
+        const expectedEndArrivalMs = new Date(startTimeIso).getTime() + legDurationMs;
+
+        // Assert that alteration[2] (Veena Stores) received the updated arrival time, NOT alteration[1] (skipped)
+        assert.strictEqual(new Date(alterations[2].scheduledArrival!).getTime(), expectedEndArrivalMs);
+        assert.ok(alterations[2].capacityStatusAtArrival);
+      } finally {
+        CrowdManagementService.findAlternativesForVenue = origFindAlts;
+      }
     });
   });
 });

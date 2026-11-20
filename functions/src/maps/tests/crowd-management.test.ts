@@ -489,5 +489,37 @@ describe('Task C4 - Capacity, Crowd Throttling & Alternatives', () => {
       assert.strictEqual(typeof parsed.hasThrottledStops, 'boolean');
       assert.strictEqual(typeof parsed.hasUnknownCapacityStops, 'boolean');
     });
+
+    it('26. refines scheduled arrival times using actual leg walking durations from generated route', async () => {
+      const startTime = '2026-11-20T08:00:00.000Z';
+      const response = await CrowdManagementService.generateCapacityAwareRoute({
+        title: 'Timing Accuracy Trail',
+        neighborhood: 'Malleswaram',
+        startTime,
+        stops: [
+          {
+            placeId: 'place_ctr_shri_sagar',
+            spotName: 'CTR Shri Sagar',
+            coordinate: { latitude: 13.0075, longitude: 77.5714 },
+          },
+          {
+            placeId: 'place_kadu_malleshwara',
+            spotName: 'Kadu Malleshwara Temple',
+            coordinate: { latitude: 13.0039, longitude: 77.5701 },
+          },
+        ],
+        allowMockFallback: true,
+      });
+
+      // Stop 0 arrives at startTime
+      assert.strictEqual(response.stops[0].scheduledArrival, startTime);
+
+      // Stop 1 arrival must match startTime + leg 0 duration
+      const leg0DurationSeconds = response.legs[0].durationSeconds;
+      const expectedStop1ArrivalMs = new Date(startTime).getTime() + leg0DurationSeconds * 1000;
+      const actualStop1ArrivalMs = new Date(response.stops[1].scheduledArrival).getTime();
+
+      assert.strictEqual(actualStop1ArrivalMs, expectedStop1ArrivalMs);
+    });
   });
 });

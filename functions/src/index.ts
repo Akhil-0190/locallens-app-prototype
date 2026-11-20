@@ -47,6 +47,11 @@ export * as Groups from "./groups/index.js";
 export * as Capacity from "./capacity/index.js";
 
 /**
+ * Export Google Maps Platform, Places, Routes, and Crowd services (Developer C).
+ */
+export * as Maps from "./maps/index.js";
+
+/**
  * Export Contributor Ecosystem and Monetization functions (Task A5).
  */
 export * as Monetization from "./monetization/index.js";

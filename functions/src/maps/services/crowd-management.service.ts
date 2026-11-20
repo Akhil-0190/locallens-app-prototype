@@ -633,8 +633,14 @@ export class CrowdManagementService {
         coordinate: chosenCoordinate,
       });
 
-      // Advance estimated visit clock: ~20 minutes per stop + walk duration
-      currentEstimatedTime += 20 * 60 * 1000;
+      // Advance estimated visit clock: dwell time (15 mins) + distance-based walking duration to next stop
+      if (i < stops.length - 1) {
+        const nextCoord = stops[i + 1].coordinate;
+        const dist = NormalizationService.calculateDistance(chosenCoordinate, nextCoord);
+        const paceMultiplier = walkingPace === 'RELAXED' ? 1.25 : walkingPace === 'BRISK' ? 0.85 : 1.0;
+        const estWalkSec = Math.round((dist.meters / 1.25) * paceMultiplier);
+        currentEstimatedTime += (15 * 60 + estWalkSec) * 1000;
+      }
     }
 
     // 3. Generate underlying walking route using C3 RoutesService instance
@@ -649,6 +655,37 @@ export class CrowdManagementService {
     });
 
     if (baseRoute.isMockData) anyMockUsed = true;
+
+    // 4. Refine scheduled arrival times using actual leg durations from generated route
+    let refinedClockMs = new Date(startTime).getTime();
+    for (let i = 0; i < processedStops.length; i++) {
+      if (i > 0 && baseRoute.legs[i - 1]) {
+        refinedClockMs += (baseRoute.legs[i - 1].durationSeconds || 0) * 1000;
+      }
+
+      // If caller did not pin an explicit intendedVisitTime, use the refined arrival time
+      if (!stops[i]?.intendedVisitTime) {
+        processedStops[i].scheduledArrival = new Date(refinedClockMs).toISOString();
+
+        // If stop was not substituted, synchronize capacity evaluation with refined arrival time
+        const stopPlaceId = processedStops[i].placeId;
+        if (stopPlaceId && !processedStops[i].isSubstituted) {
+          const recheckCap = await CrowdManagementService.evaluateVenueCapacity({
+            placeId: stopPlaceId,
+            placeName: processedStops[i].spotName,
+            intendedVisitTime: processedStops[i].scheduledArrival,
+            allowMockFallback,
+          });
+          processedStops[i].capacityStatus = recheckCap.status;
+          processedStops[i].crowdLevel = recheckCap.crowdLevel;
+        }
+      }
+
+      // Add intermediate visit duration (15 mins) before next departure
+      if (i > 0) {
+        refinedClockMs += 15 * 60 * 1000;
+      }
+    }
 
     return {
       routeId: baseRoute.routeId,

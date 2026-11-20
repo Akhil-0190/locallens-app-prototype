@@ -318,15 +318,17 @@ export class PlanBReroutingService {
     if (recalculatedRoute.isMockData) anyMockUsed = true;
 
     // 4. Finding B4 & B5: Recalculate subsequent arrival times from the NEW route leg durations
-    // and re-evaluate C4 capacity at those updated times
+    // and re-evaluate C4 capacity at those updated times.
+    // Map legs to non-skipped alterations (which correspond 1:1 with newRouteStops).
+    const nonSkippedAlterations = alterations.filter((a) => a.action !== 'SKIPPED');
     let recalculatedClockMs = baseStartTimeMs;
     for (let legIdx = 0; legIdx < recalculatedRoute.legs.length; legIdx++) {
       const leg = recalculatedRoute.legs[legIdx];
       recalculatedClockMs += (leg.durationSeconds || 0) * 1000;
       const updatedArrivalIso = new Date(recalculatedClockMs).toISOString();
 
-      // The stop corresponding to this leg end
-      const stopRecord = alterations[legIdx + 1];
+      // The stop corresponding to this leg end is nonSkippedAlterations[legIdx + 1]
+      const stopRecord = nonSkippedAlterations[legIdx + 1];
       if (stopRecord) {
         stopRecord.scheduledArrival = updatedArrivalIso;
 
