@@ -48,7 +48,7 @@ class PhotoHelper {
         width: width,
         fit: BoxFit.cover,
         cacheWidth: 600,
-        errorBuilder: (_, __, ___) => _fallbackBox(height, width),
+        errorBuilder: (context, error, stackTrace) => _fallbackBox(height, width),
       );
     }
 
@@ -69,7 +69,7 @@ class PhotoHelper {
         fit: BoxFit.cover,
         cacheWidth: 600,
         gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => _fallbackBox(height, width),
+        errorBuilder: (context, error, stackTrace) => _fallbackBox(height, width),
       );
     } catch (_) {
       return _fallbackBox(height, width);

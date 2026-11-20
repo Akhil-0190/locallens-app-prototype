@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/spot_card.dart';
+import '../providers/spot_providers.dart';
 import '../services/photo_helper.dart';
-import '../services/spot_service.dart';
 
-class AddGemScreen extends StatefulWidget {
+class AddGemScreen extends ConsumerStatefulWidget {
   const AddGemScreen({super.key});
 
   @override
-  State<AddGemScreen> createState() => _AddGemScreenState();
+  ConsumerState<AddGemScreen> createState() => _AddGemScreenState();
 }
 
-class _AddGemScreenState extends State<AddGemScreen> {
+class _AddGemScreenState extends ConsumerState<AddGemScreen> {
   final _formKey = GlobalKey<FormState>();
   final _mapsLinkController = TextEditingController();
   final _paragraphController = TextEditingController();
@@ -60,7 +61,9 @@ class _AddGemScreenState extends State<AddGemScreen> {
     );
 
     try {
-      await SpotService().submitNewSpot(newSpot);
+      await ref.read(spotServiceProvider).submitNewSpot(newSpot);
+      ref.invalidate(verifiedSpotsProvider);
+
       if (!mounted) return;
 
       _mapsLinkController.clear();
@@ -170,7 +173,7 @@ class _AddGemScreenState extends State<AddGemScreen> {
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: _encodedPhotos.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                    separatorBuilder: (context, index) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
                       return Stack(
                         children: [

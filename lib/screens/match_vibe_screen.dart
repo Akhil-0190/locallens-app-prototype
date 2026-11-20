@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
-import '../services/spot_service.dart';
+import '../providers/spot_providers.dart';
+import '../widgets/app_async_states.dart';
+import '../widgets/vibe_chip_selector.dart';
 
-class MatchVibeScreen extends StatefulWidget {
+class MatchVibeScreen extends ConsumerStatefulWidget {
   const MatchVibeScreen({super.key});
 
   @override
-  State<MatchVibeScreen> createState() => _MatchVibeScreenState();
+  ConsumerState<MatchVibeScreen> createState() => _MatchVibeScreenState();
 }
 
-class _MatchVibeScreenState extends State<MatchVibeScreen> {
-  final List<String> _availableVibes = const [
+class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
+  static const List<String> _availableVibes = [
     'Street Food',
     'Local Coffee',
     'Local Crafts',
@@ -20,40 +23,33 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
     'Slow Pace',
   ];
 
-  final Set<String> _selectedVibes = {'Street Food', 'Heritage'};
-  int _groupSize = 1;
-  List<SpotCard> _matchedRoute = [];
-  List<SpotCard> _crowdedOrTrapSpots = [];
-  bool _isLoading = false;
-  bool _hasGenerated = false;
-
   Future<void> _generateRankedRoute() async {
-    setState(() {
-      _isLoading = true;
-      _hasGenerated = true;
-      _matchedRoute = [];
-      _crowdedOrTrapSpots = [];
-    });
+    ref.read(isGeneratingRouteProvider.notifier).state = true;
+    ref.read(hasGeneratedRouteProvider.notifier).state = true;
+    ref.read(matchedRouteProvider.notifier).state = [];
+    ref.read(crowdedSpotsProvider.notifier).state = [];
 
-    final allSpots = await SpotService().getVerifiedSpots();
+    final selectedVibes = ref.read(selectedVibesProvider);
+    final groupSize = ref.read(groupSizeProvider);
+    final allSpots = await ref.read(spotServiceProvider).getVerifiedSpots();
 
     final sortedSpots = List<SpotCard>.from(allSpots)
       ..sort((a, b) {
-        final scoreA = _selectedVibes.isEmpty
+        final scoreA = selectedVibes.isEmpty
             ? 0
-            : a.vibeTags.where((tag) => _selectedVibes.contains(tag)).length;
-        final scoreB = _selectedVibes.isEmpty
+            : a.vibeTags.where((tag) => selectedVibes.contains(tag)).length;
+        final scoreB = selectedVibes.isEmpty
             ? 0
-            : b.vibeTags.where((tag) => _selectedVibes.contains(tag)).length;
+            : b.vibeTags.where((tag) => selectedVibes.contains(tag)).length;
 
         if (scoreB != scoreA) {
           return scoreB.compareTo(scoreA);
         }
 
         final ratioA =
-        a.hourlyLimit > 0 ? a.currentVisitors / a.hourlyLimit : 1.0;
+            a.hourlyLimit > 0 ? a.currentVisitors / a.hourlyLimit : 1.0;
         final ratioB =
-        b.hourlyLimit > 0 ? b.currentVisitors / b.hourlyLimit : 1.0;
+            b.hourlyLimit > 0 ? b.currentVisitors / b.hourlyLimit : 1.0;
         return ratioA.compareTo(ratioB);
       });
 
@@ -62,7 +58,7 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
 
     for (final spot in sortedSpots) {
       final remainingCapacity = spot.hourlyLimit - spot.currentVisitors;
-      if (spot.isTouristTrap || remainingCapacity < _groupSize) {
+      if (spot.isTouristTrap || remainingCapacity < groupSize) {
         crowdedOrTraps.add(spot);
       } else {
         uncrowdedValid.add(spot);
@@ -70,18 +66,22 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
     }
 
     if (!mounted) return;
-    setState(() {
-      _matchedRoute = uncrowdedValid.take(3).toList();
-      _crowdedOrTrapSpots = crowdedOrTraps;
-      _isLoading = false;
-    });
+    ref.read(matchedRouteProvider.notifier).state =
+        uncrowdedValid.take(3).toList();
+    ref.read(crowdedSpotsProvider.notifier).state = crowdedOrTraps;
+    ref.read(isGeneratingRouteProvider.notifier).state = false;
   }
 
   void _addCrowdedSpotToRoute(SpotCard spot) {
-    setState(() {
-      _crowdedOrTrapSpots.removeWhere((s) => s.id == spot.id);
-      _matchedRoute.add(spot);
-    });
+    final currentCrowded = List<SpotCard>.from(ref.read(crowdedSpotsProvider));
+    final currentRoute = List<SpotCard>.from(ref.read(matchedRouteProvider));
+
+    currentCrowded.removeWhere((s) => s.id == spot.id);
+    currentRoute.add(spot);
+
+    ref.read(crowdedSpotsProvider.notifier).state = currentCrowded;
+    ref.read(matchedRouteProvider.notifier).state = currentRoute;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${spot.spotName} added to your route.'),
@@ -115,6 +115,13 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedVibes = ref.watch(selectedVibesProvider);
+    final groupSize = ref.watch(groupSizeProvider);
+    final matchedRoute = ref.watch(matchedRouteProvider);
+    final crowdedOrTrapSpots = ref.watch(crowdedSpotsProvider);
+    final isLoading = ref.watch(isGeneratingRouteProvider);
+    final hasGenerated = ref.watch(hasGeneratedRouteProvider);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Match Your Vibe')),
       body: ListView(
@@ -130,9 +137,9 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
             children: [1, 2, 3, 4].map((count) {
               return ChoiceChip(
                 label: Text(count == 1 ? 'Solo (1)' : '$count Travelers'),
-                selected: _groupSize == count,
+                selected: groupSize == count,
                 onSelected: (_) {
-                  setState(() => _groupSize = count);
+                  ref.read(groupSizeProvider.notifier).state = count;
                 },
               );
             }).toList(),
@@ -143,42 +150,35 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
             style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _availableVibes.map((vibe) {
-              final isSelected = _selectedVibes.contains(vibe);
-              return FilterChip(
-                label: Text(vibe),
-                selected: isSelected,
-                onSelected: (selected) {
-                  setState(() {
-                    if (selected) {
-                      _selectedVibes.add(vibe);
-                    } else {
-                      _selectedVibes.remove(vibe);
-                    }
-                  });
-                },
-              );
-            }).toList(),
+          VibeChipSelector(
+            availableVibes: _availableVibes,
+            selectedVibes: selectedVibes,
+            onVibeToggled: (vibe) {
+              final newVibes = Set<String>.from(selectedVibes);
+              if (newVibes.contains(vibe)) {
+                newVibes.remove(vibe);
+              } else {
+                newVibes.add(vibe);
+              }
+              ref.read(selectedVibesProvider.notifier).state = newVibes;
+            },
           ),
           const SizedBox(height: 18),
           FilledButton.icon(
-            onPressed: _isLoading ? null : _generateRankedRoute,
+            onPressed: isLoading ? null : _generateRankedRoute,
             icon: const Icon(Icons.route),
             label: const Text('Build 3-Stop Uncrowded Route'),
           ),
           const SizedBox(height: 20),
-          if (_isLoading)
-            const Center(child: CircularProgressIndicator())
-          else if (_hasGenerated) ...[
+          if (isLoading)
+            const AppLoadingIndicator(message: 'Generating uncrowded route...')
+          else if (hasGenerated) ...[
             const Text(
               'Recommended Uncrowded Route',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-            if (_matchedRoute.isEmpty)
+            if (matchedRoute.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
                 child: Text(
@@ -186,12 +186,12 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
                 ),
               )
             else
-              ..._matchedRoute.asMap().entries.map((entry) {
+              ...matchedRoute.asMap().entries.map((entry) {
                 final stopIndex = entry.key + 1;
                 final spot = entry.value;
                 final slotsLeft = spot.hourlyLimit - spot.currentVisitors;
                 final isCrowdedChoice =
-                    spot.isTouristTrap || slotsLeft < _groupSize;
+                    spot.isTouristTrap || slotsLeft < groupSize;
 
                 return Card(
                   margin: const EdgeInsets.only(bottom: 14),
@@ -267,7 +267,7 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
                           spacing: 6,
                           runSpacing: 6,
                           children: spot.vibeTags.map((tag) {
-                            final isMatch = _selectedVibes.contains(tag);
+                            final isMatch = selectedVibes.contains(tag);
                             return Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -308,7 +308,7 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
                   ),
                 );
               }),
-            if (_crowdedOrTrapSpots.isNotEmpty) ...[
+            if (crowdedOrTrapSpots.isNotEmpty) ...[
               const SizedBox(height: 12),
               const Divider(),
               const SizedBox(height: 8),
@@ -340,7 +340,7 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              ..._crowdedOrTrapSpots.map((spot) {
+              ...crowdedOrTrapSpots.map((spot) {
                 return Card(
                   color: Colors.orange.shade50.withAlpha(90),
                   margin: const EdgeInsets.only(bottom: 12),
@@ -396,7 +396,7 @@ class _MatchVibeScreenState extends State<MatchVibeScreen> {
                           spacing: 6,
                           runSpacing: 6,
                           children: spot.vibeTags.map((tag) {
-                            final isMatch = _selectedVibes.contains(tag);
+                            final isMatch = selectedVibes.contains(tag);
                             return Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
