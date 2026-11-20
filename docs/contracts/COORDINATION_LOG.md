@@ -21,8 +21,8 @@
 | **08** | **Routes & Route Stops** | Developer A, C & D | **AGREED** | Reconciled with C1 `WalkingRoute` & D1 walking mode UI. |
 | **09** | **Groups & Taste-Matching** | Developer A, B & D | **AGREED** | Aligned with B1 `GroupPreferenceBlendSchema` & D1 group screen. |
 | **10** | **Offline Neighborhood Packs** | Developer A & D | **AGREED** | Reconciled with D1 Drift SQLite `app_database.dart` bulk insertion. |
-| **11** | **Contributor Rewards & Tips** | Developer A & D | **PROPOSED** | Shared with D for tip sheet UI; awaiting live payment gateway integration in later tasks. |
-| **12** | **Route Passes & Subscriptions** | Developer A & D | **PROPOSED** | Shared with D for pass checkout UI; pending merchant partner onboarding logic. |
+| **11** | **Contributor Rewards & Tips** | Developer A & D | **AGREED** | Reconciled accounting model (event log + balance), sandbox simulation isolation, and Flutter tip sheet integration. |
+| **12** | **Route Passes & Subscriptions** | Developer A, C & D | **AGREED** | Reconciled route pass tiers, route ID access check, merchant subscription schema, and sandbox isolation. |
 
 ---
 
@@ -56,6 +56,12 @@
   - Verified 1:1 field compatibility between canonical `CanonicalPlaceDocument` and `SpotCard`.
   - Mapped `OfflineSpotItem` directly to Drift `LocalSpotsCompanion` fields (`photoUrlsJson`, `vibeTagsJson`, `practicalTips`, `greetingCard`, `isTouristTrap`, `hourlyLimit`, `currentVisitors`).
   - Aligned `ContributionDocument.submission` with `toSubmissionMap()` (`mapsLink`, `infoParagraph`, `photoUrls`).
+- **A5 Monetization & Rewards Alignment (Domains 11 & 12):**
+  - **Accounting Model:** Agreed on a Transactional Event-Log & Materialized Balance Model (`tips/{tipId}` as transaction event log + `contributor_rewards/{userId}` as balance summary) with atomic Firestore transaction mutations instead of multi-entity double-entry complexity.
+  - **Sandbox Simulation Isolation:** Added mandatory `paymentMode: 'SANDBOX' | 'LIVE'` to all tip, pass, and subscription contracts. Sandbox references strictly use `sandbox_sim_...` prefix; no simulated transaction is ever represented as a real banking or UPI payment.
+  - **No Residency Tracking:** Confirmed that contributor reputation and badges are tied strictly to community curation quality, approved spots, and traveler tips. No invasive residency verification, geofencing, or document upload is introduced.
+  - **Pass Tiers & Access:** Agreed on tiers (`SINGLE_ROUTE`, `NEIGHBORHOOD_ALL_ACCESS`, `ANNUAL_EXPLORER`) and canonical route validation matching Developer C's `routeId` and `neighborhood`.
+  - **Independent Authorization:** Cloud Functions enforce `request.auth`, ownership (cannot tip self, cannot read other users' reward ledgers without admin role), and bounds validation at the callable layer.
 
 ---
 

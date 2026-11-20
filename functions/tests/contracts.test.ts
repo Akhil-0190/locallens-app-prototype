@@ -16,12 +16,17 @@ import {
   validateGroupSession,
   validateOfflinePackManifest,
   validateContributorTip,
+  validateContributorRewardLedger,
   validateRoutePass,
+  validatePartnerMerchantSubscription,
   validateApiSuccessEnvelope,
   validateApiErrorEnvelope,
   NormalizedCoordinateSchema,
   UserAccountDocumentSchema,
   ContributorTipDocumentSchema,
+  ContributorRewardLedgerSchema,
+  RoutePassDocumentSchema,
+  PartnerMerchantSubscriptionSchema,
   ScheduledVisitDocumentSchema,
 } from '../src/types/contracts/index';
 
@@ -193,13 +198,25 @@ describe('Task A2 — Canonical Shared Contracts Validation (All 12 Domains)', (
   });
 
   // Domain 11: Contributor Rewards, Tips & Guidance
-  test('Domain 11: Contributor Rewards & Tips sample validates', () => {
+  test('Domain 11: Contributor Rewards & Tips sample validates with SANDBOX payment mode', () => {
     const sample = loadSampleJson('11-contributor-reward-tip.sample.json');
     const validated = validateContributorTip(sample);
     assert.strictEqual(validated.tipId, 'tip_blr_561234');
     assert.strictEqual(validated.amountInr, 100);
     assert.strictEqual(validated.contributorNetInr, 95);
     assert.strictEqual(validated.paymentStatus, 'COMPLETED');
+    assert.strictEqual(validated.paymentMode, 'SANDBOX');
+    assert.strictEqual(validated.paymentGatewayReference?.startsWith('sandbox_sim_'), true);
+  });
+
+  test('Domain 11: Contributor Reward Ledger sample validates', () => {
+    const sample = loadSampleJson('11-contributor-reward-ledger.sample.json');
+    const validated = validateContributorRewardLedger(sample);
+    assert.strictEqual(validated.userId, 'usr_blr_782914');
+    assert.strictEqual(validated.totalEarningsInr, 1850);
+    assert.strictEqual(validated.availableBalanceInr, 850);
+    assert.strictEqual(validated.withdrawnTotalInr, 1000);
+    assert.strictEqual(validated.totalEarningsInr, validated.availableBalanceInr + validated.withdrawnTotalInr);
   });
 
   test('Domain 11: Rejects zero or negative tip amount', () => {
@@ -209,13 +226,45 @@ describe('Task A2 — Canonical Shared Contracts Validation (All 12 Domains)', (
     );
   });
 
+  test('Domain 11: Rejects negative available balance on contributor reward ledger', () => {
+    const sample = loadSampleJson('11-contributor-reward-ledger.sample.json');
+    assert.throws(() =>
+      ContributorRewardLedgerSchema.parse({ ...sample, availableBalanceInr: -100 })
+    );
+  });
+
   // Domain 12: Route Passes, Payments & Subscriptions
-  test('Domain 12: Route Passes & Subscriptions sample validates', () => {
+  test('Domain 12: Route Passes & Subscriptions sample validates with SANDBOX payment mode', () => {
     const sample = loadSampleJson('12-route-pass-subscription.sample.json');
     const validated = validateRoutePass(sample);
     assert.strictEqual(validated.passId, 'pass_malleshwaram_781290');
     assert.strictEqual(validated.tier, 'NEIGHBORHOOD_ALL_ACCESS');
+    assert.strictEqual(validated.paymentMode, 'SANDBOX');
     assert.strictEqual(validated.perksIncluded.audioGuidanceUnlocked, true);
+  });
+
+  test('Domain 12: Partner Merchant Subscription sample validates', () => {
+    const sample = loadSampleJson('12-partner-merchant-subscription.sample.json');
+    const validated = validatePartnerMerchantSubscription(sample);
+    assert.strictEqual(validated.subscriptionId, 'sub_merch_ctr_9812');
+    assert.strictEqual(validated.subscriptionPlan, 'FEATURED_HERITAGE');
+    assert.strictEqual(validated.paymentMode, 'SANDBOX');
+    assert.strictEqual(validated.isActive, true);
+    assert.strictEqual(validated.activeDiscountOffer?.discountPercent, 10);
+  });
+
+  test('Domain 12: Rejects invalid partner merchant email', () => {
+    const sample = loadSampleJson('12-partner-merchant-subscription.sample.json');
+    assert.throws(() =>
+      PartnerMerchantSubscriptionSchema.parse({ ...sample, contactEmail: 'not-an-email' })
+    );
+  });
+
+  test('Domain 12: Rejects invalid route pass status', () => {
+    const sample = loadSampleJson('12-route-pass-subscription.sample.json');
+    assert.throws(() =>
+      RoutePassDocumentSchema.parse({ ...sample, status: 'INVALID_STATUS' })
+    );
   });
 
   // API Envelopes
