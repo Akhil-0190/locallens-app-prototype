@@ -436,8 +436,11 @@ class SpotCardTile extends StatelessWidget {
 
                 // 11. Actions & Google Maps Link
                 const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     if (spot.mapsLink.isNotEmpty)
                       OutlinedButton.icon(
@@ -448,15 +451,8 @@ class SpotCardTile extends StatelessWidget {
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         ),
-                      )
-                    else
-                      const SizedBox.shrink(),
-                    if (actions.isNotEmpty)
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: actions,
                       ),
+                    if (actions.isNotEmpty) ...actions,
                   ],
                 ),
               ],

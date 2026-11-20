@@ -49,6 +49,9 @@ dependencies:
   audioplayers: ^6.8.1
   permission_handler: 11.3.1
 
+  # Google Maps SDK
+  google_maps_flutter: ^2.10.0
+
   # Frozen Stack Offline Storage: SQLite/Drift
   drift: ^2.24.2
   sqlite3_flutter_libs: ^0.5.28

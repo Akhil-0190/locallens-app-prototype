@@ -4,10 +4,15 @@ import 'package:go_router/go_router.dart';
 import '../screens/add_gem_screen.dart';
 import '../screens/match_vibe_screen.dart';
 import '../screens/pocket_guide_screen.dart';
+import '../screens/walking_route_screen.dart';
 
 final GoRouter appRouter = GoRouter(
   initialLocation: '/guide',
   routes: [
+    GoRoute(
+      path: '/route',
+      builder: (context, state) => const WalkingRouteScreen(),
+    ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
         return Scaffold(
