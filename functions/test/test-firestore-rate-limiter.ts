@@ -358,11 +358,11 @@ async function runFirestoreIntegrationTests() {
   passed++;
 
   console.log('\n================================================================');
-  console.log(`Firestore Integration Results: ${passed} passed, 0 failed.`);
+  console.log(`Firestore Transactional Adapter Results: ${passed} passed, 0 failed.`);
   console.log('================================================================');
 }
 
 runFirestoreIntegrationTests().catch((err) => {
-  console.error('Fatal error in Firestore integration tests:', err);
+  console.error('Fatal error in Firestore transactional adapter tests:', err);
   process.exit(1);
 });
