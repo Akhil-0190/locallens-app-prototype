@@ -43,6 +43,22 @@ export {
 
 export * from '../schemas/authenticity-schemas.js';
 
+export {
+  generateEmbedding,
+  computeCosineSimilarity,
+  generateOfflineTestVector,
+  GEMINI_EMBEDDING_MODEL_ID,
+  EMBEDDING_DIMENSIONS,
+} from './embedding-service.js';
+
+export {
+  blendGroupPreferences,
+  matchSoloPreferences,
+  matchGroupPreferences,
+} from './preference-matching-service.js';
+
+export * from '../schemas/matching-schemas.js';
+
 /**
  * 1. Foundation Verification Call
  * Runs a small, verified model call to test authorized credentials and structured schema return.
