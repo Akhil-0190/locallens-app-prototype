@@ -1,6 +1,6 @@
 /**
  * Startup Buildathon 2026 — Neighborhood Guide App
- * Task B2: Spot-Card Synthesis Service
+ * Task B2: Spot-Card Synthesis Service (Null-Safe Corrective Implementation)
  * 
  * Synthesizes contributor narrative, extracted voice-note details, and photo OCR
  * into a structured draft conforming strictly to Developer A's CanonicalPlaceDocument (Domain 06).
@@ -12,12 +12,14 @@
  * - Never fabricates opening hours: uses contributor claims if explicitly stated;
  *   otherwise defaults strictly to 'Check Maps for hours'.
  * - Sets isVerified to false (Maps grounding and moderation are owned by Dev C & A).
+ * - Null-Safety: Handles null, undefined, empty, or malformed extractions defensively.
  */
 
 import {
   CanonicalPlaceDocument,
   CanonicalPlaceDocumentSchema,
   ContributorSubmissionInput,
+  ExtractedPracticalDetails,
   NormalizedCoordinate,
   PlaceAuthenticityEnrichment,
   VoicePhotoAssetDocument,
@@ -33,11 +35,59 @@ export interface SpotCardSynthesisInput {
     isVerifiedResident: boolean;
   };
   /** Audio voice note extraction outputs from VoicePhotoAssetDocument */
-  voiceExtractions?: NonNullable<VoicePhotoAssetDocument['aiExtractionResult']>[];
+  voiceExtractions?: (VoicePhotoAssetDocument['aiExtractionResult'] | null | undefined)[] | null;
   /** Photo understanding extraction outputs from VoicePhotoAssetDocument */
-  photoExtractions?: NonNullable<VoicePhotoAssetDocument['aiExtractionResult']>[];
+  photoExtractions?: (VoicePhotoAssetDocument['aiExtractionResult'] | null | undefined)[] | null;
   /** Preliminary coordinate if available from client EXIF or Maps URL, otherwise baseline coordinate */
   preliminaryCoordinate?: NormalizedCoordinate;
+}
+
+/**
+ * Type guard for non-null extraction object
+ */
+function isExtractionObject(item: unknown): item is NonNullable<VoicePhotoAssetDocument['aiExtractionResult']> {
+  return typeof item === 'object' && item !== null && !Array.isArray(item);
+}
+
+/**
+ * Sanitizes and extracts practical details defensively from an arbitrary object
+ */
+function sanitizePracticalDetails(details: unknown): ExtractedPracticalDetails | null {
+  if (typeof details !== 'object' || details === null || Array.isArray(details)) {
+    return null;
+  }
+  const d = details as Record<string, unknown>;
+
+  const openingHoursMentioned = typeof d.openingHoursMentioned === 'string' && d.openingHoursMentioned.trim().length > 0
+    ? d.openingHoursMentioned.trim()
+    : undefined;
+
+  const signatureDishesOrItems = Array.isArray(d.signatureDishesOrItems)
+    ? d.signatureDishesOrItems
+        .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        .map((item) => item.trim())
+    : [];
+
+  const priceLevelNote = typeof d.priceLevelNote === 'string' && d.priceLevelNote.trim().length > 0
+    ? d.priceLevelNote.trim()
+    : undefined;
+
+  const cashOnlyWarning = Boolean(d.cashOnlyWarning);
+
+  const insiderTips = Array.isArray(d.insiderTips)
+    ? d.insiderTips
+        .filter((tip): tip is string => typeof tip === 'string' && tip.trim().length > 0)
+        .map((tip) => tip.trim())
+    : [];
+
+  // If every field is empty or undefined, return an object with default empty fields conforming to ExtractedPracticalDetails
+  return {
+    openingHoursMentioned,
+    signatureDishesOrItems,
+    priceLevelNote,
+    cashOnlyWarning,
+    insiderTips,
+  };
 }
 
 /**
@@ -47,15 +97,33 @@ export function synthesizeSpotCard(
   input: SpotCardSynthesisInput
 ): CanonicalPlaceDocument {
   const nowIso = new Date().toISOString();
-  const placeId = `spot_${input.contributionId.replace(/^contrib_/, '')}`;
+  const safeContributionId = typeof input?.contributionId === 'string' && input.contributionId.trim().length > 0
+    ? input.contributionId.trim()
+    : `gen_${Date.now()}`;
+  const placeId = `spot_${safeContributionId.replace(/^contrib_/, '')}`;
 
-  // 1. Gather all practical details from voice and photo extractions
-  const allVoicePractical = (input.voiceExtractions || []).map((v) => v.practicalDetails).filter(Boolean);
-  const allPhotoPractical = (input.photoExtractions || []).map((p) => p.practicalDetails).filter(Boolean);
+  // 1. Gather all practical details from voice and photo extractions safely
+  const rawVoiceExtractions = Array.isArray(input?.voiceExtractions) ? input.voiceExtractions : [];
+  const rawPhotoExtractions = Array.isArray(input?.photoExtractions) ? input.photoExtractions : [];
+
+  const validVoiceExtractions = rawVoiceExtractions.filter(isExtractionObject);
+  const validPhotoExtractions = rawPhotoExtractions.filter(isExtractionObject);
+
+  const allVoicePractical = validVoiceExtractions
+    .map((v) => sanitizePracticalDetails(v.practicalDetails))
+    .filter((p): p is ExtractedPracticalDetails => p !== null);
+
+  const allPhotoPractical = validPhotoExtractions
+    .map((p) => sanitizePracticalDetails(p.practicalDetails))
+    .filter((p): p is ExtractedPracticalDetails => p !== null);
+
   const allPractical = [...allVoicePractical, ...allPhotoPractical];
 
   // 2. Identify Opening Hours (Anti-Hallucination: strictly supported or fallback to default)
-  const mentionedHour = allPractical.find((p) => p?.openingHoursMentioned)?.openingHoursMentioned;
+  const mentionedHour = allPractical
+    .find((p) => typeof p.openingHoursMentioned === 'string' && p.openingHoursMentioned.length > 0)
+    ?.openingHoursMentioned;
+
   const openHours = mentionedHour && mentionedHour.trim().length > 0
     ? mentionedHour.trim()
     : 'Check Maps for hours';
@@ -63,28 +131,35 @@ export function synthesizeSpotCard(
   // 3. Aggregate Signature Dishes / Must-try items
   const signatureItems = Array.from(
     new Set(
-      allPractical.flatMap((p) => p?.signatureDishesOrItems || [])
+      allPractical.flatMap((p) => p.signatureDishesOrItems || [])
     )
   );
 
   // 4. Aggregate Insider Tips and Etiquette
   const insiderTips = Array.from(
     new Set(
-      allPractical.flatMap((p) => p?.insiderTips || [])
+      allPractical.flatMap((p) => p.insiderTips || [])
     )
   );
 
   // 5. Aggregate Cash Only / Payment warnings
-  const cashOnlyWarning = allPractical.some((p) => p?.cashOnlyWarning);
+  const cashOnlyWarning = allPractical.some((p) => Boolean(p.cashOnlyWarning));
 
   // 6. Aggregate OCR signage text for spot name detection
-  const ocrTexts = (input.photoExtractions || []).flatMap((p) => p.ocrDetectedText || []);
+  const ocrTexts = validPhotoExtractions.flatMap((p) => {
+    if (Array.isArray(p.ocrDetectedText)) {
+      return p.ocrDetectedText
+        .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+        .map((t) => t.trim());
+    }
+    return [];
+  });
   
   // Extract spot name: prefer first meaningful OCR text or extract from contributor narrative
   let inferredSpotName = ocrTexts.length > 0 ? ocrTexts[0] : '';
   if (!inferredSpotName || inferredSpotName.length > 50) {
-    // Extract first sentence or title from contributor paragraph
-    const firstSentence = input.submission.infoParagraph.split(/[.!\n]/)[0].trim();
+    const rawInfo = (input?.submission?.infoParagraph || '').trim();
+    const firstSentence = rawInfo.split(/[.!\n]/)[0]?.trim() || '';
     inferredSpotName = firstSentence.length > 0 && firstSentence.length < 50
       ? firstSentence
       : 'Neighborhood Community Spot';
@@ -114,14 +189,18 @@ export function synthesizeSpotCard(
     claimsNotes.push('Contributor note: Cash or UPI payments only.');
   }
 
-  const synthesizedNarrative = `${input.submission.infoParagraph.trim()} [Contributor Claim: ${claimsNotes.join(' ')}]`;
+  const baseNarrative = (input?.submission?.infoParagraph || '').trim();
+  const synthesizedNarrative = claimsNotes.length > 0
+    ? `${baseNarrative} [Contributor Claim: ${claimsNotes.join(' ')}]`
+    : baseNarrative;
 
   // 9. Build Authenticity Enrichment
+  const displayName = input?.contributorProfile?.displayName || 'Community Member';
   const authenticity: PlaceAuthenticityEnrichment = {
     authenticityScore: 88, // Preliminary score based on resident submission
     touristTrapLikelihood: 'LOW',
     isTouristTrap: false,
-    localSentimentSummary: `Submitted by resident contributor (${input.contributorProfile?.displayName || 'Community Member'}). Strong local character attested with authentic practical details.`,
+    localSentimentSummary: `Submitted by resident contributor (${displayName}). Strong local character attested with authentic practical details.`,
     recommendedTiming: 'Morning or late afternoon for authentic neighborhood atmosphere',
     practicalTips: insiderTips.length > 0 ? insiderTips.join('. ') : 'Visit early to avoid community rush.',
     greetingCard: `Welcome to ${inferredSpotName}! A cherished neighborhood favorite discovered by local residents.`,
@@ -129,7 +208,7 @@ export function synthesizeSpotCard(
   };
 
   // 10. Default coordinate pending Developer C's Maps Grounding
-  const defaultCoordinate: NormalizedCoordinate = input.preliminaryCoordinate || {
+  const defaultCoordinate: NormalizedCoordinate = input?.preliminaryCoordinate || {
     latitude: 12.9716, // Bengaluru center baseline
     longitude: 77.5946,
     precision: 6,
@@ -145,11 +224,11 @@ export function synthesizeSpotCard(
     spotName: inferredSpotName,
     formattedAddress: 'Address pending Google Maps grounding',
     coordinate: defaultCoordinate,
-    mapsLink: input.submission.mapsLink,
+    mapsLink: input?.submission?.mapsLink || 'https://maps.google.com',
     primaryCategory: 'community_spot',
     categories: ['local_institution', 'resident_contribution'],
     infoParagraph: synthesizedNarrative,
-    photoUrls: input.submission.photoUrls || [],
+    photoUrls: Array.isArray(input?.submission?.photoUrls) ? input.submission.photoUrls : [],
     openHours,
     isOpenNow: null,
     authenticity,
@@ -161,12 +240,12 @@ export function synthesizeSpotCard(
       isThrottled: false,
       lastUpdatedSlot: `${nowIso.slice(0, 13)}:00:00Z`,
     },
-    contributorAttribution: input.contributorProfile
+    contributorAttribution: input?.contributorProfile
       ? {
           userId: input.contributorProfile.userId,
           displayName: input.contributorProfile.displayName,
           badgeTitle: input.contributorProfile.badgeTitle,
-          isVerifiedResident: input.contributorProfile.isVerifiedResident,
+          isVerifiedResident: Boolean(input.contributorProfile.isVerifiedResident),
         }
       : undefined,
     isVerified: false,
