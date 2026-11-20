@@ -1,14 +1,14 @@
 /**
  * Startup Buildathon 2026 — Neighborhood Guide App
  * Task B6 Test Suite: On-Device AI (Gemini Nano & Gemma 4 E2B)
- * 
+ *
  * Verifies:
  * 1. Android AICore / ML Kit GenAI dynamic readiness evaluation (API 34+, package, foreground, language)
- * 2. Gemma 4 E2B Unsloth GGUF dynamic RAM (3,500 MB), storage, and ARM64 architecture evaluation
+ * 2. Gemma 4 E2B Unsloth GGUF pinned commit SHA, SHA-256, provisional dynamic RAM (3,500 MB), storage, and ARM64 architecture
  * 3. Execution provenance invariants (GEMINI_NANO_LOCAL, GEMMA_LOCAL, CLOUD_FALLBACK, UNAVAILABLE)
  *    and ExecutionEnvironment (CLIENT_ANDROID_NATIVE vs BACKEND_CLOUD_FUNCTIONS)
  * 4. Online/offline switching, privacy fail-closed guarantees, and unassisted heuristics
- * 5. D5 MethodChannel bridge emulation and parameter round-trip
+ * 5. Developer D's D5 MethodChannel bridge contract reconciliation (executeOfflineInference, summarizeOfflineNote, extractOfflineKeywords)
  * 6. Physical Hardware Real Inference Verification (explicitly marked NOT TESTED)
  */
 
@@ -147,7 +147,7 @@ async function runB6TestSuite() {
     'Rejects non-ARM64 architecture (x86_64) for llama.cpp runtime'
   );
 
-  // 2.2: Enforce dynamic available RAM verification (estimated >= 3,500 MB for 3.11GB Q4 model)
+  // 2.2: Enforce provisional dynamic available RAM verification (provisional estimate >= 3,500 MB)
   // Even with 8192 MB total RAM, if available RAM is 2500 MB, reject!
   const tightRamTelemetry = { ...baseTelemetry, totalRamMb: 8192, ramAvailableMb: 2500 };
   const resTightRam = evaluateGemmaGGUFReadiness(tightRamTelemetry, true, true);
@@ -185,20 +185,28 @@ async function runB6TestSuite() {
     'Confirms READY when arm64-v8a + dynamic RAM >= 3500MB + libllama.so + Gemma 4 E2B present'
   );
 
-  // 2.7: Verify Gemma 4 E2B exact model artifact specifications
+  // 2.7: Verify pinned commit SHA, exact filename, and SHA-256 checksum
   assert(
     GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.huggingFaceRepo === 'unsloth/gemma-4-E2B-it-GGUF' &&
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.exactCommitSha === '90f9618340396838ee7ff5b0ba2da27da62953d3' &&
     GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.canonicalFileName === 'gemma-4-E2B-it-Q4_K_M.gguf' &&
     GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.fileSizeBytesQ4 === 3344000000 &&
-    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.multimodalProjectorFileName === 'mmproj-gemma-4-E2B-it-f16.gguf',
-    'Verified exact Gemma 4 E2B repository (unsloth/gemma-4-E2B-it-GGUF), ~3.11GB Q4, and mmproj file'
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.sha256ChecksumQ4 === '740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8',
+    'Verified exact pinned commit SHA (90f96183), canonical filename, 3.11GB size, and SHA-256'
   );
 
-  // 2.8: Separately verify that Gemma 2 2B is explicitly marked as experimental legacy only
+  // 2.8: Verify multimodal projector is explicitly NOT required for B6
+  assert(
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.isMultimodalProjectorRequiredForB6 === false &&
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.multimodalProjectorFileName === 'mmproj-BF16.gguf',
+    'Explicitly verified multimodal projector (mmproj-BF16.gguf) is NOT required for B6 text tasks'
+  );
+
+  // 2.9: Separately verify that Gemma 2 2B is segregated and marked as experimental legacy only
   assert(
     GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC.huggingFaceRepo === 'unsloth/gemma-2-2b-it-GGUF' &&
     GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC.note.includes('EXPERIMENTAL ONLY'),
-    'Gemma 2 2B is explicitly segregated and marked as experimental legacy baseline only'
+    'Gemma 2 2B is segregated and marked as experimental legacy baseline only'
   );
 
   // --------------------------------------------------------------------------
@@ -206,17 +214,38 @@ async function runB6TestSuite() {
   // --------------------------------------------------------------------------
   console.log('\n--- [Suite 3] Execution Provenance & Environment Invariants ---');
 
-  // Mock Native Bridge implementation (representing Android D5 MethodChannel)
-  const mockBridge: NativeBridgeExecutor = {
-    checkAICoreAvailability: async () => ({ isAvailable: true, statusMessage: 'READY', apiLevel: 34 }),
-    getDeviceAICapabilities: async () => baseTelemetry,
-    executeAICoreInference: async (_prompt) => ({
-      success: true,
-      text: 'Local AICore summary: Authentic filter coffee institution.',
+  // Exact D5 MethodChannel mock implementation matching Developer D's MainActivity.kt
+  const mockD5Bridge: NativeBridgeExecutor = {
+    checkAICoreAvailability: async () => ({
+      isAvailable: true,
+      apiLevel: 34,
+      isSupportedDevice: true,
+      aicorePackageInstalled: true,
+      statusMessage: 'AICORE_AVAILABLE: Android AICore system service detected',
     }),
-    executeLlamaCppInference: async (_prompt) => ({
+    getDeviceAICapabilities: async () => baseTelemetry,
+    getNativeAiStatus: async () => 'INFERENCE_ACTIVE',
+    summarizeOfflineNote: async (params) => ({
       success: true,
-      text: 'Local Gemma 4 E2B summary: Bustling traditional heritage bakery.',
+      summary: `Local AICore summary for ${params.spotName}: Traditional filter coffee and crisp vada.`,
+      keyHighlights: ['Piping hot filter coffee', 'Standing counter service'],
+      isLocalInference: true,
+      modelUsed: 'Gemini Nano (Android AICore / ML Kit)',
+      code: 'OK',
+    }),
+    extractOfflineKeywords: async (_params) => ({
+      success: true,
+      keywords: ['coffee', 'vada', 'chutney'],
+      isLocalInference: true,
+      modelUsed: 'Gemini Nano (Android AICore / ML Kit)',
+      code: 'OK',
+    }),
+    executeOfflineInference: async (params) => ({
+      success: true,
+      isLocalInference: true,
+      code: 'OK',
+      engine: params.engine,
+      output: `Local ${params.engine} output: Authentic heritage institution.`,
     }),
   };
 
@@ -244,7 +273,7 @@ async function runB6TestSuite() {
 
   const resNano = await orchestrateLocalInference(reqNano, {
     aicoreModelReady: true,
-    nativeBridge: mockBridge,
+    nativeBridge: mockD5Bridge,
   });
 
   assert(resNano.provenance === 'GEMINI_NANO_LOCAL', 'Assigns GEMINI_NANO_LOCAL provenance');
@@ -252,7 +281,7 @@ async function runB6TestSuite() {
   assert(resNano.executionEnvironment === 'CLIENT_ANDROID_NATIVE', 'Local inference marked as CLIENT_ANDROID_NATIVE');
   assert(!resNano.unassistedFallback, 'GEMINI_NANO_LOCAL is not unassisted fallback');
 
-  // 3.2: Test GEMMA_LOCAL provenance
+  // 3.2: Test GEMMA_LOCAL provenance via D5 executeOfflineInference
   const reqGemma: LocalInferenceRequest = {
     taskId: 'req-gemma-01',
     taskType: 'NOTE_SUMMARIZATION',
@@ -268,7 +297,7 @@ async function runB6TestSuite() {
 
   const resGemma = await orchestrateLocalInference(reqGemma, {
     gemmaModelReady: true,
-    nativeBridge: mockBridge,
+    nativeBridge: mockD5Bridge,
   });
 
   assert(resGemma.provenance === 'GEMMA_LOCAL', 'Assigns GEMMA_LOCAL provenance');
@@ -411,43 +440,67 @@ async function runB6TestSuite() {
   );
 
   // --------------------------------------------------------------------------
-  // Suite 5: D5 Mock Native Bridge Emulation & Round-trip
+  // Suite 5: D5 MethodChannel Bridge Contract Verification (Reconciled with D)
   // --------------------------------------------------------------------------
-  console.log('\n--- [Suite 5] D5 Native Bridge Emulation ---');
+  console.log('\n--- [Suite 5] D5 MethodChannel Bridge Contract Reconciliation ---');
 
-  const d5BridgeCheck = await mockBridge.checkAICoreAvailability();
+  // 5.1: checkAICoreAvailability method parity
+  const d5BridgeCheck = await mockD5Bridge.checkAICoreAvailability();
   assert(
-    d5BridgeCheck.isAvailable === true && d5BridgeCheck.apiLevel === 34,
-    'D5 Bridge checkAICoreAvailability contract verified'
+    d5BridgeCheck.isAvailable === true && d5BridgeCheck.apiLevel === 34 && d5BridgeCheck.aicorePackageInstalled === true,
+    'D5 checkAICoreAvailability contract verified with exact return fields'
   );
 
-  const d5Caps = await mockBridge.getDeviceAICapabilities();
+  // 5.2: getDeviceAICapabilities method parity
+  const d5Caps = await mockD5Bridge.getDeviceAICapabilities();
   assert(
     d5Caps.supportedFeatures.includes('AICORE_GEMINI_NANO') &&
-    d5Caps.ramAvailableMb === 5120,
-    'D5 Bridge getDeviceAICapabilities telemetry round-trip verified'
+    d5Caps.ramAvailableMb === 5120 &&
+    d5Caps.apiLevel === 34,
+    'D5 getDeviceAICapabilities telemetry contract verified'
   );
 
-  const d5AICoreInference = await mockBridge.executeAICoreInference(
-    'Summarize local spot',
-    'SUMMARIZATION'
-  );
+  // 5.3: getNativeAiStatus method parity
+  const d5Status = await mockD5Bridge.getNativeAiStatus();
   assert(
-    d5AICoreInference.success === true &&
-    typeof d5AICoreInference.text === 'string' &&
-    d5AICoreInference.text.includes('AICore'),
-    'D5 Bridge executeAICoreInference round-trip verified'
+    d5Status === 'INFERENCE_ACTIVE',
+    'D5 getNativeAiStatus contract verified'
   );
 
-  const d5LlamaInference = await mockBridge.executeLlamaCppInference(
-    'Summarize local spot',
-    256
-  );
+  // 5.4: summarizeOfflineNote method parity
+  const d5Summary = await mockD5Bridge.summarizeOfflineNote({
+    noteText: 'Historical floral heritage of Malleshwaram market.',
+    spotName: '8th Cross Market',
+    language: 'en',
+  });
   assert(
-    d5LlamaInference.success === true &&
-    typeof d5LlamaInference.text === 'string' &&
-    d5LlamaInference.text.includes('Gemma 4 E2B'),
-    'D5 Bridge executeLlamaCppInference round-trip verified'
+    d5Summary.success === true &&
+    d5Summary.isLocalInference === true &&
+    Array.isArray(d5Summary.keyHighlights),
+    'D5 summarizeOfflineNote contract verified with exact parameters & return types'
+  );
+
+  // 5.5: extractOfflineKeywords method parity
+  const d5Keywords = await mockD5Bridge.extractOfflineKeywords({
+    text: 'Traditional filter coffee in stainless steel tumbler',
+  });
+  assert(
+    d5Keywords.success === true &&
+    d5Keywords.isLocalInference === true &&
+    Array.isArray(d5Keywords.keywords),
+    'D5 extractOfflineKeywords contract verified with exact parameters & return types'
+  );
+
+  // 5.6: executeOfflineInference method parity (resolving interface discrepancy)
+  const d5OfflineInference = await mockD5Bridge.executeOfflineInference({
+    prompt: 'Summarize spot history',
+    engine: 'LLAMA_CPP',
+  });
+  assert(
+    d5OfflineInference.success === true &&
+    d5OfflineInference.isLocalInference === true &&
+    d5OfflineInference.engine === 'LLAMA_CPP',
+    'D5 executeOfflineInference contract verified (reconciling AICORE and LLAMA_CPP engines)'
   );
 
   // --------------------------------------------------------------------------

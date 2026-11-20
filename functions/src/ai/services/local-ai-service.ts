@@ -1,7 +1,7 @@
 /**
  * Startup Buildathon 2026 — Neighborhood Guide App
  * Task B6: Local & On-Device AI Capability Evaluation & Offline Orchestration Engine
- * 
+ *
  * ARCHITECTURAL BOUNDARY NOTICE:
  * This service implements the AI-side domain contracts, readiness evaluation heuristics,
  * and offline/online switching orchestration.
@@ -44,20 +44,22 @@ import {
  */
 export const GEMMA_4_E2B_UNSLOTH_GGUF_SPEC = {
   huggingFaceRepo: 'unsloth/gemma-4-E2B-it-GGUF',
+  exactCommitSha: '90f9618340396838ee7ff5b0ba2da27da62953d3',
   canonicalFileName: 'gemma-4-E2B-it-Q4_K_M.gguf',
-  highFidelityFileName: 'gemma-4-E2B-it-Q8_0.gguf',
-  multimodalProjectorFileName: 'mmproj-gemma-4-E2B-it-f16.gguf',
   fileSizeBytesQ4: 3344000000, // ~3.11 GB
+  sha256ChecksumQ4: '740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8',
+  highFidelityFileName: 'gemma-4-E2B-it-Q8_0.gguf',
   fileSizeBytesQ8: 5420000000, // ~5.05 GB
-  fileSizeBytesProjector: 1073741824, // ~1.0 GB
-  artifactRevision: 'main',
-  license: 'Gemma Open Model Terms of Use (Governed by Google open model license)',
+  multimodalProjectorFileName: 'mmproj-BF16.gguf',
+  fileSizeBytesProjector: 1034944512, // ~987 MB
+  isMultimodalProjectorRequiredForB6: false, // B6 scope is text note summarization & keywords; mmproj is not required
+  license: 'Gemma Open Model Terms of Use (Governed by Google open model terms)',
   runtimeLibrary: 'libllama.so (llama.cpp compiled for arm64-v8a with Android NDK 26+)',
   targetArch: 'arm64-v8a', // 64-bit ARM architecture requirement
-  // Estimated thresholds pending physical hardware profiling:
-  estimatedMinAvailableRamMb: 3500, // Estimated dynamic available RAM required for 3.11GB Q4 + KV cache
-  estimatedMinTotalRamMb: 8192,     // Estimated physical system RAM (8GB+ recommended)
-  minStorageMb: 5000,               // Free disk space required for 3.11GB model cache + buffers
+  // Provisional estimates pending physical hardware profiling:
+  provisionalMinAvailableRamMb: 3500, // Provisional estimate: dynamic available RAM for 3.11GB Q4 + context buffer
+  provisionalMinTotalRamMb: 8192,     // Provisional estimate: physical system RAM (>= 8 GB recommended)
+  minStorageMb: 5000,               // Free disk space required for 3.11GB model cache + temp decomp buffers
   typicalTokensPerSec: '8-15 tokens/sec (Snapdragon 8 Gen 2 / 8 Gen 3)',
   coldStartLatencySec: '2.5 - 4.5 seconds',
 } as const;
@@ -75,14 +77,15 @@ export const GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC = {
 /**
  * 1. Evaluates Android AICore / ML Kit GenAI readiness.
  * Authority: Google ML Kit GenAI (https://developers.google.com/ml-kit/genai/)
+ * Exact Gradle dependencies:
+ * - implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
+ * - implementation("com.google.mlkit:genai-summarization:1.0.0-beta4")
  *
- * Uses dynamic ML Kit GenAI status rules:
- * - Android 14+ (API 34+) requirement
- * - com.google.android.aicore package presence
- * - Host application foreground execution status
- * - Feature-specific availability (Direct Model vs Summarization vs Rewrite vs Vision)
- * - Supported language check (English-first on-device foundation models)
- * - Dynamic model download state (DOWNLOADABLE vs DOWNLOADING vs READY)
+ * Maps actual ML Kit GenAI FeatureStatus values:
+ * - FeatureStatus.AVAILABLE -> MODEL_READY
+ * - FeatureStatus.DOWNLOADABLE -> MODEL_DOWNLOADABLE
+ * - FeatureStatus.DOWNLOADING -> MODEL_DOWNLOADING
+ * - FeatureStatus.UNAVAILABLE -> FEATURE_NOT_SUPPORTED
  */
 export function evaluateAICoreReadiness(
   telemetry: DeviceAICapabilities,
@@ -151,7 +154,7 @@ export function evaluateAICoreReadiness(
     };
   }
 
-  // Check 7: Dynamic model download state
+  // Check 7: Dynamic model download state (from GenerativeModel.checkStatus() / FeatureStatus)
   if (dynamicModelState === 'DOWNLOADING') {
     return {
       status: 'MODEL_DOWNLOADING',
@@ -177,7 +180,7 @@ export function evaluateAICoreReadiness(
 
 /**
  * 2. Evaluates Gemma 4 E2B Unsloth GGUF via llama.cpp readiness.
- * Evaluates dynamic available RAM (estimated >= 3,500 MB), CPU architecture (arm64-v8a),
+ * Evaluates dynamic available RAM (provisional estimate >= 3,500 MB), CPU architecture (arm64-v8a),
  * storage space (>= 5,000 MB), native runtime presence, and GGUF model file existence.
  */
 export function evaluateGemmaGGUFReadiness(
@@ -197,11 +200,11 @@ export function evaluateGemmaGGUFReadiness(
 
   // Check 2: Dynamic Available RAM (not just total physical RAM)
   // Gemma 4 E2B Q4_K_M is ~3.11 GB. Loading requires ~3.5 GB free RAM.
-  if (telemetry.ramAvailableMb < GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.estimatedMinAvailableRamMb) {
+  if (telemetry.ramAvailableMb < GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.provisionalMinAvailableRamMb) {
     return {
       status: 'INSUFFICIENT_AVAILABLE_RAM',
       isReady: false,
-      reason: `Dynamic available RAM (${telemetry.ramAvailableMb} MB) is below estimated required ${GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.estimatedMinAvailableRamMb} MB for Gemma 4 E2B GGUF runtime.`,
+      reason: `Dynamic available RAM (${telemetry.ramAvailableMb} MB) is below provisional estimated ${GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.provisionalMinAvailableRamMb} MB for Gemma 4 E2B GGUF runtime.`,
     };
   }
 
@@ -379,13 +382,54 @@ export function generateUnassistedFallback(
 }
 
 /**
- * Interface for pluggable native bridge executor (emulating D5 MethodChannel)
+ * Interface for Developer D's MethodChannel contract:
+ * com.innovotribe.locallens/native_ai
+ * Implemented in Android Kotlin (MainActivity.kt) and Flutter (NativePlatformService).
  */
 export interface NativeBridgeExecutor {
-  checkAICoreAvailability(): Promise<{ isAvailable: boolean; statusMessage: string; apiLevel: number }>;
+  checkAICoreAvailability(): Promise<{
+    isAvailable: boolean;
+    apiLevel: number;
+    isSupportedDevice: boolean;
+    aicorePackageInstalled: boolean;
+    statusMessage: string;
+  }>;
   getDeviceAICapabilities(): Promise<DeviceAICapabilities>;
-  executeAICoreInference(prompt: string, feature: AICoreFeature): Promise<{ success: boolean; text?: string; code?: string }>;
-  executeLlamaCppInference(prompt: string, maxTokens: number): Promise<{ success: boolean; text?: string; code?: string }>;
+  getNativeAiStatus(): Promise<string>;
+  summarizeOfflineNote(params: {
+    noteText: string;
+    spotName: string;
+    language?: string;
+  }): Promise<{
+    success: boolean;
+    summary: string;
+    keyHighlights: string[];
+    isLocalInference: boolean;
+    modelUsed: string;
+    code: string;
+    message?: string;
+  }>;
+  extractOfflineKeywords(params: {
+    text: string;
+  }): Promise<{
+    success: boolean;
+    keywords: string[];
+    isLocalInference: boolean;
+    modelUsed: string;
+    code: string;
+    message?: string;
+  }>;
+  executeOfflineInference(params: {
+    prompt: string;
+    engine: 'AICORE' | 'LLAMA_CPP';
+  }): Promise<{
+    success: boolean;
+    isLocalInference: boolean;
+    code: string;
+    engine: string;
+    output?: string;
+    message?: string;
+  }>;
 }
 
 /**
@@ -432,25 +476,77 @@ export async function orchestrateLocalInference(
   if (engineSelection.chosenEngine === 'GEMINI_NANO') {
     if (options.nativeBridge) {
       try {
-        const bridgeRes = await options.nativeBridge.executeAICoreInference(request.prompt, 'SUMMARIZATION');
-        if (bridgeRes.success && bridgeRes.text) {
-          return {
-            taskId: request.taskId,
-            success: true,
-            provenance: 'GEMINI_NANO_LOCAL',
-            executionEnvironment: 'CLIENT_ANDROID_NATIVE',
-            isLocalInference: true,
-            modelUsed: 'Gemini Nano (Android AICore / ML Kit)',
-            code: 'OK',
-            message: 'Inference completed on-device via Android AICore.',
-            output: {
-              summary: bridgeRes.text,
-              keyHighlights: [bridgeRes.text.slice(0, 60)],
-            },
-            unassistedFallback: false,
-            executionDurationMs: Date.now() - startTime,
-            metadata: { aicoreVersion: request.deviceCapabilities.aicoreVersion },
-          };
+        if (request.taskType === 'NOTE_SUMMARIZATION') {
+          const bridgeRes = await options.nativeBridge.summarizeOfflineNote({
+            noteText: request.prompt,
+            spotName: request.spotName || '',
+            language: request.language,
+          });
+          if (bridgeRes.success && bridgeRes.isLocalInference) {
+            return {
+              taskId: request.taskId,
+              success: true,
+              provenance: 'GEMINI_NANO_LOCAL',
+              executionEnvironment: 'CLIENT_ANDROID_NATIVE',
+              isLocalInference: true,
+              modelUsed: bridgeRes.modelUsed || 'Gemini Nano (Android AICore / ML Kit)',
+              code: 'OK',
+              message: 'Inference completed on-device via Android AICore.',
+              output: {
+                summary: bridgeRes.summary,
+                keyHighlights: bridgeRes.keyHighlights,
+              },
+              unassistedFallback: false,
+              executionDurationMs: Date.now() - startTime,
+              metadata: { aicoreVersion: request.deviceCapabilities.aicoreVersion },
+            };
+          }
+        } else if (request.taskType === 'KEYWORD_EXTRACTION') {
+          const bridgeRes = await options.nativeBridge.extractOfflineKeywords({
+            text: request.prompt,
+          });
+          if (bridgeRes.success && bridgeRes.isLocalInference) {
+            return {
+              taskId: request.taskId,
+              success: true,
+              provenance: 'GEMINI_NANO_LOCAL',
+              executionEnvironment: 'CLIENT_ANDROID_NATIVE',
+              isLocalInference: true,
+              modelUsed: bridgeRes.modelUsed || 'Gemini Nano (Android AICore / ML Kit)',
+              code: 'OK',
+              message: 'Keyword extraction completed on-device via Android AICore.',
+              output: {
+                keywords: bridgeRes.keywords,
+              },
+              unassistedFallback: false,
+              executionDurationMs: Date.now() - startTime,
+              metadata: { aicoreVersion: request.deviceCapabilities.aicoreVersion },
+            };
+          }
+        } else {
+          // General / Spot assistance inference
+          const bridgeRes = await options.nativeBridge.executeOfflineInference({
+            prompt: request.prompt,
+            engine: 'AICORE',
+          });
+          if (bridgeRes.success && bridgeRes.isLocalInference) {
+            return {
+              taskId: request.taskId,
+              success: true,
+              provenance: 'GEMINI_NANO_LOCAL',
+              executionEnvironment: 'CLIENT_ANDROID_NATIVE',
+              isLocalInference: true,
+              modelUsed: 'Gemini Nano (Android AICore / ML Kit)',
+              code: 'OK',
+              message: 'Inference completed on-device via Android AICore.',
+              output: {
+                answer: bridgeRes.output,
+              },
+              unassistedFallback: false,
+              executionDurationMs: Date.now() - startTime,
+              metadata: { aicoreVersion: request.deviceCapabilities.aicoreVersion },
+            };
+          }
         }
       } catch (_err: any) {
         // Native execution failure: fall through to failsafe
@@ -482,8 +578,11 @@ export async function orchestrateLocalInference(
   if (engineSelection.chosenEngine === 'GEMMA_GGUF') {
     if (options.nativeBridge) {
       try {
-        const bridgeRes = await options.nativeBridge.executeLlamaCppInference(request.prompt, 256);
-        if (bridgeRes.success && bridgeRes.text) {
+        const bridgeRes = await options.nativeBridge.executeOfflineInference({
+          prompt: request.prompt,
+          engine: 'LLAMA_CPP',
+        });
+        if (bridgeRes.success && bridgeRes.isLocalInference) {
           return {
             taskId: request.taskId,
             success: true,
@@ -494,8 +593,8 @@ export async function orchestrateLocalInference(
             code: 'OK',
             message: 'Inference completed on-device via llama.cpp ARM64 runtime.',
             output: {
-              summary: bridgeRes.text,
-              keyHighlights: [bridgeRes.text.slice(0, 60)],
+              summary: bridgeRes.output,
+              keyHighlights: [bridgeRes.output?.slice(0, 60) || ''],
             },
             unassistedFallback: false,
             executionDurationMs: Date.now() - startTime,
@@ -503,6 +602,7 @@ export async function orchestrateLocalInference(
               quantization: 'Q4_K_M',
               targetArch: GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.targetArch,
               repo: GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.huggingFaceRepo,
+              commitSha: GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.exactCommitSha,
             },
           };
         }
