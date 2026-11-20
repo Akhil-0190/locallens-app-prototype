@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
 import '../providers/spot_providers.dart';
@@ -61,6 +62,11 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
       appBar: AppBar(
         title: const Text('Street Pocket Guide'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.alt_route),
+            onPressed: () => context.push('/route'),
+            tooltip: 'Walking Route Tour',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshSpots,

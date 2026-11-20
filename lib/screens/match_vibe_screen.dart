@@ -1,6 +1,7 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
 import '../models/traveler_preferences.dart';
@@ -388,9 +389,19 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
             if (ref.watch(isGeneratingRouteProvider))
               const AppLoadingIndicator(message: 'Generating uncrowded route...')
             else if (ref.watch(hasGeneratedRouteProvider)) ...[
-              const Text(
-                'Recommended Uncrowded Route',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Recommended Uncrowded Route',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: () => context.push('/route'),
+                    icon: const Icon(Icons.map, size: 16),
+                    label: const Text('Start Walking Tour'),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               if (ref.watch(matchedRouteProvider).isEmpty)
