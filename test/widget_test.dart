@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -160,7 +161,8 @@ void main() {
 
     // 1. Verify Sample Data Disclaimer Banner
     expect(
-      find.text('[Sample Discovery Data: Awaiting B4 AI Matching & C2 Maps Deployments]'),
+      find.text(
+          '[Sample Discovery Data: Illustrative sample results — live integrations pending]'),
       findsOneWidget,
     );
 

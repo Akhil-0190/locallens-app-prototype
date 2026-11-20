@@ -4,8 +4,8 @@ import '../models/traveler_preferences.dart';
 /// Gateway service for traveler preferences and place discovery.
 ///
 /// INTEGRATION BOUNDARY:
-/// - Developer B owns AI taste-matching recommendations (Task B4).
-/// - Developer C owns Maps grounding and crowd verification (Task C2/C3).
+/// - Developer B owns AI taste-matching recommendations and candidate scoring.
+/// - Developer C owns Maps grounding (C2 complete) and walking routes (C3 merged in backend).
 /// - Developer D displays supplied data and manages traveler UI states.
 /// - Clearly discloses sample responses adhering to Domain 06 contracts.
 class TravelerService {

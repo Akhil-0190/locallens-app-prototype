@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -192,7 +193,7 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '[Sample Discovery Data: Awaiting B4 AI Matching & C2 Maps Deployments]',
+                    '[Sample Discovery Data: Illustrative sample results — live integrations pending]',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
