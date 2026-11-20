@@ -193,14 +193,27 @@ export class PlacesService {
    */
   private getMockPlaces(query: string): NormalizedPlace[] {
     const qLower = query.toLowerCase();
-    const matches = SAMPLE_PLACES_FIXTURE.filter(
-      (p) =>
-        p.displayName?.text.toLowerCase().includes(qLower) ||
-        p.primaryType?.toLowerCase().includes(qLower) ||
-        p.formattedAddress?.toLowerCase().includes(qLower)
-    );
+    const tokens = qLower.split(/\s+/).filter((t) => t.length > 2);
 
-    const candidates = matches.length > 0 ? matches : SAMPLE_PLACES_FIXTURE;
+    const scored = SAMPLE_PLACES_FIXTURE.map((p) => {
+      const name = (p.displayName?.text || '').toLowerCase();
+      const cat = (p.primaryType || '').toLowerCase();
+      const addr = (p.formattedAddress || '').toLowerCase();
+      let score = 0;
+
+      if (name.includes(qLower)) score += 50;
+      for (const tok of tokens) {
+        if (name.includes(tok)) score += 10;
+        else if (cat.includes(tok)) score += 5;
+        else if (addr.includes(tok)) score += 1;
+      }
+      return { place: p, score };
+    });
+
+    const positive = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
+    const candidates =
+      positive.length > 0 ? positive.map((s) => s.place) : SAMPLE_PLACES_FIXTURE;
+
     return candidates.map((p) => NormalizationService.normalizePlace(p, true));
   }
 }
