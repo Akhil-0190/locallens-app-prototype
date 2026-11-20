@@ -282,6 +282,54 @@ export const VenueHourlyCapacityDocumentSchema = z.object({
 export type SuggestedAlternative = z.infer<typeof SuggestedAlternativeSchema>;
 export type VenueHourlyCapacityDocument = z.infer<typeof VenueHourlyCapacityDocumentSchema>;
 
+export const ScheduledVisitStatusSchema = z.enum(['CONFIRMED', 'CANCELLED', 'COMPLETED']);
+
+export const ScheduledVisitDocumentSchema = z
+  .object({
+    visitId: z.string().regex(/^visit_[a-f0-9]{20}$/),
+    placeId: z.string().min(1),
+    slotId: z.string().regex(/^slot_\d{8}_\d{2}00$/),
+    travelerId: z.string().min(1),
+    partySize: z.number().int().min(1),
+    groupSessionId: z.string().nullable().optional(),
+    memberUserIds: z.array(z.string()).min(1),
+    idempotencyKey: z.string().min(1),
+    status: ScheduledVisitStatusSchema.default('CONFIRMED'),
+    hourSlot: z.string().datetime(),
+    timeZone: z.string().min(1),
+    localTimeSlot: z.string().min(1),
+    completedAt: z.string().datetime().nullable().optional(),
+    completedBy: z.enum(['TRAVELER_CHECKIN', 'SYSTEM_EXPIRATION']).nullable().optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .refine(
+    (data) => data.memberUserIds.length === data.partySize,
+    { message: 'memberUserIds.length must equal partySize' }
+  )
+  .refine(
+    (data) => data.memberUserIds.includes(data.travelerId),
+    { message: 'travelerId must be included in memberUserIds' }
+  )
+  .refine(
+    (data) => {
+      const d = new Date(data.hourSlot);
+      if (isNaN(d.getTime())) return false;
+      if (d.getUTCMinutes() !== 0 || d.getUTCSeconds() !== 0 || d.getUTCMilliseconds() !== 0) return false;
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      const hour = String(d.getUTCHours()).padStart(2, '0');
+      const expectedSlotId = `slot_${year}${month}${day}_${hour}00`;
+      return data.slotId === expectedSlotId;
+    },
+    { message: 'slotId must be derived from and match hourSlot (must be top-of-the-hour in UTC)' }
+  );
+
+export type ScheduledVisitStatus = z.infer<typeof ScheduledVisitStatusSchema>;
+export type ScheduledVisitDocument = z.infer<typeof ScheduledVisitDocumentSchema>;
+
+
 // ==============================================================================
 // 8. Routes and Route Stops (Domain 08)
 // ==============================================================================
@@ -362,11 +410,13 @@ export const GroupSessionDocumentSchema = z.object({
   neighborhood: z.string().min(1),
   status: z.enum(['INVITING', 'BLENDING', 'FINALIZED', 'EXPIRED']),
   members: z.array(MemberPreferenceInputSchema),
+  memberUserIds: z.array(z.string()).default([]),
   consensusBlend: ConsensusBlendOutputSchema.nullable().default(null),
   recommendedSpotIds: z.array(z.string()).default([]),
   createdAt: z.string(),
   expiresAt: z.string(),
 });
+
 
 export type MemberPreferenceInput = z.infer<typeof MemberPreferenceInputSchema>;
 export type ConsensusBlendOutput = z.infer<typeof ConsensusBlendOutputSchema>;
@@ -548,6 +598,11 @@ export function validateCanonicalPlace(data: unknown): CanonicalPlaceDocument {
 export function validateVenueHourlyCapacity(data: unknown): VenueHourlyCapacityDocument {
   return VenueHourlyCapacityDocumentSchema.parse(data);
 }
+
+export function validateScheduledVisit(data: unknown): ScheduledVisitDocument {
+  return ScheduledVisitDocumentSchema.parse(data);
+}
+
 
 export function validateCanonicalRoute(data: unknown): CanonicalRouteDocument {
   return CanonicalRouteDocumentSchema.parse(data);

@@ -41,9 +41,48 @@ export interface VenueHourlyCapacityDocument {
 
 ## 3. Throttling Thresholds
 
-| Crowd Level | Remaining Capacity | Client UI State |
-| :--- | :---: | :--- |
-| **LOW** | > 60% of maxCapacity | Green badge: "Spacious & authentic" |
-| **MODERATE** | 30% - 60% of maxCapacity | Yellow badge: "Moderate crowd" |
-| **HIGH** | 1% - 29% of maxCapacity | Orange badge: "Busy â€” visit recommended later" |
-| **AT_CAPACITY** | 0 remaining | Red badge: "Throttled â€” Redirecting to Plan-B alternative" |
+Thresholds strictly measure **remaining capacity percentage**:
+$$\text{remainingPercentage} = \frac{\text{remainingCapacity}}{\text{maxCapacity}} \times 100$$
+
+| Crowd Level | Remaining Percentage Range | Remaining Capacity Math | Throttling Flag (`isThrottled`) | Client UI State |
+| :--- | :---: | :---: | :---: | :--- |
+| **LOW** | $> 60.0\%$ | $\text{remainingCapacity} > 0.60 \times \text{maxCapacity}$ | `false` | Green badge: "Spacious & authentic" |
+| **MODERATE** | $30.0\% \le \text{pct} \le 60.0\%$ | $0.30 \times \text{maxCapacity} \le \text{remainingCapacity} \le 0.60 \times \text{maxCapacity}$ | `false` | Yellow badge: "Moderate crowd" |
+| **HIGH** | $0\% < \text{pct} < 30.0\%$ | $0 < \text{remainingCapacity} < 0.30 \times \text{maxCapacity}$ | `false` | Orange badge: "Busy â€” visit recommended later" |
+| **AT_CAPACITY** | $\le 0\%$ | $\text{remainingCapacity} \le 0$ | `true` | Red badge: "Throttled â€” Redirecting to Plan-B alternative" |
+
+---
+
+## 4. Scheduled Visit Reservation Document
+
+**Firestore Collection:** `scheduled_visits/{visitId}`
+**Sample Payload:** [docs/contracts/samples/07-scheduled-visit.sample.json](file:///d:/Judah/Projects/Hackthon/Google/BuildathonNew/neighborhoodguideapp/docs/contracts/samples/07-scheduled-visit.sample.json)
+
+```typescript
+export type ScheduledVisitStatus = 'CONFIRMED' | 'CANCELLED' | 'COMPLETED';
+
+export interface ScheduledVisitDocument {
+  visitId: string;                      // Deterministic: "visit_" + sha256(travelerId + ":" + idempotencyKey).slice(0, 20)
+  placeId: string;                      // Canonical Place ID
+  slotId: string;                       // Strictly "slot_YYYYMMDD_HH00" in UTC
+  travelerId: string;                   // Auth UID of booking traveler / group host
+  partySize: number;                    // Number of visitors allocated (>= 1)
+  groupSessionId?: string | null;       // Optional group session foreign key (Domain 09)
+  memberUserIds: string[];              // Immutable snapshot: traveler UIDs covered (length === partySize, includes travelerId)
+  idempotencyKey: string;               // Client UUID guaranteeing exactly-once transaction
+  status: ScheduledVisitStatus;         // Current lifecycle state ('CONFIRMED' | 'CANCELLED' | 'COMPLETED')
+  hourSlot: string;                     // ISO 8601 UTC timestamp: "YYYY-MM-DDTHH:00:00.000Z"
+  timeZone: string;                     // Canonical IANA timezone derived from place (e.g. "Asia/Kolkata")
+  localTimeSlot: string;                // Derived human display: "19:30 - 20:30 IST"
+  completedAt?: string | null;          // ISO 8601 UTC timestamp of check-in / completion
+  completedBy?: 'TRAVELER_CHECKIN' | 'SYSTEM_EXPIRATION' | null;
+  createdAt: string;                    // ISO 8601 UTC
+  updatedAt: string;                    // ISO 8601 UTC
+}
+```
+
+### Key Invariants:
+1. `memberUserIds.length === partySize`.
+2. `memberUserIds.includes(travelerId)`.
+3. `slotId` must match `hourSlot` derived at top of the hour UTC (`slot_YYYYMMDD_HH00`).
+4. `currentVisitorsCount` on `places/{placeId}/hourly_capacities/{slotId}` increments on booking, does not re-increment on check-in, decrements on cancellation before slot begins, and remains unaffected by completion.

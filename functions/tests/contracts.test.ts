@@ -11,6 +11,7 @@ import {
   validateContributorProfile,
   validateCanonicalPlace,
   validateVenueHourlyCapacity,
+  validateScheduledVisit,
   validateCanonicalRoute,
   validateGroupSession,
   validateOfflinePackManifest,
@@ -21,7 +22,9 @@ import {
   NormalizedCoordinateSchema,
   UserAccountDocumentSchema,
   ContributorTipDocumentSchema,
+  ScheduledVisitDocumentSchema,
 } from '../src/types/contracts/index';
+
 
 const SAMPLES_DIR = path.resolve(__dirname, '../../../docs/contracts/samples');
 
@@ -104,6 +107,54 @@ describe('Task A2 — Canonical Shared Contracts Validation (All 12 Domains)', (
     assert.strictEqual(validated.isThrottled, true);
     assert.strictEqual(validated.suggestedAlternatives[0].alternativeName, 'Veena Stores');
   });
+
+  test('Domain 07: Scheduled Visit Reservation sample validates', () => {
+    const sample = loadSampleJson('07-scheduled-visit.sample.json');
+    const validated = validateScheduledVisit(sample);
+    assert.strictEqual(validated.visitId, 'visit_a1b2c3d4e5f67890abcd');
+    assert.strictEqual(validated.placeId, 'place_ctr_malleshwaram_01');
+    assert.strictEqual(validated.slotId, 'slot_20261120_1400');
+    assert.strictEqual(validated.partySize, 2);
+    assert.strictEqual(validated.memberUserIds.length, 2);
+    assert.strictEqual(validated.memberUserIds.includes(validated.travelerId), true);
+  });
+
+  test('Domain 07: ScheduledVisit rejects slotId and hourSlot mismatch', () => {
+    const sample = loadSampleJson('07-scheduled-visit.sample.json');
+    assert.throws(
+      () =>
+        ScheduledVisitDocumentSchema.parse({
+          ...sample,
+          slotId: 'slot_20261120_1500', // Mismatch with hourSlot 14:00
+        }),
+      /slotId must be derived from and match hourSlot/
+    );
+  });
+
+  test('Domain 07: ScheduledVisit rejects roster length not equal to partySize', () => {
+    const sample = loadSampleJson('07-scheduled-visit.sample.json');
+    assert.throws(
+      () =>
+        ScheduledVisitDocumentSchema.parse({
+          ...sample,
+          partySize: 3, // Mismatch with memberUserIds length (2)
+        }),
+      /memberUserIds.length must equal partySize/
+    );
+  });
+
+  test('Domain 07: ScheduledVisit rejects host not included in roster', () => {
+    const sample = loadSampleJson('07-scheduled-visit.sample.json');
+    assert.throws(
+      () =>
+        ScheduledVisitDocumentSchema.parse({
+          ...sample,
+          travelerId: 'usr_different_traveler',
+        }),
+      /travelerId must be included in memberUserIds/
+    );
+  });
+
 
   // Domain 08: Routes and Route Stops
   test('Domain 08: Routes & Route Stops sample validates', () => {

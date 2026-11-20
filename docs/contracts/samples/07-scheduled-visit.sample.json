@@ -1,0 +1,21 @@
+{
+  "visitId": "visit_a1b2c3d4e5f67890abcd",
+  "placeId": "place_ctr_malleshwaram_01",
+  "slotId": "slot_20261120_1400",
+  "travelerId": "usr_blr_782914",
+  "partySize": 2,
+  "groupSessionId": "group_9f8e7d6c5b4a",
+  "memberUserIds": [
+    "usr_blr_782914",
+    "usr_blr_883015"
+  ],
+  "idempotencyKey": "req_550e8400-e29b-41d4-a716-446655440000",
+  "status": "CONFIRMED",
+  "hourSlot": "2026-11-20T14:00:00.000Z",
+  "timeZone": "Asia/Kolkata",
+  "localTimeSlot": "19:30 - 20:30 IST",
+  "completedAt": null,
+  "completedBy": null,
+  "createdAt": "2026-11-20T10:15:30.000Z",
+  "updatedAt": "2026-11-20T10:15:30.000Z"
+}
