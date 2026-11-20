@@ -26,7 +26,8 @@ export class PlacesService {
    * Performs text search using Google Places API (New) (POST /v1/places:searchText).
    */
   public async searchText(request: PlaceSearchTextRequest): Promise<NormalizedPlace[]> {
-    if (!this.config.apiKey) {
+    const key = this.config.placesApiKey || this.config.apiKey;
+    if (!key) {
       if (this.config.allowMockFallback) {
         return this.getMockPlaces(request.textQuery);
       }
@@ -42,7 +43,7 @@ export class PlacesService {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': this.config.apiKey,
+              'X-Goog-Api-Key': key,
               'X-Goog-FieldMask': this.config.fieldMasks.placesSearch,
             },
             body: JSON.stringify(request),
@@ -81,7 +82,8 @@ export class PlacesService {
    * Performs nearby search using Google Places API (New) (POST /v1/places:searchNearby).
    */
   public async searchNearby(request: PlaceSearchNearbyRequest): Promise<NormalizedPlace[]> {
-    if (!this.config.apiKey) {
+    const key = this.config.placesApiKey || this.config.apiKey;
+    if (!key) {
       if (this.config.allowMockFallback) {
         return this.getMockPlaces('nearby');
       }
@@ -97,7 +99,7 @@ export class PlacesService {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': this.config.apiKey,
+              'X-Goog-Api-Key': key,
               'X-Goog-FieldMask': this.config.fieldMasks.placesSearch,
             },
             body: JSON.stringify(request),
@@ -135,7 +137,8 @@ export class PlacesService {
    * Fetches detailed place information (GET /v1/places/{placeId}).
    */
   public async getPlaceDetails(placeId: string): Promise<NormalizedPlace> {
-    if (!this.config.apiKey) {
+    const key = this.config.placesApiKey || this.config.apiKey;
+    if (!key) {
       if (this.config.allowMockFallback) {
         const found = SAMPLE_PLACES_FIXTURE.find((p) => p.id === placeId) || SAMPLE_PLACES_FIXTURE[0]!;
         return NormalizationService.normalizePlace(found, true);
@@ -152,7 +155,7 @@ export class PlacesService {
             method: 'GET',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': this.config.apiKey,
+              'X-Goog-Api-Key': key,
               'X-Goog-FieldMask': this.config.fieldMasks.placeDetails,
             },
             signal: AbortSignal.timeout(this.config.requestTimeoutMs),

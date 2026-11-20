@@ -31,7 +31,8 @@ export class RoutesService {
     intermediates?: LatLng[],
     optimizeWaypoints: boolean = false
   ): Promise<WalkingRoute> {
-    if (!this.config.apiKey) {
+    const key = this.config.routesApiKey || this.config.apiKey;
+    if (!key) {
       if (this.config.allowMockFallback) {
         return this.createFallbackRoute(origin, destination, intermediates);
       }
@@ -77,7 +78,7 @@ export class RoutesService {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': this.config.apiKey,
+              'X-Goog-Api-Key': key,
               'X-Goog-FieldMask': this.config.fieldMasks.routesCompute,
             },
             body: JSON.stringify(payload),

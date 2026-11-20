@@ -8,6 +8,8 @@
 
 export interface MapsPlatformConfig {
   apiKey: string;
+  placesApiKey?: string;
+  routesApiKey?: string;
   placesApiBaseUrl: string;
   routesApiBaseUrl: string;
   requestTimeoutMs: number;
@@ -27,8 +29,20 @@ export function getMapsConfig(): MapsPlatformConfig {
     process.env['MAPS_API_KEY'] ||
     '';
 
+  const placesApiKey =
+    process.env['GOOGLE_MAPS_PLACES_API_KEY'] ||
+    process.env['PLACES_API_KEY'] ||
+    apiKey;
+
+  const routesApiKey =
+    process.env['GOOGLE_MAPS_ROUTES_API_KEY'] ||
+    process.env['ROUTES_API_KEY'] ||
+    apiKey;
+
   return {
     apiKey,
+    placesApiKey,
+    routesApiKey,
     placesApiBaseUrl: 'https://places.googleapis.com/v1/places',
     routesApiBaseUrl: 'https://routes.googleapis.com/directions/v2:computeRoutes',
     requestTimeoutMs: 10000,
