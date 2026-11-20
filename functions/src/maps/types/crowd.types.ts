@@ -27,6 +27,50 @@ export type VenueCapacityStatus =
 /**
  * Structured evaluation result for a venue at a given visit time
  */
+export type CrowdSignalSource =
+  | 'COMMUNITY_SIGNALS'
+  | 'SCHEDULED_RESERVATIONS'
+  | 'HYBRID_BLENDED'
+  | 'SAMPLE_FIXTURE';
+
+export interface CommunitySignalsSummary {
+  activeReportsCount: number;
+  averageWaitMinutes: number;
+  lastReportedAt: string;
+  predominantReportedLevel: CrowdLevel;
+}
+
+export interface CommunityCrowdSignal {
+  reportId: string;
+  placeId: string;
+  reportedCrowdLevel: 'LOW' | 'MODERATE' | 'HIGH' | 'AT_CAPACITY';
+  estimatedWaitMinutes: number;
+  reporterType: 'LOCAL_RESIDENT' | 'VISITING_TRAVELER' | 'PARTNER_MERCHANT';
+  reporterWeight: number; // e.g. LOCAL_RESIDENT: 1.5, PARTNER_MERCHANT: 1.25, VISITING_TRAVELER: 1.0
+  reportedAt: string;     // ISO 8601
+  expiresAt: string;      // ISO 8601 (freshness window: 90 mins TTL)
+  travelerId?: string;
+  userCoordinate?: LatLng;
+  note?: string;
+  isMockData: boolean;
+}
+
+export interface ReportVenueCrowdRequest {
+  placeId: string;
+  crowdLevel: 'LOW' | 'MODERATE' | 'HIGH' | 'AT_CAPACITY';
+  estimatedWaitMinutes?: number;
+  reporterType?: 'LOCAL_RESIDENT' | 'VISITING_TRAVELER' | 'PARTNER_MERCHANT';
+  userCoordinate?: LatLng;
+  note?: string;
+}
+
+export interface ReportVenueCrowdResult {
+  success: boolean;
+  signal: CommunityCrowdSignal;
+  synthesizedEvaluation: VenueCapacityEvaluation;
+  rewardPointsEarned: number;
+}
+
 export interface VenueCapacityEvaluation {
   placeId: string;
   placeName?: string;
@@ -40,6 +84,8 @@ export interface VenueCapacityEvaluation {
   isThrottled: boolean;
   isMockData: boolean;
   notes?: string;
+  signalSource?: CrowdSignalSource;
+  communitySignalsSummary?: CommunitySignalsSummary;
 }
 
 /**

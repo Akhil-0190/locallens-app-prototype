@@ -11,6 +11,7 @@
  * 6. Honest handling of unknown, missing, and unavailable capacity states.
  */
 
+import { randomUUID } from 'node:crypto';
 import {
   deriveSlotId,
   getHourlyCapacity as getBackendHourlyCapacity,
@@ -24,6 +25,7 @@ import type {
 import { RoutesService } from './routes.service.js';
 import { PlacesService } from './places.service.js';
 import { NormalizationService } from './normalization.service.js';
+import type { LatLng } from '../types/coordinates.types.js';
 import type {
   VenueCapacityEvaluation,
   VenueCapacityStatus,
@@ -33,15 +35,26 @@ import type {
   CapacityAwareRouteRequest,
   CapacityAwareRouteResponse,
   RouteStopCapacityResult,
+  CommunityCrowdSignal,
+  ReportVenueCrowdResult,
 } from '../types/crowd.types.js';
 import {
   SAMPLE_HOURLY_CAPACITIES_FIXTURE,
   SAMPLE_FALLBACK_ALTERNATIVES_FIXTURE,
+  SAMPLE_COMMUNITY_CROWD_SIGNALS_FIXTURE,
 } from '../fixtures/sample-crowd.fixture.js';
 
 export class CrowdManagementService {
   private static routesService = new RoutesService();
   private static placesService = new PlacesService();
+  private static liveCommunitySignalsStore: Map<string, CommunityCrowdSignal[]> = new Map();
+
+  /**
+   * Clears the in-memory live community signals store (useful between test runs).
+   */
+  public static clearCommunitySignalsStore(): void {
+    CrowdManagementService.liveCommunitySignalsStore.clear();
+  }
 
   /**
    * Normalizes an arbitrary visit timestamp into a top-of-hour ISO 8601 UTC string.
@@ -92,16 +105,17 @@ export class CrowdManagementService {
       };
     }
 
+    let baseEvaluation: VenueCapacityEvaluation | null = null;
+
     // 1. Try Backend Firestore retrieval (authoritative)
     try {
       const doc = await getBackendHourlyCapacity(placeId, slotId);
       if (doc) {
-        return CrowdManagementService.buildEvaluationFromDoc(doc, partySize, false, placeName);
+        baseEvaluation = CrowdManagementService.buildEvaluationFromDoc(doc, partySize, false, placeName);
       }
     } catch (backendErr: any) {
-      // Backend error: fall through to mock fallback if allowed, or return UNKNOWN
       if (!allowMockFallback) {
-        return {
+        baseEvaluation = {
           placeId,
           placeName,
           hourSlot,
@@ -111,34 +125,214 @@ export class CrowdManagementService {
           isMockData: false,
           notes: `Backend capacity check failed: ${backendErr.message}`,
         };
+        const communitySignals = CrowdManagementService.getActiveCommunitySignals(placeId, intendedVisitTime);
+        return CrowdManagementService.synthesizeEvaluationWithCommunity(baseEvaluation, communitySignals);
       }
     }
 
-    // 2. Check Mock / Sample Fixture (if fallback enabled)
-    if (allowMockFallback) {
-      const placeFixtures = SAMPLE_HOURLY_CAPACITIES_FIXTURE[placeId];
-      if (placeFixtures && placeFixtures[slotId]) {
-        return CrowdManagementService.buildEvaluationFromDoc(
-          placeFixtures[slotId],
-          partySize,
-          true,
-          placeName
-        );
+    if (!baseEvaluation) {
+      // 2. Check Mock / Sample Fixture (if fallback enabled)
+      if (allowMockFallback) {
+        const placeFixtures = SAMPLE_HOURLY_CAPACITIES_FIXTURE[placeId];
+        if (placeFixtures && placeFixtures[slotId]) {
+          baseEvaluation = CrowdManagementService.buildEvaluationFromDoc(
+            placeFixtures[slotId],
+            partySize,
+            true,
+            placeName
+          );
+        }
       }
     }
 
-    // 3. Honest Unknown Capacity handling:
-    // Missing capacity record must NOT be treated as available or unlimited.
-    return {
-      placeId,
-      placeName,
-      hourSlot,
-      slotId,
-      status: 'UNKNOWN',
-      isThrottled: false,
-      isMockData: false,
-      notes: `No capacity record found for venue ${placeId} at slot ${slotId}. Availability cannot be confirmed.`,
+    if (!baseEvaluation) {
+      // 3. Honest Unknown Capacity handling:
+      baseEvaluation = {
+        placeId,
+        placeName,
+        hourSlot,
+        slotId,
+        status: 'UNKNOWN',
+        isThrottled: false,
+        isMockData: false,
+        notes: `No capacity record found for venue ${placeId} at slot ${slotId}. Availability cannot be confirmed.`,
+      };
+    }
+
+    // 4. Synthesize with live community crowd signals (Community Protocol replacing missing Google Crowdsource API)
+    const communitySignals = CrowdManagementService.getActiveCommunitySignals(placeId, intendedVisitTime);
+    return CrowdManagementService.synthesizeEvaluationWithCommunity(baseEvaluation, communitySignals);
+  }
+
+  /**
+   * Synthesizes venue capacity with real-time community crowd reports.
+   * Provides genuine community crowd intelligence with weighted local resident scoring,
+   * freshness decay, and transparent signal provenance.
+   */
+  public static synthesizeEvaluationWithCommunity(
+    evaluation: VenueCapacityEvaluation,
+    communitySignals: CommunityCrowdSignal[]
+  ): VenueCapacityEvaluation {
+    if (!communitySignals || communitySignals.length === 0) {
+      evaluation.signalSource = evaluation.isMockData ? 'SAMPLE_FIXTURE' : 'SCHEDULED_RESERVATIONS';
+      return evaluation;
+    }
+
+    const levelScores: Record<CrowdLevel, number> = {
+      LOW: 1,
+      MODERATE: 2,
+      HIGH: 3,
+      AT_CAPACITY: 4,
     };
+
+    let totalWeight = 0;
+    let weightedScoreSum = 0;
+    let totalWait = 0;
+    let hasConfirmedFullSignal = false;
+
+    for (const sig of communitySignals) {
+      const weight = sig.reporterWeight || 1.0;
+      const score = levelScores[sig.reportedCrowdLevel] || 1;
+      weightedScoreSum += score * weight;
+      totalWeight += weight;
+      totalWait += sig.estimatedWaitMinutes || 0;
+      if (sig.reportedCrowdLevel === 'AT_CAPACITY') {
+        hasConfirmedFullSignal = true;
+      }
+    }
+
+    const avgScore = totalWeight > 0 ? weightedScoreSum / totalWeight : 1;
+    const avgWaitMinutes = Math.round(totalWait / communitySignals.length);
+
+    let predominantReportedLevel: CrowdLevel = 'LOW';
+    if (avgScore >= 3.2 || hasConfirmedFullSignal) {
+      predominantReportedLevel = 'AT_CAPACITY';
+    } else if (avgScore >= 2.3) {
+      predominantReportedLevel = 'HIGH';
+    } else if (avgScore >= 1.6) {
+      predominantReportedLevel = 'MODERATE';
+    }
+
+    const mostRecent = communitySignals[0];
+    evaluation.communitySignalsSummary = {
+      activeReportsCount: communitySignals.length,
+      averageWaitMinutes: avgWaitMinutes,
+      lastReportedAt: mostRecent?.reportedAt || new Date().toISOString(),
+      predominantReportedLevel,
+    };
+
+    evaluation.signalSource =
+      evaluation.status !== 'UNKNOWN' && !evaluation.isMockData
+        ? 'HYBRID_BLENDED'
+        : 'COMMUNITY_SIGNALS';
+
+    // If community reports confirm AT_CAPACITY, override status to throttle venue
+    if (predominantReportedLevel === 'AT_CAPACITY') {
+      evaluation.status = 'AT_CAPACITY';
+      evaluation.crowdLevel = 'AT_CAPACITY';
+      evaluation.isThrottled = true;
+      evaluation.remainingCapacity = 0;
+      evaluation.notes = `Venue throttled via live community crowd signal (${communitySignals.length} reports, est. wait ${avgWaitMinutes}m).`;
+    } else if (predominantReportedLevel === 'HIGH' && evaluation.status !== 'AT_CAPACITY') {
+      evaluation.crowdLevel = 'HIGH';
+      if (evaluation.status === 'UNKNOWN') {
+        evaluation.status = 'AVAILABLE';
+      }
+      evaluation.notes = `High crowd density reported by community (${communitySignals.length} reports, est. wait ${avgWaitMinutes}m).`;
+    } else if (evaluation.status === 'UNKNOWN') {
+      evaluation.status = 'AVAILABLE';
+      evaluation.crowdLevel = predominantReportedLevel;
+      evaluation.notes = `Community reported availability (${communitySignals.length} active reports).`;
+    }
+
+    return evaluation;
+  }
+
+  /**
+   * Ingests a live 1-tap community crowd report from an authenticated traveler or verified resident.
+   */
+  public static async submitCommunityCrowdSignal(params: {
+    placeId: string;
+    crowdLevel: CrowdLevel;
+    estimatedWaitMinutes?: number;
+    reporterType?: 'LOCAL_RESIDENT' | 'VISITING_TRAVELER' | 'PARTNER_MERCHANT';
+    userCoordinate?: LatLng;
+    note?: string;
+    travelerId?: string;
+    allowMockFallback?: boolean;
+  }): Promise<ReportVenueCrowdResult> {
+    const {
+      placeId,
+      crowdLevel,
+      estimatedWaitMinutes = crowdLevel === 'AT_CAPACITY' ? 30 : crowdLevel === 'HIGH' ? 15 : crowdLevel === 'MODERATE' ? 5 : 0,
+      reporterType = 'VISITING_TRAVELER',
+      userCoordinate,
+      note,
+      travelerId = 'traveler_anon',
+      allowMockFallback = true,
+    } = params;
+
+    const reportId = `sig_${randomUUID().replace(/-/g, '').slice(0, 10)}`;
+    const now = new Date();
+    const reportedAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + 90 * 60 * 1000).toISOString();
+
+    const reporterWeight =
+      reporterType === 'LOCAL_RESIDENT'
+        ? 1.5
+        : reporterType === 'PARTNER_MERCHANT'
+        ? 1.25
+        : 1.0;
+
+    const signal: CommunityCrowdSignal = {
+      reportId,
+      placeId,
+      reportedCrowdLevel: crowdLevel,
+      estimatedWaitMinutes,
+      reporterType,
+      reporterWeight,
+      reportedAt,
+      expiresAt,
+      travelerId,
+      userCoordinate,
+      note,
+      isMockData: allowMockFallback,
+    };
+
+    const existing = CrowdManagementService.liveCommunitySignalsStore.get(placeId) || [];
+    existing.unshift(signal);
+    CrowdManagementService.liveCommunitySignalsStore.set(placeId, existing);
+
+    const synthesizedEvaluation = await CrowdManagementService.evaluateVenueCapacity({
+      placeId,
+      intendedVisitTime: reportedAt,
+      allowMockFallback,
+    });
+
+    const rewardPointsEarned = reporterType === 'LOCAL_RESIDENT' ? 25 : 10;
+
+    return {
+      success: true,
+      signal,
+      synthesizedEvaluation,
+      rewardPointsEarned,
+    };
+  }
+
+  /**
+   * Retrieves active, non-expired community crowd signals for a venue.
+   */
+  public static getActiveCommunitySignals(placeId: string, asOfTimeIso?: string): CommunityCrowdSignal[] {
+    const nowMs = asOfTimeIso ? new Date(asOfTimeIso).getTime() : Date.now();
+    const liveSignals = CrowdManagementService.liveCommunitySignalsStore.get(placeId) || [];
+    const activeLive = liveSignals.filter((s) => new Date(s.expiresAt).getTime() > nowMs);
+
+    if (activeLive.length > 0) {
+      return activeLive;
+    }
+
+    const fixtureSignals = SAMPLE_COMMUNITY_CROWD_SIGNALS_FIXTURE[placeId] || [];
+    return fixtureSignals.filter((s) => new Date(s.expiresAt).getTime() > nowMs);
   }
 
   /**

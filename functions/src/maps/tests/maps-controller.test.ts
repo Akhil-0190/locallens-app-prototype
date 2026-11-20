@@ -18,6 +18,7 @@ import {
   computePlanBReroute,
   evaluateVenueCapacity,
   groundContributedPlace,
+  reportVenueCrowd,
 } from '../maps-controller.js';
 import * as MapsExports from '../index.js';
 import * as RootIndexExports from '../../index.js';
@@ -32,12 +33,13 @@ describe('Maps Controller — Firebase Callable Cloud Functions', () => {
   };
 
   describe('1. Endpoint Export Verification', () => {
-    it('should export all 5 callable functions from maps-controller', () => {
+    it('should export all 6 callable functions from maps-controller', () => {
       assert.strictEqual(typeof computeWalkingRoute, 'function');
       assert.strictEqual(typeof computeCapacityAwareRoute, 'function');
       assert.strictEqual(typeof computePlanBReroute, 'function');
       assert.strictEqual(typeof evaluateVenueCapacity, 'function');
       assert.strictEqual(typeof groundContributedPlace, 'function');
+      assert.strictEqual(typeof reportVenueCrowd, 'function');
     });
 
     it('should export maps module in maps/index.ts', () => {
@@ -46,6 +48,7 @@ describe('Maps Controller — Firebase Callable Cloud Functions', () => {
       assert.strictEqual(typeof MapsExports.computePlanBReroute, 'function');
       assert.strictEqual(typeof MapsExports.evaluateVenueCapacity, 'function');
       assert.strictEqual(typeof MapsExports.groundContributedPlace, 'function');
+      assert.strictEqual(typeof MapsExports.reportVenueCrowd, 'function');
     });
 
     it('should export Maps namespace in root functions/src/index.ts', () => {
@@ -55,6 +58,7 @@ describe('Maps Controller — Firebase Callable Cloud Functions', () => {
       assert.strictEqual(typeof (RootIndexExports as any).Maps.computePlanBReroute, 'function');
       assert.strictEqual(typeof (RootIndexExports as any).Maps.evaluateVenueCapacity, 'function');
       assert.strictEqual(typeof (RootIndexExports as any).Maps.groundContributedPlace, 'function');
+      assert.strictEqual(typeof (RootIndexExports as any).Maps.reportVenueCrowd, 'function');
     });
   });
 
@@ -144,6 +148,48 @@ describe('Maps Controller — Firebase Callable Cloud Functions', () => {
         }
       );
     });
+
+    it('reportVenueCrowd should reject unauthenticated invocation', async () => {
+      await assert.rejects(
+        async () => {
+          await (reportVenueCrowd as any).run({
+            auth: null,
+            data: { placeId: 'place_veena_stores', crowdLevel: 'HIGH' },
+          });
+        },
+        {
+          code: 'unauthenticated',
+        }
+      );
+    });
+
+    it('reportVenueCrowd should reject missing placeId or crowdLevel', async () => {
+      await assert.rejects(
+        async () => {
+          await (reportVenueCrowd as any).run({
+            ...mockAuthContext,
+            data: { placeId: 'place_veena_stores' },
+          });
+        },
+        {
+          code: 'invalid-argument',
+        }
+      );
+    });
+
+    it('reportVenueCrowd should reject invalid crowdLevel', async () => {
+      await assert.rejects(
+        async () => {
+          await (reportVenueCrowd as any).run({
+            ...mockAuthContext,
+            data: { placeId: 'place_veena_stores', crowdLevel: 'SUPER_PACKED' },
+          });
+        },
+        {
+          code: 'invalid-argument',
+        }
+      );
+    });
   });
 
   describe('3. Successful End-to-End Execution via Controller Callables', () => {
@@ -202,6 +248,28 @@ describe('Maps Controller — Firebase Callable Cloud Functions', () => {
       assert.strictEqual(response.data.canonicalPlaceDraft.spotName, 'CTR Shri Sagar (Malleshwaram)');
       assert.ok(response.data.evidence);
       assert.strictEqual(response.data.evidence.isMockData, true);
+    });
+
+    it('reportVenueCrowd should return success envelope with crowd report and updated capacity evaluation', async () => {
+      const response = await (reportVenueCrowd as any).run({
+        ...mockAuthContext,
+        data: {
+          placeId: 'place_veena_stores',
+          crowdLevel: 'HIGH',
+          estimatedWaitMinutes: 20,
+          reporterType: 'LOCAL_RESIDENT',
+          note: 'Breakfast rush on Margosa road',
+        },
+      });
+
+      assert.strictEqual(response.success, true);
+      assert.ok(response.data.signal);
+      assert.strictEqual(response.data.signal.placeId, 'place_veena_stores');
+      assert.strictEqual(response.data.signal.reportedCrowdLevel, 'HIGH');
+      assert.strictEqual(response.data.rewardPointsEarned, 25);
+      assert.ok(response.data.synthesizedEvaluation);
+      assert.strictEqual(response.data.synthesizedEvaluation.placeId, 'place_veena_stores');
+      assert.ok(response.metadata?.requestId);
     });
   });
 });

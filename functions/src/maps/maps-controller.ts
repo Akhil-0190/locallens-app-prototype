@@ -18,7 +18,7 @@ import { CrowdManagementService } from './services/crowd-management.service.js';
 import { PlanBReroutingService } from './services/plan-b.service.js';
 import { GroundingService } from './services/grounding.service.js';
 import type { GenerateWalkingRouteRequest } from './types/routes.types.js';
-import type { CapacityAwareRouteRequest } from './types/crowd.types.js';
+import type { CapacityAwareRouteRequest, ReportVenueCrowdRequest } from './types/crowd.types.js';
 import type { PlanBRerouteRequest } from './types/weather.types.js';
 import type { ContributedPlaceInput } from './types/evidence.types.js';
 
@@ -171,5 +171,37 @@ export const groundContributedPlace = onCall(async (request) => {
     return successEnvelope(groundedResult, startMs);
   } catch (err: any) {
     throw new HttpsError('internal', err.message || 'Place grounding failed.');
+  }
+});
+
+/**
+ * Callable: reportVenueCrowd
+ * Submits a 1-tap real-time community crowd signal from an authenticated traveler or local resident.
+ * Synthesizes signal with capacity records and returns updated crowd intelligence.
+ */
+export const reportVenueCrowd = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated to report crowd signals.');
+  }
+
+  const payload = request.data as ReportVenueCrowdRequest;
+  if (!payload || !payload.placeId || !payload.crowdLevel) {
+    throw new HttpsError('invalid-argument', 'placeId and crowdLevel are required.');
+  }
+
+  const validLevels = ['LOW', 'MODERATE', 'HIGH', 'AT_CAPACITY'];
+  if (!validLevels.includes(payload.crowdLevel)) {
+    throw new HttpsError('invalid-argument', `Invalid crowdLevel. Expected one of: ${validLevels.join(', ')}`);
+  }
+
+  try {
+    const reportResult = await CrowdManagementService.submitCommunityCrowdSignal({
+      ...payload,
+      travelerId: request.auth.uid,
+    });
+    return successEnvelope(reportResult, startMs);
+  } catch (err: any) {
+    throw new HttpsError('internal', err.message || 'Submitting crowd signal failed.');
   }
 });
