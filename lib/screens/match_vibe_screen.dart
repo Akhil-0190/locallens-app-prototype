@@ -1,11 +1,23 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
+import '../models/traveler_preferences.dart';
 import '../providers/spot_providers.dart';
+import '../providers/traveler_providers.dart';
 import '../widgets/app_async_states.dart';
+import '../widgets/spot_card_tile.dart';
+import '../widgets/traveler_preference_summary_card.dart';
 import '../widgets/vibe_chip_selector.dart';
 
+/// Traveler Discovery Screen (Task D3 & Domain 06/02/09)
+///
+/// Integrates:
+/// - Domain 02: Traveler Onboarding & Preference Profile
+/// - Domain 09: Solo vs Group Exploration Mode
+/// - Domain 06: Places & Spot Cards with Authenticity Scoring and Crowd Caps
+/// - Preserves D1 Uncrowded Route Generation capability
 class MatchVibeScreen extends ConsumerStatefulWidget {
   const MatchVibeScreen({super.key});
 
@@ -14,6 +26,9 @@ class MatchVibeScreen extends ConsumerStatefulWidget {
 }
 
 class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
+  // 0 = Curated Spot Cards (Domain 06), 1 = 3-Stop Route Builder (D1)
+  int _selectedViewIndex = 0;
+
   static const List<String> _availableVibes = [
     'Street Food',
     'Local Coffee',
@@ -103,7 +118,7 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
 
   Future<void> _openMapsLink(String url) async {
     final uri = Uri.tryParse(url);
-    if (uri == null) return;
+    if (uri == null || url.isEmpty) return;
 
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
@@ -113,337 +128,433 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
     }
   }
 
+  void _showGreetingDialog(SpotCard spot) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.record_voice_over, color: Colors.teal),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Greeting Card: ${spot.spotName}',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          spot.greetingCard.isNotEmpty
+              ? spot.greetingCard
+              : 'No greeting message available for this spot.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final selectedVibes = ref.watch(selectedVibesProvider);
-    final groupSize = ref.watch(groupSizeProvider);
-    final matchedRoute = ref.watch(matchedRouteProvider);
-    final crowdedOrTrapSpots = ref.watch(crowdedSpotsProvider);
-    final isLoading = ref.watch(isGeneratingRouteProvider);
-    final hasGenerated = ref.watch(hasGeneratedRouteProvider);
+    final discoveryAsync = ref.watch(discoverySpotsProvider);
+    final selectedNeighborhood = ref.watch(selectedNeighborhoodFilterProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Match Your Vibe')),
+      appBar: AppBar(
+        title: const Text('Match Your Vibe'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh Discovery',
+            onPressed: () => ref.refresh(discoverySpotsProvider),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text(
-            'Group Size (Crowd-Cap Check)',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+          // 1. Prominent Contract & Sample Data Disclosure Banner
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.amber.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.amber.shade400),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Colors.amber.shade900),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '[Sample Discovery Data: Illustrative sample results — live integrations pending]',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.amber.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [1, 2, 3, 4].map((count) {
-              return ChoiceChip(
-                label: Text(count == 1 ? 'Solo (1)' : '$count Travelers'),
-                selected: groupSize == count,
-                onSelected: (_) {
-                  ref.read(groupSizeProvider.notifier).state = count;
-                },
-              );
-            }).toList(),
-          ),
+
+          // 2. Domain 02 Traveler Preference Summary Card
+          const TravelerPreferenceSummaryCard(),
           const SizedBox(height: 16),
-          const Text(
-            'Select Your Interests',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          VibeChipSelector(
-            availableVibes: _availableVibes,
-            selectedVibes: selectedVibes,
-            onVibeToggled: (vibe) {
-              final newVibes = Set<String>.from(selectedVibes);
-              if (newVibes.contains(vibe)) {
-                newVibes.remove(vibe);
-              } else {
-                newVibes.add(vibe);
-              }
-              ref.read(selectedVibesProvider.notifier).state = newVibes;
+
+          // 3. Segmented Navigation (Curated Spots vs Route Builder)
+          SegmentedButton<int>(
+            segments: const [
+              ButtonSegment<int>(
+                value: 0,
+                icon: Icon(Icons.place_outlined),
+                label: Text('Curated Spots'),
+              ),
+              ButtonSegment<int>(
+                value: 1,
+                icon: Icon(Icons.route_outlined),
+                label: Text('Route Builder'),
+              ),
+            ],
+            selected: {_selectedViewIndex},
+            onSelectionChanged: (newSelection) {
+              setState(() {
+                _selectedViewIndex = newSelection.first;
+              });
             },
           ),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            onPressed: isLoading ? null : _generateRankedRoute,
-            icon: const Icon(Icons.route),
-            label: const Text('Build 3-Stop Uncrowded Route'),
-          ),
-          const SizedBox(height: 20),
-          if (isLoading)
-            const AppLoadingIndicator(message: 'Generating uncrowded route...')
-          else if (hasGenerated) ...[
-            const Text(
-              'Recommended Uncrowded Route',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            if (matchedRoute.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Text(
-                  'No uncrowded spots fit this group size right now. You can still pick from the crowded spots below.',
-                ),
-              )
-            else
-              ...matchedRoute.asMap().entries.map((entry) {
-                final stopIndex = entry.key + 1;
-                final spot = entry.value;
-                final slotsLeft = spot.hourlyLimit - spot.currentVisitors;
-                final isCrowdedChoice =
-                    spot.isTouristTrap || slotsLeft < groupSize;
+          const SizedBox(height: 16),
 
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 14),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+          // 4. View Mode: Curated Spots (D3 Primary)
+          if (_selectedViewIndex == 0) ...[
+            // Neighborhood Filter Chips
+            const Text(
+              'Filter by Neighborhood',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('All Neighborhoods'),
+                    selected: selectedNeighborhood == null,
+                    onSelected: (selected) {
+                      if (selected) {
+                        ref.read(selectedNeighborhoodFilterProvider.notifier).state =
+                            null;
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  ...TravelerPreferencesDocument.supportedNeighborhoods.map((hood) {
+                    final isSelected = selectedNeighborhood == hood;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(hood),
+                        selected: isSelected,
+                        onSelected: (selected) {
+                          ref.read(selectedNeighborhoodFilterProvider.notifier).state =
+                              selected ? hood : null;
+                        },
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Async State Display for Discovered Places
+            discoveryAsync.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: AppLoadingIndicator(
+                  message: 'Curating authentic spots matching your taste profile...',
+                ),
+              ),
+              error: (err, stack) => AppErrorStateWidget(
+                message: 'Unable to Load Discovery: $err',
+                onRetry: () => ref.refresh(discoverySpotsProvider),
+              ),
+              data: (spots) {
+                if (spots.isEmpty) {
+                  return AppEmptyStateWidget(
+                    title: 'No Matching Spots Found',
+                    subtitle:
+                        'No local gems currently match this neighborhood and preference filter. Try clearing the filter or adjusting your dietary/budget preferences.',
+                    action: OutlinedButton(
+                      onPressed: () {
+                        ref.read(selectedNeighborhoodFilterProvider.notifier).state =
+                            null;
+                      },
+                      child: const Text('Reset Neighborhood Filter'),
+                    ),
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            CircleAvatar(
-                              radius: 14,
-                              backgroundColor: isCrowdedChoice
-                                  ? Colors.orange.shade700
-                                  : Colors.teal.shade700,
-                              child: Text(
-                                '$stopIndex',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                spot.spotName,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isCrowdedChoice
-                                    ? Colors.orange.shade50
-                                    : Colors.teal.shade50,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                isCrowdedChoice
-                                    ? _crowdStatusLabel(spot)
-                                    : '$slotsLeft slots left',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: isCrowdedChoice
-                                      ? Colors.orange.shade900
-                                      : Colors.teal.shade900,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
                         Text(
-                          spot.infoParagraph,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
+                          '${spots.length} Verified Spot${spots.length > 1 ? 's' : ''} Found',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blueGrey,
+                          ),
                         ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: spot.vibeTags.map((tag) {
-                            final isMatch = selectedVibes.contains(tag);
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isMatch
-                                    ? Colors.teal.shade100
-                                    : Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                tag,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: isMatch
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                  color: isMatch
-                                      ? Colors.teal.shade900
-                                      : Colors.black87,
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            onPressed: () => _openMapsLink(spot.mapsLink),
-                            icon: const Icon(Icons.directions, size: 18),
-                            label: const Text('Preview in Maps'),
+                        Text(
+                          'Domain 06 Canonical Places',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
                           ),
                         ),
                       ],
                     ),
-                  ),
-                );
-              }),
-            if (crowdedOrTrapSpots.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(
-                    Icons.groups_outlined,
-                    size: 20,
-                    color: Colors.orange.shade900,
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Crowded & High-Footfall Areas',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                    const SizedBox(height: 10),
+                    ...spots.map(
+                      (spot) => SpotCardTile(
+                        spot: spot,
+                        onGreetingTap: () => _showGreetingDialog(spot),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'These spots exceed your group capacity or draw heavy tourist crowds. Tap "Add to Route" if you still want to include them.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-              const SizedBox(height: 12),
-              ...crowdedOrTrapSpots.map((spot) {
-                return Card(
-                  color: Colors.orange.shade50.withAlpha(90),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                spot.spotName,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.shade100,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                _crowdStatusLabel(spot),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.orange.shade900,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          spot.infoParagraph,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: spot.vibeTags.map((tag) {
-                            final isMatch = selectedVibes.contains(tag);
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isMatch
-                                    ? Colors.orange.shade200
-                                    : Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                tag,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: isMatch
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          alignment: WrapAlignment.end,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: () => _addCrowdedSpotToRoute(spot),
-                              icon: const Icon(Icons.add, size: 18),
-                              label: const Text('Add to Route'),
-                            ),
-                            TextButton.icon(
-                              onPressed: () => _openMapsLink(spot.mapsLink),
-                              icon: const Icon(Icons.directions, size: 18),
-                              label: const Text('Preview in Maps'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  ],
                 );
-              }),
+              },
+            ),
+          ] else ...[
+            // 5. View Mode: D1 Route Builder
+            const Text(
+              'Group Size (Crowd-Cap Check)',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [1, 2, 3, 4].map((count) {
+                final currentGroupSize = ref.watch(groupSizeProvider);
+                return ChoiceChip(
+                  label: Text(count == 1 ? 'Solo (1)' : '$count Travelers'),
+                  selected: currentGroupSize == count,
+                  onSelected: (_) {
+                    ref.read(groupSizeProvider.notifier).state = count;
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Select Your Interests',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            VibeChipSelector(
+              availableVibes: _availableVibes,
+              selectedVibes: ref.watch(selectedVibesProvider),
+              onVibeToggled: (vibe) {
+                final selectedVibes = ref.read(selectedVibesProvider);
+                final newVibes = Set<String>.from(selectedVibes);
+                if (newVibes.contains(vibe)) {
+                  newVibes.remove(vibe);
+                } else {
+                  newVibes.add(vibe);
+                }
+                ref.read(selectedVibesProvider.notifier).state = newVibes;
+              },
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: ref.watch(isGeneratingRouteProvider)
+                  ? null
+                  : _generateRankedRoute,
+              icon: const Icon(Icons.route),
+              label: const Text('Build 3-Stop Uncrowded Route'),
+            ),
+            const SizedBox(height: 20),
+            if (ref.watch(isGeneratingRouteProvider))
+              const AppLoadingIndicator(message: 'Generating uncrowded route...')
+            else if (ref.watch(hasGeneratedRouteProvider)) ...[
+              const Text(
+                'Recommended Uncrowded Route',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 10),
+              if (ref.watch(matchedRouteProvider).isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    'No uncrowded spots fit this group size right now. You can still pick from the crowded spots below.',
+                  ),
+                )
+              else
+                ...ref.watch(matchedRouteProvider).asMap().entries.map((entry) {
+                  final stopIndex = entry.key + 1;
+                  final spot = entry.value;
+                  final groupSize = ref.watch(groupSizeProvider);
+                  final slotsLeft = spot.hourlyLimit - spot.currentVisitors;
+                  final isCrowdedChoice =
+                      spot.isTouristTrap || slotsLeft < groupSize;
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: isCrowdedChoice
+                                    ? Colors.orange.shade700
+                                    : Colors.teal.shade700,
+                                child: Text(
+                                  '$stopIndex',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  spot.spotName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isCrowdedChoice
+                                      ? Colors.orange.shade50
+                                      : Colors.teal.shade50,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  isCrowdedChoice
+                                      ? _crowdStatusLabel(spot)
+                                      : '$slotsLeft slots left',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: isCrowdedChoice
+                                        ? Colors.orange.shade900
+                                        : Colors.teal.shade900,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            spot.infoParagraph,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (spot.greetingCard.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            InkWell(
+                              onTap: () => _showGreetingDialog(spot),
+                              child: Text(
+                                'Greeting: ${spot.greetingCard}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.teal.shade800,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              if (spot.mapsLink.isNotEmpty)
+                                TextButton.icon(
+                                  onPressed: () => _openMapsLink(spot.mapsLink),
+                                  icon: const Icon(Icons.navigation, size: 16),
+                                  label: const Text('Maps'),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              if (ref.watch(crowdedSpotsProvider).isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'Crowded Spots / Traps (Excluded by Default)',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 10),
+                ...ref.watch(crowdedSpotsProvider).map((spot) {
+                  return Card(
+                    color: Colors.grey.shade50,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  spot.spotName,
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _crowdStatusLabel(spot),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.orange.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          OutlinedButton(
+                            onPressed: () => _addCrowdedSpotToRoute(spot),
+                            child: const Text('Add Anyway'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
             ],
           ],
         ],

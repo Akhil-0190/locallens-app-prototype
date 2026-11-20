@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
