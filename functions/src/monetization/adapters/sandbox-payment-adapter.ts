@@ -133,72 +133,71 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
       };
     }
 
-    if (params.idempotencyKey) {
-      // 1. Fast in-memory check if already cached in this instance
-      const cached = this.simulatedRefunds.get(params.idempotencyKey);
-      if (cached) {
-        return cached;
-      }
-
-      // 2. Durable Firestore check & transaction
-      if (!this.firestoreDb) {
-        return {
-          refunded: false,
-          refundReference: '',
-          paymentMode: this.mode,
-          amountInr: 0,
-          failureReason: 'Durable persistence failure: Firestore instance not configured for sandbox refund idempotency.',
-          isSimulated: true,
-        };
-      }
-
-      try {
-        const docRef = this.firestoreDb.collection('_sandbox_simulated_refunds').doc(params.idempotencyKey);
-
-        // Transactional atomic check-and-create across instances
-        const result = await this.firestoreDb.runTransaction(async (tx) => {
-          const liveSnap = await tx.get(docRef);
-          if (liveSnap.exists) {
-            return liveSnap.data() as PaymentRefundResult;
-          }
-          const shortRef = randomUUID().replace(/-/g, '').slice(0, 10);
-          const newResult: PaymentRefundResult = {
-            refunded: true,
-            refundReference: `sandbox_sim_ref_${shortRef}`,
-            paymentMode: this.mode,
-            amountInr: params.amountInr,
-            refundedAt: new Date().toISOString(),
-            isSimulated: true,
-          };
-          tx.set(docRef, newResult);
-          return newResult;
-        });
-
-        this.simulatedRefunds.set(params.idempotencyKey, result);
-        return result;
-      } catch (err: any) {
-        // Critical: Fail-closed. Never fall back to in-memory refund generation on persistence failure.
-        return {
-          refunded: false,
-          refundReference: '',
-          paymentMode: this.mode,
-          amountInr: 0,
-          failureReason: `Durable persistence failure: ${err?.message || 'Failed to establish durable refund record in Firestore.'}`,
-          isSimulated: true,
-        };
-      }
+    // Fail-Closed: Deterministic idempotencyKey is strictly mandatory for durable sandbox refund processing
+    if (!params.idempotencyKey || params.idempotencyKey.trim().length === 0) {
+      return {
+        refunded: false,
+        refundReference: '',
+        paymentMode: this.mode,
+        amountInr: 0,
+        failureReason: 'Missing mandatory idempotencyKey: Sandbox refunds must supply a deterministic idempotency key for durable persistence.',
+        isSimulated: true,
+      };
     }
 
-    // Un-keyed path (non-idempotent)
-    const shortRef = randomUUID().replace(/-/g, '').slice(0, 10);
-    return {
-      refunded: true,
-      refundReference: `sandbox_sim_ref_${shortRef}`,
-      paymentMode: this.mode,
-      amountInr: params.amountInr,
-      refundedAt: new Date().toISOString(),
-      isSimulated: true,
-    };
+    // 1. Fast in-memory check if already cached in this instance
+    const cached = this.simulatedRefunds.get(params.idempotencyKey);
+    if (cached) {
+      return cached;
+    }
+
+    // 2. Durable Firestore check & transaction
+    if (!this.firestoreDb) {
+      return {
+        refunded: false,
+        refundReference: '',
+        paymentMode: this.mode,
+        amountInr: 0,
+        failureReason: 'Durable persistence failure: Firestore instance not configured for sandbox refund idempotency.',
+        isSimulated: true,
+      };
+    }
+
+    try {
+      const docRef = this.firestoreDb.collection('_sandbox_simulated_refunds').doc(params.idempotencyKey);
+
+      // Transactional atomic check-and-create across instances
+      const result = await this.firestoreDb.runTransaction(async (tx) => {
+        const liveSnap = await tx.get(docRef);
+        if (liveSnap.exists) {
+          return liveSnap.data() as PaymentRefundResult;
+        }
+        const shortRef = randomUUID().replace(/-/g, '').slice(0, 10);
+        const newResult: PaymentRefundResult = {
+          refunded: true,
+          refundReference: `sandbox_sim_ref_${shortRef}`,
+          paymentMode: this.mode,
+          amountInr: params.amountInr,
+          refundedAt: new Date().toISOString(),
+          isSimulated: true,
+        };
+        tx.set(docRef, newResult);
+        return newResult;
+      });
+
+      this.simulatedRefunds.set(params.idempotencyKey, result);
+      return result;
+    } catch (err: any) {
+      // Critical: Fail-closed. Never fall back to in-memory refund generation on persistence failure.
+      return {
+        refunded: false,
+        refundReference: '',
+        paymentMode: this.mode,
+        amountInr: 0,
+        failureReason: `Durable persistence failure: ${err?.message || 'Failed to establish durable refund record in Firestore.'}`,
+        isSimulated: true,
+      };
+    }
   }
 }
 

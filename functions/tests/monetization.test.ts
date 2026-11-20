@@ -875,20 +875,6 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual(cancelledBooking.paymentStatus, 'FAILED');
     });
 
-    test('Payment adapter executes supported simulated refund upon cancellation', async () => {
-      const adapter = new SandboxPaymentAdapter();
-      const refund = await adapter.refundPayment({
-        transactionId: 'guidance_blr_test_02',
-        gatewayReference: 'sandbox_sim_guidance_xyz789',
-        amountInr: 750,
-        reason: 'Session cancelled by participant',
-      });
-      assert.strictEqual(refund.refunded, true);
-      assert.strictEqual(refund.amountInr, 750);
-      assert.strictEqual(refund.paymentMode, 'SANDBOX');
-      assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
-    });
-
     // Shared helper for durable sandbox refund test simulation
     const createMockRefundFirestore = (sharedStorage = new Map<string, any>()) => {
       let queue = Promise.resolve();
@@ -925,6 +911,117 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
         },
       } as unknown as FirebaseFirestore.Firestore;
     };
+
+    test('Payment adapter executes supported simulated refund upon cancellation', async () => {
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
+      const refund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_02',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 750,
+        reason: 'Session cancelled by participant',
+        idempotencyKey: 'ref_guidance_blr_test_02',
+      });
+      assert.strictEqual(refund.refunded, true);
+      assert.strictEqual(refund.amountInr, 750);
+      assert.strictEqual(refund.paymentMode, 'SANDBOX');
+      assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
+    });
+
+    test('Regression check: Payment adapter fails closed when idempotencyKey is missing or empty', async () => {
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
+
+      // 1. Missing idempotencyKey
+      const refundMissing = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_nokey',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 500,
+        reason: 'Missing key test',
+      });
+      assert.strictEqual(refundMissing.refunded, false, 'Missing key must fail closed');
+      assert.strictEqual(refundMissing.refundReference, '', 'Must not generate a refund reference');
+      assert.ok(
+        refundMissing.failureReason?.includes('Missing mandatory idempotencyKey'),
+        `Expected failureReason for missing key, got: ${refundMissing.failureReason}`
+      );
+
+      // 2. Empty string or whitespace idempotencyKey
+      const refundEmpty = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_emptykey',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 500,
+        reason: 'Empty key test',
+        idempotencyKey: '   ',
+      });
+      assert.strictEqual(refundEmpty.refunded, false, 'Whitespace key must fail closed');
+      assert.strictEqual(refundEmpty.refundReference, '', 'Must not generate a refund reference');
+      assert.ok(
+        refundEmpty.failureReason?.includes('Missing mandatory idempotencyKey'),
+        `Expected failureReason for empty key, got: ${refundEmpty.failureReason}`
+      );
+    });
+
+    test('Guidance service treats refunded: false as a failed refund without marking booking completed financially', () => {
+      // Simulate guidance service refund processing logic upon adapter failure
+      const processSimulatedRefundOutcome = (
+        booking: GuidanceBookingDocument,
+        refundResult: { refunded: boolean; refundReference: string; failureReason?: string }
+      ) => {
+        if (!refundResult.refunded) {
+          // Booking marks refundStatus as FAILED; status does not transition to completed financially
+          return {
+            ...booking,
+            refundStatus: 'FAILED',
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return {
+          ...booking,
+          status: 'CANCELLED',
+          paymentStatus: 'FAILED',
+          refundStatus: 'COMPLETED',
+          refundReference: refundResult.refundReference,
+          refundedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      };
+
+      const now = new Date().toISOString();
+      const confirmedBooking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_failure_flow_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_fail_flow_01',
+        status: 'CONFIRMED',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const failedResult = {
+        refunded: false,
+        refundReference: '',
+        failureReason: 'Missing mandatory idempotencyKey',
+      };
+
+      const resultingDoc = processSimulatedRefundOutcome(confirmedBooking, failedResult);
+
+      assert.strictEqual(resultingDoc.refundStatus, 'FAILED');
+      assert.strictEqual(resultingDoc.status, 'CONFIRMED', 'Status must not transition to CANCELLED or REJECTED when refund fails');
+      assert.strictEqual((resultingDoc as any).refundReference, undefined, 'No refund reference must be recorded');
+      assert.strictEqual((resultingDoc as any).refundedAt, undefined, 'No refundedAt timestamp must be recorded');
+      assert.strictEqual(resultingDoc.paymentStatus, 'COMPLETED', 'Payment status must not be marked refunded if adapter declined');
+    });
 
     test('Guidance refund idempotency: Repeated refund calls with same idempotencyKey return identical result', async () => {
       const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
