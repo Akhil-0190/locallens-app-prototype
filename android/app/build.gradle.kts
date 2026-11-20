@@ -30,7 +30,12 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        manifestPlaceholders["MAPS_API_KEY"] = (project.findProperty("MAPS_API_KEY") as String?) ?: "AIzaSy_DEV_DEMO_KEY"
+        // Google Maps Android SDK API key placeholder:
+        // Pass a valid API key for live map tiles via: `flutter build apk --dart-define=...` or `-P MAPS_API_KEY="..."`.
+        // If omitted, falls back to a non-functional placeholder solely to allow local build compilation without committing secrets.
+        // WARNING: This placeholder is NOT a valid production key and will not authenticate with Google Maps servers.
+        val mapsApiKeyProperty = (project.findProperty("MAPS_API_KEY") as String?)?.takeIf { it.isNotBlank() }
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKeyProperty ?: "PLACEHOLDER_DEV_KEY_NOT_FOR_PRODUCTION"
     }
 
     buildTypes {
