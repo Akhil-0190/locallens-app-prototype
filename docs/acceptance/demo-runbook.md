@@ -32,7 +32,7 @@
 - **Action:** Launch app from cold start.
 - **Observed:**
   - Landing screen defaults to `/guide` (`Pocket Guide Screen`).
-  - Bottom navigation displays 3 shell branches: `Pocket Guide`, `Match Vibe`, and `Add Gem`.
+  - Bottom navigation displays 3 shell branches: `Match Vibe` (index 0), `Pocket Guide` (index 1, active default), and `Add Gem` (index 2).
 - **Disclosure:** `[Local Client]` Navigation driven by `go_router` shell.
 
 ### Step 2: Contributor Regional Voice & Photo Ingestion
