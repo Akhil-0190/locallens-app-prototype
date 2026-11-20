@@ -1,0 +1,85 @@
+{
+  "routeId": "route_malleshwaram_heritage_01",
+  "title": "Malleshwaram Heritage & Coffee Trail",
+  "neighborhood": "Malleshwaram",
+  "theme": "Heritage / Culinary Walking Trail",
+  "origin": {
+    "latitude": 12.998242,
+    "longitude": 77.570953,
+    "precision": 6,
+    "formatted": "12.998242, 77.570953",
+    "isValid": true
+  },
+  "destination": {
+    "latitude": 13.003125,
+    "longitude": 77.571012,
+    "precision": 6,
+    "formatted": "13.003125, 77.571012",
+    "isValid": true
+  },
+  "waypoints": [
+    {
+      "latitude": 13.000851,
+      "longitude": 77.569421,
+      "precision": 6,
+      "formatted": "13.000851, 77.569421",
+      "isValid": true
+    }
+  ],
+  "waypointPlaceIds": [
+    "place_ctr_malleshwaram_01",
+    "place_kadu_temple_02"
+  ],
+  "optimizedWaypointOrder": [0],
+  "totalDistanceMeters": 1150,
+  "totalDurationSeconds": 870,
+  "formattedDistance": "1.1 km",
+  "formattedDuration": "15 mins",
+  "encodedPolyline": "_{znAw`~xMg@g@eAo@m@e@u@o@_Am@wA}@y@w@u@aAk@q@k@_Am@g@",
+  "legs": [
+    {
+      "startPlaceId": "place_ctr_malleshwaram_01",
+      "endPlaceId": "place_kadu_temple_02",
+      "distanceMeters": 1150,
+      "durationSeconds": 870,
+      "startCoordinate": {
+        "latitude": 12.998242,
+        "longitude": 77.570953,
+        "precision": 6,
+        "formatted": "12.998242, 77.570953",
+        "isValid": true
+      },
+      "endCoordinate": {
+        "latitude": 13.003125,
+        "longitude": 77.571012,
+        "precision": 6,
+        "formatted": "13.003125, 77.571012",
+        "isValid": true
+      },
+      "steps": [
+        {
+          "instruction": "Head north on 7th Cross Rd toward Margosa Rd",
+          "distanceMeters": 350,
+          "durationSeconds": 260,
+          "startCoordinate": {
+            "latitude": 12.998242,
+            "longitude": 77.570953,
+            "precision": 6,
+            "formatted": "12.998242, 77.570953",
+            "isValid": true
+          },
+          "endCoordinate": {
+            "latitude": 13.000851,
+            "longitude": 77.569421,
+            "precision": 6,
+            "formatted": "13.000851, 77.569421",
+            "isValid": true
+          }
+        }
+      ]
+    }
+  ],
+  "isMockData": false,
+  "createdAt": "2026-11-20T08:30:00.000Z",
+  "updatedAt": "2026-11-20T08:30:00.000Z"
+}

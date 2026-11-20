@@ -1,0 +1,16 @@
+{
+  "tipId": "tip_blr_561234",
+  "payerUserId": "usr_blr_451290",
+  "recipientUserId": "usr_blr_782914",
+  "spotId": "place_ctr_malleshwaram_01",
+  "spotName": "Central Tiffin Room (Shri Sagar)",
+  "amountInr": 100,
+  "platformFeeInr": 5,
+  "contributorNetInr": 95,
+  "currency": "INR",
+  "paymentStatus": "COMPLETED",
+  "paymentGatewayReference": "pay_upi_987213892",
+  "personalNote": "Thank you Priya! The benne dose and filter coffee were unforgettable.",
+  "createdAt": "2026-11-20T12:30:00.000Z",
+  "settledAt": "2026-11-20T12:31:00.000Z"
+}

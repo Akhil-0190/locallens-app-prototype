@@ -1,0 +1,15 @@
+{
+  "success": true,
+  "data": {
+    "spotName": "Central Tiffin Room (Shri Sagar)",
+    "crowdLevel": "MODERATE",
+    "remainingCapacity": 8,
+    "isOpenNow": true
+  },
+  "metadata": {
+    "requestId": "req_89127391823",
+    "timestamp": "2026-11-20T14:00:00.000Z",
+    "executionDurationMs": 42,
+    "version": "1.0.0"
+  }
+}

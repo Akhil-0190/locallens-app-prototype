@@ -4,8 +4,8 @@
  */
 
 import { GoogleGenAI } from '@google/genai';
-import { executeWithRetry, getGeminiClient } from '../client/gemini-client.js';
-import { resolveModelDefinition, MODEL_REGISTRY } from '../config/models.js';
+import { executeWithRetry } from '../client/gemini-client.js';
+import { resolveModelDefinition } from '../config/models.js';
 import { getAIConfig } from '../config/env.js';
 import { validateStructuredOutput, zodToJsonSchema } from '../utils/validator.js';
 import { ZodSchema } from 'zod';

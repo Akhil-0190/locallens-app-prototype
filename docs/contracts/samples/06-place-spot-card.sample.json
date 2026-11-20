@@ -1,0 +1,51 @@
+{
+  "id": "place_ctr_malleshwaram_01",
+  "placeId": "ChIJbU60yAZvrjsR0Hdd_09Z1pI",
+  "spotName": "Central Tiffin Room (Shri Sagar)",
+  "formattedAddress": "7th Cross Rd, Margosa Rd, Malleshwaram, Bengaluru, Karnataka 560003",
+  "coordinate": {
+    "latitude": 12.998242,
+    "longitude": 77.570953,
+    "precision": 6,
+    "formatted": "12.998242, 77.570953",
+    "geohash": "tdr1v4m8",
+    "isValid": true
+  },
+  "mapsLink": "https://maps.google.com/?cid=1234567890123456789",
+  "primaryCategory": "south_indian_restaurant",
+  "categories": ["restaurant", "heritage_cafe", "breakfast_spot"],
+  "infoParagraph": "Iconic 1920s heritage breakfast institution celebrated for its crisp butter benne masala dose and slow-dripped chicory filter coffee.",
+  "photoUrls": [
+    "https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/spots/ctr_benne_dose.jpg"
+  ],
+  "openHours": "07:30 AM - 12:30 PM, 04:00 PM - 09:00 PM",
+  "isOpenNow": true,
+  "authenticity": {
+    "authenticityScore": 96,
+    "touristTrapLikelihood": "LOW",
+    "isTouristTrap": false,
+    "localSentimentSummary": "Beloved generational eatery patronized by decades of local Bangaloreans.",
+    "recommendedTiming": "Early weekday morning around 7:45 AM before queues form.",
+    "practicalTips": "Cash or UPI only. Ask for 'benne dose' with extra white butter on the side.",
+    "greetingCard": "Welcome to Shri Sagar CTR! Savor the legendary crisp golden dose that has fueled Bengaluru mornings for over 70 years.",
+    "vibeTags": ["heritage", "vintage_filter_coffee", "pocket_friendly", "generational"]
+  },
+  "capacity": {
+    "hourlyLimit": 12,
+    "currentVisitors": 4,
+    "remainingCapacity": 8,
+    "crowdLevel": "MODERATE",
+    "isThrottled": false,
+    "lastUpdatedSlot": "2026-11-20T14:00:00Z"
+  },
+  "contributorAttribution": {
+    "userId": "usr_blr_782914",
+    "displayName": "Priya Sharma",
+    "badgeTitle": "Neighborhood Insider",
+    "isVerifiedResident": true
+  },
+  "isVerified": true,
+  "isMockData": false,
+  "createdAt": "2026-11-20T08:15:00.000Z",
+  "updatedAt": "2026-11-20T14:00:00.000Z"
+}

@@ -1,0 +1,21 @@
+{
+  "passId": "pass_malleshwaram_781290",
+  "userId": "usr_blr_451290",
+  "tier": "NEIGHBORHOOD_ALL_ACCESS",
+  "neighborhood": "Malleshwaram",
+  "accessibleRouteIds": [
+    "route_malleshwaram_heritage_01",
+    "route_malleshwaram_silk_weavers_02"
+  ],
+  "pricePaidInr": 299,
+  "currency": "INR",
+  "status": "ACTIVE",
+  "perksIncluded": {
+    "audioGuidanceUnlocked": true,
+    "offlinePackUnlocked": true,
+    "merchantPartnerDiscountPercent": 10
+  },
+  "validFrom": "2026-11-20T00:00:00.000Z",
+  "validUntil": "2026-11-27T23:59:59.000Z",
+  "purchasedAt": "2026-11-20T09:00:00.000Z"
+}
