@@ -1,3 +1,8 @@
+/**
+ * Firebase Cloud Functions Entrypoint
+ * Neighborhood Guide App — Startup Buildathon 2026
+ */
+
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { geminiApiKey } from "./config/secrets";
@@ -23,3 +28,8 @@ export const healthCheck = onRequest(
     });
   }
 );
+
+/**
+ * Export AI services.
+ */
+export * as AI from "./ai/index.js";

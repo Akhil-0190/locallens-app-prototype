@@ -1,12 +1,9 @@
 {
-  "name": "neighborhoodguide-functions",
+  "name": "functions",
   "version": "0.1.0",
   "description": "Firebase Cloud Functions backend for Neighborhood Guide - Maps, Places, AI and shared services",
   "private": true,
   "main": "lib/src/index.js",
-  "engines": {
-    "node": ">=22.0.0"
-  },
   "scripts": {
     "lint": "tsc --noEmit",
     "build": "tsc",
@@ -17,7 +14,9 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "test": "npm run build && node --test lib/tests/foundation.test.js lib/src/maps/tests/normalization.test.js lib/src/maps/tests/quota-handler.test.js lib/src/maps/tests/places.test.js lib/src/maps/tests/routes.test.js",
-    "test:maps": "npm run build && node --test lib/src/maps/tests/normalization.test.js lib/src/maps/tests/quota-handler.test.js lib/src/maps/tests/places.test.js lib/src/maps/tests/routes.test.js"
+    "test:maps": "npm run build && node --test lib/src/maps/tests/normalization.test.js lib/src/maps/tests/quota-handler.test.js lib/src/maps/tests/places.test.js lib/src/maps/tests/routes.test.js",
+    "test:ai": "tsx test/verify-ai-foundation.ts",
+    "test:schemas": "tsx test/test-schemas.ts"
   },
   "keywords": [
     "firebase",
@@ -29,12 +28,15 @@
   "author": "InnovoTribe Team",
   "license": "UNLICENSED",
   "dependencies": {
-    "@google/genai": "^0.2.0",
+    "@google/genai": "^3.6.1",
+    "dotenv": "^16.4.7",
     "firebase-admin": "^12.0.0",
-    "firebase-functions": "^6.0.0"
+    "firebase-functions": "^6.0.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
   }
 }
