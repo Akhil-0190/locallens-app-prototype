@@ -7,7 +7,7 @@
 
 import { getMapsConfig, type MapsPlatformConfig } from '../config.js';
 import type { LatLng } from '../types/coordinates.types.js';
-import type { NormalizedWeather, WeatherSeverity } from '../types/weather.types.js';
+import type { NormalizedWeather, WeatherSeverity, WeatherConditionType } from '../types/weather.types.js';
 import { SAMPLE_WEATHER_FIXTURES } from '../fixtures/sample-weather.fixture.js';
 
 export class WeatherService {
@@ -19,7 +19,12 @@ export class WeatherService {
 
   /**
    * Evaluates weather condition for a given coordinate and visit timestamp.
-   * Gracefully falls back to mock fixture or returns honest UNKNOWN when unconfigured.
+   *
+   * Rules:
+   * - Missing credentials or unavailable responses NEVER default to CLEAR. They return 'UNAVAILABLE'.
+   * - Future visit times distinguish CURRENT observations from FORECAST predictions.
+   * - If a visit is in the future (> 2 hours) and only current conditions are available,
+   *   it marks dataType: 'CURRENT' and explicitly notes the absence of forecast data.
    */
   public async getWeatherCondition(params: {
     location: LatLng;
@@ -29,6 +34,10 @@ export class WeatherService {
   }): Promise<NormalizedWeather> {
     const { location, intendedVisitTime, allowMockFallback = true, mockScenarioKey } = params;
     const key = this.config.weatherApiKey || this.config.apiKey;
+
+    const visitDate = new Date(intendedVisitTime);
+    const now = new Date();
+    const isFutureVisit = !isNaN(visitDate.getTime()) && visitDate.getTime() - now.getTime() > 2 * 60 * 60 * 1000;
 
     // 1. Live Weather API call if key is present
     if (key) {
@@ -47,21 +56,23 @@ export class WeatherService {
         });
 
         if (res.ok) {
-          const raw = await res.json() as any;
-          return this.normalizeGoogleWeatherResponse(raw, location, intendedVisitTime, false);
+          const raw = (await res.json()) as any;
+          return this.normalizeGoogleWeatherResponse(raw, location, intendedVisitTime, false, isFutureVisit);
         }
       } catch {
-        // Fall through to fallback
+        // Fall through to fallback or unavailable
       }
     }
 
     // 2. Mock Fallback if allowed
     if (allowMockFallback) {
       if (mockScenarioKey && SAMPLE_WEATHER_FIXTURES[mockScenarioKey]) {
+        const fixture = SAMPLE_WEATHER_FIXTURES[mockScenarioKey];
         return {
-          ...SAMPLE_WEATHER_FIXTURES[mockScenarioKey],
+          ...fixture,
           location,
           timestamp: intendedVisitTime,
+          dataType: isFutureVisit ? 'FORECAST' : 'CURRENT',
           isMockData: true,
         };
       }
@@ -77,24 +88,27 @@ export class WeatherService {
         windSpeedKmh: 10,
         isWalkingImpaired: false,
         severity: 'NONE',
-        advisory: 'Fair weather for walking.',
+        dataType: isFutureVisit ? 'FORECAST' : 'CURRENT',
+        advisory: isFutureVisit ? 'Forecast indicates fair weather for walking.' : 'Fair weather for walking.',
         isMockData: true,
         freshnessSeconds: 120,
       };
     }
 
-    // 3. Honest representation when live API is unconfigured and fallback disabled
+    // 3. Honest representation when live API is unconfigured or failed and fallback disabled.
+    // Finding B1 requirement: Missing weather credentials/data must NEVER mean CLEAR.
     return {
       provider: 'GOOGLE_MAPS_WEATHER',
       location,
       timestamp: intendedVisitTime,
-      condition: 'CLEAR',
+      condition: 'UNAVAILABLE',
       temperatureCelsius: 0,
       precipitationProbability: 0,
       windSpeedKmh: 0,
       isWalkingImpaired: false,
       severity: 'NONE',
-      advisory: 'Weather data unavailable.',
+      dataType: 'UNAVAILABLE',
+      advisory: 'Weather data unavailable. Weather conditions unverified.',
       isMockData: false,
       freshnessSeconds: 0,
     };
@@ -107,10 +121,29 @@ export class WeatherService {
     raw: any,
     location: LatLng,
     timestamp: string,
-    isMock: boolean
+    isMock: boolean,
+    isFutureVisit: boolean
   ): NormalizedWeather {
-    const conditionStr = (raw.condition || raw.weatherCondition || 'CLEAR').toUpperCase();
-    let condition: NormalizedWeather['condition'] = 'CLEAR';
+    if (!raw || typeof raw !== 'object') {
+      return {
+        provider: isMock ? 'MOCK_FIXTURE' : 'GOOGLE_MAPS_WEATHER',
+        location,
+        timestamp,
+        condition: 'UNAVAILABLE',
+        temperatureCelsius: 0,
+        precipitationProbability: 0,
+        windSpeedKmh: 0,
+        isWalkingImpaired: false,
+        severity: 'NONE',
+        dataType: 'UNAVAILABLE',
+        advisory: 'Malformed weather API response. Conditions unverified.',
+        isMockData: isMock,
+        freshnessSeconds: 0,
+      };
+    }
+
+    const conditionStr = (raw.condition || raw.weatherCondition || '').toUpperCase();
+    let condition: WeatherConditionType = 'CLEAR';
     let severity: WeatherSeverity = 'NONE';
     let isWalkingImpaired = false;
 
@@ -124,6 +157,11 @@ export class WeatherService {
     } else if (conditionStr.includes('CLOUD')) {
       condition = 'CLOUDY';
       severity = 'NONE';
+    } else if (conditionStr.includes('CLEAR')) {
+      condition = 'CLEAR';
+      severity = 'NONE';
+    } else if (!conditionStr) {
+      condition = 'UNAVAILABLE';
     }
 
     const temp = raw.temperature?.degrees ?? raw.temperatureCelsius ?? 25;
@@ -132,6 +170,12 @@ export class WeatherService {
       severity = 'MODERATE';
       isWalkingImpaired = true;
     }
+
+    const advisory = isWalkingImpaired
+      ? 'Walking conditions impaired by weather.'
+      : isFutureVisit
+      ? 'Current conditions retrieved; future forecast unverified.'
+      : undefined;
 
     return {
       provider: isMock ? 'MOCK_FIXTURE' : 'GOOGLE_MAPS_WEATHER',
@@ -143,7 +187,8 @@ export class WeatherService {
       windSpeedKmh: raw.windSpeedKmh ?? 12,
       isWalkingImpaired,
       severity,
-      advisory: isWalkingImpaired ? 'Walking conditions impaired by weather.' : undefined,
+      dataType: isFutureVisit ? 'CURRENT' : 'CURRENT', // currentConditions endpoint only returns current observations
+      advisory,
       isMockData: isMock,
       freshnessSeconds: 60,
     };
