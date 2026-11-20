@@ -16,7 +16,7 @@ import {
   VoicePhotoExtractionSchema,
   VoicePhotoExtraction,
 } from '../schemas/types.js';
-import { executeWithRetry, getGeminiClient } from '../client/gemini-client.js';
+import { executeWithRetry } from '../client/gemini-client.js';
 import { getAIConfig } from '../config/env.js';
 
 /**

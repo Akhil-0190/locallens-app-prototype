@@ -1,0 +1,16 @@
+{
+  "contributionId": "contrib_gem_981273",
+  "submission": {
+    "mapsLink": "https://maps.app.goo.gl/sampleSpotLink",
+    "infoParagraph": "Family-run Brahmin coffee and podi idli spot tucked away behind Malleshwaram 8th Cross. The grandmother still makes the chutney fresh every morning.",
+    "photoUrls": [
+      "https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/contributions/podi_idli.jpg"
+    ],
+    "audioNoteUrl": "https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/voice/contrib_981273.m4a",
+    "contributorId": "usr_blr_782914"
+  },
+  "status": "AI_ANALYZED",
+  "groundedPlaceId": null,
+  "createdAt": "2026-11-20T11:00:00.000Z",
+  "updatedAt": "2026-11-20T11:02:15.000Z"
+}

@@ -1,0 +1,19 @@
+{
+  "success": false,
+  "error": {
+    "code": "CAPACITY_THROTTLED",
+    "category": "CAPACITY_EXCEEDED",
+    "message": "This spot has reached maximum hourly capacity to protect local street congestion. Please visit recommended alternative Veena Stores (420m away).",
+    "details": {
+      "placeId": "place_ctr_malleshwaram_01",
+      "currentVisitors": 12,
+      "maxCapacity": 12,
+      "suggestedAlternativeId": "place_veena_stores_04"
+    },
+    "retryable": false
+  },
+  "metadata": {
+    "requestId": "req_9812739812",
+    "timestamp": "2026-11-20T14:01:00.000Z"
+  }
+}

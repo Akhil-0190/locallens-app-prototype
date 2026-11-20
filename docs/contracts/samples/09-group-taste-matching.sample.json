@@ -1,0 +1,48 @@
+{
+  "sessionId": "grp_sess_blr_90123",
+  "hostUserId": "usr_blr_782914",
+  "sessionCode": "BLR892",
+  "neighborhood": "Malleshwaram",
+  "status": "FINALIZED",
+  "members": [
+    {
+      "userId": "usr_blr_782914",
+      "displayName": "Priya",
+      "vibes": ["heritage", "filter_coffee"],
+      "dietaryRestrictions": ["vegetarian"],
+      "maxBudgetAmount": 500,
+      "weighting": 1.0
+    },
+    {
+      "userId": "usr_blr_451290",
+      "displayName": "Arjun",
+      "vibes": ["street_photography", "vintage_alleys"],
+      "dietaryRestrictions": [],
+      "maxBudgetAmount": 800,
+      "weighting": 1.0
+    }
+  ],
+  "consensusBlend": {
+    "consensusAtmosphere": ["heritage", "vintage_alleys", "culinary"],
+    "dietaryConstraintsUnion": ["vegetarian"],
+    "budgetConsensusRange": {
+      "minCurrencyAmount": 300,
+      "maxCurrencyAmount": 650,
+      "currencyCode": "INR"
+    },
+    "individualWeightings": {
+      "usr_blr_782914": 1.0,
+      "usr_blr_451290": 1.0
+    },
+    "compromiseFactors": [
+      "Selected all-vegetarian traditional breakfast stop to honor Priya's dietary constraint while giving Arjun vibrant cultural photography opportunities."
+    ],
+    "recommendedCategoryFocus": ["heritage_walk", "traditional_breakfast", "historic_temple"]
+  },
+  "recommendedSpotIds": [
+    "place_ctr_malleshwaram_01",
+    "place_kadu_temple_02"
+  ],
+  "createdAt": "2026-11-20T10:00:00.000Z",
+  "expiresAt": "2026-11-21T10:00:00.000Z"
+}

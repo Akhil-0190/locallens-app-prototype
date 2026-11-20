@@ -1,0 +1,25 @@
+{
+  "assetId": "asset_audio_891234",
+  "contributionId": "contrib_gem_981273",
+  "assetType": "AUDIO_VOICE_NOTE",
+  "storagePath": "contributions/contrib_gem_981273/audio/asset_audio_891234.m4a",
+  "downloadUrl": "https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/contributions/contrib_gem_981273/audio/asset_audio_891234.m4a",
+  "mimeType": "audio/mp4",
+  "fileSizeBytes": 458920,
+  "processingStatus": "COMPLETED",
+  "aiExtractionResult": {
+    "detectedLanguage": "kn-IN",
+    "transcription": "ಇಲ್ಲಿ ಮಲ್ಲಿಗೆ ಇಡ್ಲಿ ಮತ್ತು ತುಪ್ಪ ಪೊಡಿ ತುಂಬಾ ಫೇಮಸ್, ಬೆಳಗ್ಗೆ ಎಂಟಕ್ಕೆ ಮುಗಿದುಹೋಗುತ್ತದೆ.",
+    "englishTranslation": "The mallige idli and ghee podi here are very famous; they sell out completely by 8:00 AM.",
+    "practicalDetails": {
+      "openingHoursMentioned": "06:30 AM to 08:30 AM",
+      "signatureDishesOrItems": ["Mallige Idli", "Ghee Podi", "Filter Coffee"],
+      "priceLevelNote": "Under 100 INR per person",
+      "cashOnlyWarning": true,
+      "insiderTips": ["Arrive before 7:30 AM to get warm ghee podi before stock finishes."]
+    },
+    "confidenceScore": 0.94
+  },
+  "createdAt": "2026-11-20T11:00:00.000Z",
+  "updatedAt": "2026-11-20T11:01:30.000Z"
+}

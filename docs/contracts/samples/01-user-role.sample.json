@@ -1,0 +1,15 @@
+{
+  "userId": "usr_blr_782914",
+  "email": "traveler.priya@example.com",
+  "phoneNumber": "+919876543210",
+  "displayName": "Priya Sharma",
+  "photoUrl": "https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/avatars/usr_blr_782914.jpg",
+  "role": "LOCAL_CONTRIBUTOR",
+  "isAnonymous": false,
+  "accountStatus": "ACTIVE",
+  "savedSpotIds": ["place_ctr_malleshwaram_01", "place_kadu_temple_02"],
+  "savedRouteIds": ["route_malleshwaram_heritage_01"],
+  "createdAt": "2026-11-20T08:00:00.000Z",
+  "updatedAt": "2026-11-20T10:30:00.000Z",
+  "lastLoginAt": "2026-11-20T11:00:00.000Z"
+}

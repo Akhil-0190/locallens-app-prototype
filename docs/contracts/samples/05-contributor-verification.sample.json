@@ -1,0 +1,25 @@
+{
+  "userId": "usr_blr_782914",
+  "contributorTier": "HERITAGE_SAGE",
+  "reputationPoints": 450,
+  "spotsSubmittedCount": 12,
+  "spotsApprovedCount": 10,
+  "accuracyRate": 0.833,
+  "isVerifiedResident": true,
+  "neighborhoodOfResidency": "Malleshwaram",
+  "earnedBadges": [
+    {
+      "badgeId": "NEIGHBORHOOD_INSIDER",
+      "title": "Neighborhood Insider",
+      "description": "Submitted 5+ verified local spots in Malleshwaram",
+      "awardedAt": "2026-11-20T08:00:00.000Z"
+    },
+    {
+      "badgeId": "FILTER_COFFEE_CONNOISSEUR",
+      "title": "Filter Coffee Connoisseur",
+      "description": "Accurately verified 3 heritage filter coffee institutions",
+      "awardedAt": "2026-11-20T09:30:00.000Z"
+    }
+  ],
+  "totalTipsReceivedInr": 1250
+}

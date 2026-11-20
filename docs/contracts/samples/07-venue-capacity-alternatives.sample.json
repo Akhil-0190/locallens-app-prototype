@@ -1,0 +1,20 @@
+{
+  "slotId": "slot_20261120_1400",
+  "placeId": "place_ctr_malleshwaram_01",
+  "hourSlot": "2026-11-20T14:00:00.000Z",
+  "maxCapacity": 12,
+  "currentVisitorsCount": 12,
+  "remainingCapacity": 0,
+  "level": "AT_CAPACITY",
+  "isThrottled": true,
+  "suggestedAlternatives": [
+    {
+      "alternativePlaceId": "place_veena_stores_04",
+      "alternativeName": "Veena Stores",
+      "distanceMeters": 420,
+      "walkingDurationMinutes": 5,
+      "currentCrowdLevel": "MODERATE"
+    }
+  ],
+  "updatedAt": "2026-11-20T14:00:00.000Z"
+}
