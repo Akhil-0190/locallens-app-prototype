@@ -240,6 +240,35 @@ class NativePlatformService {
     }
   }
 
+  /// Checks on-device model provisioning status across AICore and Gemma GGUF runtimes.
+  Future<Map<String, dynamic>> checkModelProvisioning({String engine = 'GEMMA_GGUF'}) async {
+    if (_isTestMode) {
+      return {
+        'engine': engine,
+        'gemmaModelDownloaded': false,
+        'gemmaModelPath': null,
+        'gemmaSizeBytes': 0,
+        'aicoreInstalled': false,
+        'apiLevel': 34,
+        'isProvisioned': false,
+      };
+    }
+    try {
+      final res = await _aiChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'checkModelProvisioning',
+        {'engine': engine},
+      );
+      if (res != null) {
+        return Map<String, dynamic>.from(res);
+      }
+    } catch (_) {}
+    return {
+      'engine': engine,
+      'isProvisioned': false,
+      'error': 'Channel communication failed',
+    };
+  }
+
   /// Summarizes offline traveler note adhering to B6 contract.
   /// Returns structured unassisted response until model binary is provided by Developer B.
   Future<Map<String, dynamic>> summarizeOfflineNote({

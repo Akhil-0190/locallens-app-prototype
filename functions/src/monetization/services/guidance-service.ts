@@ -161,15 +161,6 @@ export class GuidanceService {
     const bookingId = `guidance_blr_${Date.now()}_${randomUUID().replace(/-/g, '').slice(0, 6)}`;
     const now = new Date().toISOString();
 
-    const paymentIntent = await this.paymentAdapter.createPaymentIntent({
-      transactionId: bookingId,
-      payerUserId: input.travelerUserId,
-      recipientUserId: offering.guideUserId,
-      amountInr: offering.priceInr,
-      currency: 'INR',
-      description: `1-on-1 Guidance: ${offering.title} in ${offering.neighborhood}`,
-    });
-
     const booking: GuidanceBookingDocument = {
       bookingId,
       offeringId: offering.offeringId,
@@ -187,14 +178,29 @@ export class GuidanceService {
       currency: 'INR',
       paymentMode: this.paymentAdapter.getMode(),
       paymentStatus: 'INITIATED',
-      paymentGatewayReference: paymentIntent.gatewayReference,
       status: 'REQUESTED',
       createdAt: now,
       updatedAt: now,
     };
 
     GuidanceBookingDocumentSchema.parse(booking);
+
+    // Save initial transaction so canonical record exists before gateway intent creation
     await db.collection('guidance_bookings').doc(bookingId).set(booking);
+
+    const paymentIntent = await this.paymentAdapter.createPaymentIntent({
+      transactionId: bookingId,
+      payerUserId: input.travelerUserId,
+      recipientUserId: offering.guideUserId,
+      amountInr: offering.priceInr,
+      currency: 'INR',
+      description: `1-on-1 Guidance: ${offering.title} in ${offering.neighborhood}`,
+    });
+
+    booking.paymentGatewayReference = paymentIntent.gatewayReference;
+    await db.collection('guidance_bookings').doc(bookingId).update({
+      paymentGatewayReference: paymentIntent.gatewayReference,
+    });
 
     return { booking, paymentIntent };
   }

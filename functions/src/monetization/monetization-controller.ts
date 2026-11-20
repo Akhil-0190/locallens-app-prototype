@@ -13,22 +13,24 @@
  *   - getContributorAttribution      — Retrieve public badges and reputation
  */
 
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
+import { db } from '../config/firebase.js';
 import { ApiSuccessResponse, PassTier, MerchantPlanTier } from '../types/contracts/index.js';
 import { TippingService } from './services/tipping-service.js';
 import { PassService } from './services/pass-service.js';
 import { MerchantSubscriptionService } from './services/merchant-subscription-service.js';
 import { ContributorProfileService } from './services/contributor-service.js';
 import { GuidanceService } from './services/guidance-service.js';
-import { defaultPaymentAdapter } from './adapters/sandbox-payment-adapter.js';
+import { getPaymentAdapter } from './adapters/payment-adapter-factory.js';
 
-const tippingService = new TippingService(defaultPaymentAdapter);
-const passService = new PassService(defaultPaymentAdapter);
-const merchantService = new MerchantSubscriptionService(defaultPaymentAdapter);
+const paymentAdapter = getPaymentAdapter();
+const tippingService = new TippingService(paymentAdapter);
+const passService = new PassService(paymentAdapter);
+const merchantService = new MerchantSubscriptionService(paymentAdapter);
 const contributorService = new ContributorProfileService();
-const guidanceService = new GuidanceService(defaultPaymentAdapter);
+const guidanceService = new GuidanceService(paymentAdapter);
 
 function requestId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 12);
@@ -424,7 +426,11 @@ export const confirmPartnerSubscriptionPayment = onCall(async (request) => {
   }
 
   try {
-    const isAdmin = request.auth.token?.role === 'admin' || request.auth.token?.role === 'moderator';
+    const tokenRole = String(request.auth.token?.role || '').toUpperCase();
+    const isAdmin =
+      request.auth.token?.admin === true ||
+      tokenRole === 'ADMIN' ||
+      tokenRole === 'MODERATOR';
     const outcome =
       simulatedOutcome === 'SUCCESS' || simulatedOutcome === 'FAILURE'
         ? (simulatedOutcome as 'SUCCESS' | 'FAILURE')
@@ -746,5 +752,303 @@ export const listMyGuidanceBookings = onCall(async (request) => {
   } catch (err: unknown) {
     logger.error('Error listing user guidance bookings', { error: err });
     throw new HttpsError('internal', (err as Error).message || 'Failed to list guidance bookings.');
+  }
+});
+
+/**
+ * Inbound HTTP Webhook: handlePaymentWebhook
+ * Handles payment gateway webhooks with HMAC signature verification and idempotency protection.
+ */
+export const handlePaymentWebhook = onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('Method Not Allowed');
+    return;
+  }
+
+  const webhookSecret = process.env.PAYMENT_WEBHOOK_SECRET?.trim();
+  if (!webhookSecret) {
+    logger.error('PAYMENT_WEBHOOK_SECRET is not configured. Webhook rejected fail-closed.');
+    res.status(500).json({ error: 'Webhook processing unconfigured' });
+    return;
+  }
+
+  const signature = (req.headers['x-razorpay-signature'] || req.headers['x-webhook-signature']) as string | undefined;
+  if (!signature) {
+    logger.warn('Webhook request missing signature header');
+    res.status(401).json({ error: 'Missing webhook signature' });
+    return;
+  }
+
+  // Strictly require the actual Firebase req.rawBody Buffer directly from the network socket.
+  // Reconstructing raw bytes via JSON.stringify is strictly forbidden as it introduces serialization variances and security risks.
+  if (!req.rawBody || !Buffer.isBuffer(req.rawBody)) {
+    logger.warn('Webhook request missing genuine rawBody Buffer');
+    res.status(400).json({ error: 'Missing genuine raw request body buffer' });
+    return;
+  }
+
+  const expectedSig = createHmac('sha256', webhookSecret).update(req.rawBody).digest('hex');
+
+  if (signature !== expectedSig) {
+    logger.warn('Webhook signature mismatch');
+    res.status(401).json({ error: 'Invalid webhook signature' });
+    return;
+  }
+
+  const eventPayload = (req.body as Record<string, any>) || {};
+  // Requirement 4: Use Razorpay's actual x-razorpay-event-id header or req.body.event_id for deduplication
+  const eventId = (
+    req.headers['x-razorpay-event-id'] ||
+    eventPayload.event_id ||
+    eventPayload.id
+  ) as string | undefined;
+
+  if (!eventId || typeof eventId !== 'string') {
+    res.status(400).json({ error: 'Missing valid event ID (x-razorpay-event-id or event_id required)' });
+    return;
+  }
+
+  const eventRef = db.collection('webhook_events').doc(eventId);
+  try {
+    const alreadyProcessed = await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(eventRef);
+      if (snap.exists) {
+        return true;
+      }
+      transaction.set(eventRef, {
+        eventId,
+        receivedAt: new Date().toISOString(),
+        eventType: eventPayload.event || 'unknown',
+        processed: true,
+      });
+      return false;
+    });
+
+    if (alreadyProcessed) {
+      logger.info('Duplicate webhook event received; returning 200 OK idempotently', { eventId });
+      res.status(200).json({ status: 'duplicate_ignored', eventId });
+      return;
+    }
+
+    const eventType = eventPayload.event || 'unknown';
+    logger.info('Verified webhook event recorded', { eventId, eventType });
+
+    // 4. Reconcile transaction state based on event type
+    const paymentEntity = eventPayload.payload?.payment?.entity;
+    const transactionId = (paymentEntity?.notes?.transactionId || paymentEntity?.description || '') as string;
+
+    if (transactionId && (eventType === 'payment.captured' || eventType === 'order.paid')) {
+      const now = new Date().toISOString();
+      const paymentId = String(paymentEntity?.id || '');
+
+      // Verify currency is INR and amount matches
+      if (paymentEntity?.currency === 'INR' && typeof paymentEntity?.amount === 'number') {
+        const amountInr = paymentEntity.amount / 100;
+
+        if (transactionId.startsWith('tip_')) {
+          const tipRef = db.collection('tips').doc(transactionId);
+          await db.runTransaction(async (t) => {
+            const tipSnap = await t.get(tipRef);
+            if (!tipSnap.exists) return;
+            const tip = tipSnap.data() as any;
+            if (tip.paymentStatus === 'COMPLETED') return; // Idempotent ignore
+            if (tip.amountInr !== amountInr) {
+              logger.warn('Amount mismatch in webhook for tip', { expected: tip.amountInr, received: amountInr });
+              return;
+            }
+
+            t.update(tipRef, {
+              paymentStatus: 'COMPLETED',
+              providerPaymentId: paymentId,
+              paymentReference: paymentId,
+              updatedAt: now,
+            });
+
+            // Credit recipient reward ledger
+            const ledgerRef = db.collection('contributor_rewards').doc(tip.recipientUserId);
+            const ledgerSnap = await t.get(ledgerRef);
+            const currentBalance = ledgerSnap.exists ? (ledgerSnap.data()?.availableBalanceInr || 0) : 0;
+            const currentTotal = ledgerSnap.exists ? (ledgerSnap.data()?.totalTipsEarnedInr || 0) : 0;
+            const currentPoints = ledgerSnap.exists ? (ledgerSnap.data()?.reputationPoints || 0) : 0;
+
+            t.set(ledgerRef, {
+              contributorId: tip.recipientUserId,
+              availableBalanceInr: currentBalance + tip.contributorNetInr,
+              totalTipsEarnedInr: currentTotal + tip.contributorNetInr,
+              reputationPoints: currentPoints + Math.max(1, Math.floor(tip.amountInr / 50)),
+              updatedAt: now,
+            }, { merge: true });
+          });
+        } else if (transactionId.startsWith('pass_')) {
+          const passRef = db.collection('passes').doc(transactionId);
+          await db.runTransaction(async (t) => {
+            const passSnap = await t.get(passRef);
+            if (!passSnap.exists) return;
+            const pass = passSnap.data() as any;
+            if (pass.status === 'ACTIVE' || pass.paymentStatus === 'COMPLETED') return;
+            if (pass.priceInr !== amountInr) return;
+
+            t.update(passRef, {
+              status: 'ACTIVE',
+              paymentStatus: 'COMPLETED',
+              providerPaymentId: paymentId,
+              paymentReference: paymentId,
+              updatedAt: now,
+            });
+          });
+        } else if (transactionId.startsWith('sub_')) {
+          const subRef = db.collection('subscriptions').doc(transactionId);
+          await db.runTransaction(async (t) => {
+            const subSnap = await t.get(subRef);
+            if (!subSnap.exists) return;
+            const sub = subSnap.data() as any;
+            if (sub.status === 'ACTIVE' || sub.paymentStatus === 'COMPLETED') return;
+            if (sub.priceInr !== amountInr) return;
+
+            t.update(subRef, {
+              status: 'ACTIVE',
+              paymentStatus: 'COMPLETED',
+              providerPaymentId: paymentId,
+              paymentReference: paymentId,
+              updatedAt: now,
+            });
+          });
+        } else if (transactionId.startsWith('guidance_')) {
+          const bookingRef = db.collection('guidance_bookings').doc(transactionId);
+          await db.runTransaction(async (t) => {
+            const bookingSnap = await t.get(bookingRef);
+            if (!bookingSnap.exists) return;
+            const booking = bookingSnap.data() as any;
+            if (booking.paymentStatus === 'COMPLETED') return;
+            if (booking.priceInr !== amountInr) return;
+
+            const newStatus = booking.status === 'ACCEPTED' ? 'CONFIRMED' : 'REQUESTED';
+            t.update(bookingRef, {
+              status: newStatus,
+              paymentStatus: 'COMPLETED',
+              providerPaymentId: paymentId,
+              paymentReference: paymentId,
+              updatedAt: now,
+            });
+          });
+        }
+      }
+    } else if (transactionId && eventType === 'payment.failed') {
+      const collectionName = transactionId.startsWith('tip_')
+        ? 'tips'
+        : transactionId.startsWith('pass_')
+          ? 'passes'
+          : transactionId.startsWith('sub_')
+            ? 'subscriptions'
+            : transactionId.startsWith('guidance_')
+              ? 'guidance_bookings'
+              : '';
+
+      if (collectionName) {
+        const docRef = db.collection(collectionName).doc(transactionId);
+        await db.runTransaction(async (t) => {
+          const snap = await t.get(docRef);
+          if (!snap.exists) return;
+          const data = snap.data() as any;
+          // Out of order safety: never mark a COMPLETED or REFUNDED transaction as FAILED
+          if (data.paymentStatus === 'COMPLETED' || data.paymentStatus === 'REFUNDED') return;
+
+          t.update(docRef, {
+            paymentStatus: 'FAILED',
+            failureReason: paymentEntity?.error_description || 'Payment rejected by bank authority',
+            updatedAt: new Date().toISOString(),
+          });
+        });
+      }
+    } else if (transactionId && eventType === 'refund.processed') {
+      const refundEntity = eventPayload.payload?.refund?.entity;
+      const refundId = String(refundEntity?.id || `rfnd_${eventId}`);
+      const refundAmountInr = typeof refundEntity?.amount === 'number'
+        ? refundEntity.amount / 100
+        : 0;
+
+      if (transactionId.startsWith('guidance_')) {
+        const bookingRef = db.collection('guidance_bookings').doc(transactionId);
+        await db.runTransaction(async (t) => {
+          const snap = await t.get(bookingRef);
+          if (!snap.exists) return;
+          const data = snap.data() as any;
+
+          // Deduplication: prevent duplicate refund processing
+          const existingRefundRefs: string[] = Array.isArray(data.refundReferences) ? data.refundReferences : [];
+          if (existingRefundRefs.includes(refundId)) {
+            logger.info('Duplicate refund webhook event ignored for booking', { transactionId, refundId });
+            return;
+          }
+
+          const currentTotalRefunded = Number(data.totalRefundedInr || 0);
+          const newTotalRefunded = currentTotalRefunded + refundAmountInr;
+          const originalPrice = Number(data.priceInr || 0);
+          const isFullyRefunded = originalPrice > 0 && newTotalRefunded >= originalPrice;
+
+          t.update(bookingRef, {
+            paymentStatus: isFullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
+            refundStatus: isFullyRefunded ? 'COMPLETED' : 'PARTIALLY_COMPLETED',
+            refundReference: refundId,
+            refundReferences: [...existingRefundRefs, refundId],
+            totalRefundedInr: Math.min(newTotalRefunded, originalPrice || newTotalRefunded),
+            updatedAt: new Date().toISOString(),
+          });
+        });
+      } else if (transactionId.startsWith('tip_')) {
+        const tipRef = db.collection('tips').doc(transactionId);
+        await db.runTransaction(async (t) => {
+          const snap = await t.get(tipRef);
+          if (!snap.exists) return;
+          const tip = snap.data() as any;
+
+          const existingRefundRefs: string[] = Array.isArray(tip.refundReferences) ? tip.refundReferences : [];
+          if (existingRefundRefs.includes(refundId)) {
+            logger.info('Duplicate refund webhook event ignored for tip', { transactionId, refundId });
+            return;
+          }
+
+          const currentTotalRefunded = Number(tip.totalRefundedInr || 0);
+          const newTotalRefunded = currentTotalRefunded + refundAmountInr;
+          const originalPrice = Number(tip.amountInr || 0);
+          const isFullyRefunded = originalPrice > 0 && newTotalRefunded >= originalPrice;
+
+          t.update(tipRef, {
+            paymentStatus: isFullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
+            refundReference: refundId,
+            refundReferences: [...existingRefundRefs, refundId],
+            totalRefundedInr: Math.min(newTotalRefunded, originalPrice || newTotalRefunded),
+            updatedAt: new Date().toISOString(),
+          });
+
+          // Ledger reversal: deduct refunded portion of net earnings safely without negative balance
+          const ledgerRef = db.collection('contributor_rewards').doc(tip.recipientUserId);
+          const ledgerSnap = await t.get(ledgerRef);
+          if (ledgerSnap.exists) {
+            const ledger = ledgerSnap.data() as any;
+            const maxNetEarning = Number(tip.contributorNetInr || originalPrice);
+            const previouslyRefunded = currentTotalRefunded;
+            const previouslyDeducted = Math.min(previouslyRefunded, maxNetEarning);
+            const remainingNet = Math.max(0, maxNetEarning - previouslyDeducted);
+            const deductionInr = Math.min(refundAmountInr, remainingNet);
+
+            const currentBal = Number(ledger.availableBalanceInr || 0);
+            const newBal = Math.max(0, currentBal - deductionInr);
+            const unrecovered = currentBal < deductionInr ? (deductionInr - currentBal) : 0;
+
+            t.set(ledgerRef, {
+              availableBalanceInr: newBal,
+              unrecoveredAdjustmentInr: Number(ledger.unrecoveredAdjustmentInr || 0) + unrecovered,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          }
+        });
+      }
+    }
+
+    res.status(200).json({ status: 'success', eventId, eventType });
+  } catch (err: unknown) {
+    logger.error('Error processing webhook event', { error: err });
+    res.status(500).json({ error: 'Internal processing failure' });
   }
 });

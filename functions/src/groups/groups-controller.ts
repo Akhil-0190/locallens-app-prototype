@@ -188,6 +188,24 @@ export const saveConsensusBlend = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Session ID required.');
   }
 
+  // Authorization check: Caller must be session host, session member, or administrator
+  const session = await getGroupSessionById(sessionId);
+  if (!session) {
+    throw new HttpsError('not-found', `Group session ${sessionId} not found.`);
+  }
+
+  const tokenRole = String(request.auth.token?.role || '').toUpperCase();
+  const isAdmin = request.auth.token?.admin === true || tokenRole === 'ADMIN' || tokenRole === 'MODERATOR';
+  const isHost = session.hostUserId === request.auth.uid;
+  const isMember = session.members.some((m) => m.userId === request.auth?.uid);
+
+  if (!isAdmin && !isHost && !isMember) {
+    throw new HttpsError(
+      'permission-denied',
+      'Permission denied: Only group session host, members, or administrators may save consensus blends.'
+    );
+  }
+
   try {
     const validatedBlend = ConsensusBlendOutputSchema.parse(blend);
     const spotIds = Array.isArray(recommendedSpotIds) ? (recommendedSpotIds as string[]) : [];

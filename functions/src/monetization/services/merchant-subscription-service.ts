@@ -79,18 +79,6 @@ export class MerchantSubscriptionService {
     let paymentIntent: PaymentIntentResult | undefined;
     let paymentGatewayReference: string | undefined;
 
-    if (!isFreeTier) {
-      const priceInr = input.subscriptionPlan === 'FEATURED_HERITAGE' ? 2499 : 999;
-      paymentIntent = await this.paymentAdapter.createPaymentIntent({
-        transactionId: subscriptionId,
-        payerUserId: input.merchantPlaceId,
-        amountInr: priceInr,
-        currency: 'INR',
-        description: `Partner Subscription: ${input.subscriptionPlan} for ${input.businessName}`,
-      });
-      paymentGatewayReference = paymentIntent.gatewayReference;
-    }
-
     const subscription: PartnerMerchantSubscription = {
       subscriptionId,
       ownerUserId: input.ownerUserId,
@@ -109,7 +97,24 @@ export class MerchantSubscriptionService {
 
     PartnerMerchantSubscriptionSchema.parse(subscription);
 
+    // Save initial transaction so canonical record exists before gateway intent creation
     await db.collection('subscriptions').doc(subscriptionId).set(subscription);
+
+    if (!isFreeTier) {
+      const priceInr = input.subscriptionPlan === 'FEATURED_HERITAGE' ? 2499 : 999;
+      paymentIntent = await this.paymentAdapter.createPaymentIntent({
+        transactionId: subscriptionId,
+        payerUserId: input.merchantPlaceId,
+        amountInr: priceInr,
+        currency: 'INR',
+        description: `Partner Subscription: ${input.subscriptionPlan} for ${input.businessName}`,
+      });
+      paymentGatewayReference = paymentIntent.gatewayReference;
+      subscription.paymentGatewayReference = paymentGatewayReference;
+      await db.collection('subscriptions').doc(subscriptionId).update({
+        paymentGatewayReference,
+      });
+    }
     return {
       subscription,
       paymentIntent,

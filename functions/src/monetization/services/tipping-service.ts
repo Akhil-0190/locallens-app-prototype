@@ -103,6 +103,28 @@ export class TippingService {
     const tipId = `tip_blr_${Date.now()}_${randomUUID().slice(0, 6)}`;
     const now = new Date().toISOString();
 
+    const tipDocument: ContributorTipDocument = {
+      tipId,
+      payerUserId: input.payerUserId,
+      recipientUserId: input.recipientUserId,
+      spotId: input.spotId,
+      spotName: input.spotName,
+      amountInr: input.amountInr,
+      platformFeeInr,
+      contributorNetInr,
+      currency: 'INR',
+      paymentMode: this.paymentAdapter.getMode(),
+      paymentStatus: 'INITIATED',
+      personalNote: input.personalNote,
+      createdAt: now,
+    };
+
+    // Strict contract validation
+    ContributorTipDocumentSchema.parse(tipDocument);
+
+    // Save initial transaction so canonical record exists before gateway intent creation
+    await db.collection('tips').doc(tipId).set(tipDocument);
+
     const paymentIntent = await this.paymentAdapter.createPaymentIntent({
       transactionId: tipId,
       payerUserId: input.payerUserId,
@@ -116,28 +138,10 @@ export class TippingService {
       },
     });
 
-    const tipDocument: ContributorTipDocument = {
-      tipId,
-      payerUserId: input.payerUserId,
-      recipientUserId: input.recipientUserId,
-      spotId: input.spotId,
-      spotName: input.spotName,
-      amountInr: input.amountInr,
-      platformFeeInr,
-      contributorNetInr,
-      currency: 'INR',
-      paymentMode: this.paymentAdapter.getMode(),
-      paymentStatus: 'INITIATED',
+    tipDocument.paymentGatewayReference = paymentIntent.gatewayReference;
+    await db.collection('tips').doc(tipId).update({
       paymentGatewayReference: paymentIntent.gatewayReference,
-      personalNote: input.personalNote,
-      createdAt: now,
-    };
-
-    // Strict contract validation
-    ContributorTipDocumentSchema.parse(tipDocument);
-
-    // Save initial transaction
-    await db.collection('tips').doc(tipId).set(tipDocument);
+    });
 
     return {
       tip: tipDocument,

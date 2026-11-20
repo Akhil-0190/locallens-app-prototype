@@ -51,6 +51,15 @@ void main() {
       expect(keywordsRes['modelUsed'], 'NONE (Unassisted Fallback)'); // Restored original field
     });
 
+    test('checkModelProvisioning reports unprovisioned status honestly in test mode', () async {
+      final service = NativePlatformService(isTestMode: true);
+
+      final prov = await service.checkModelProvisioning(engine: 'GEMMA_GGUF');
+      expect(prov['isProvisioned'], isFalse);
+      expect(prov['gemmaModelDownloaded'], isFalse);
+      expect(prov['aicoreInstalled'], isFalse);
+    });
+
     test('executeOfflineInference strictly refuses to fabricate inference when model is uninstalled', () async {
       final service = NativePlatformService(isTestMode: true);
 
