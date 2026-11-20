@@ -190,16 +190,17 @@ async function runB4Tests() {
 
   const topMatch = soloResults[0]!;
   assert(topMatch.placeId === sampleHeritageDosaSpot.id, 'Top match is the heritage vegetarian dosa spot');
-  assert(topMatch.overallMatchScore >= 80, 'Strong match receives high overall score (>= 80)');
+  assert(topMatch.matchScore >= 80, 'Strong match receives high overall score (>= 80)');
   assert(topMatch.isRecommended === true, 'Strong match is marked as recommended');
   assert(topMatch.matchedVibes.includes('heritage'), 'Heritage vibe explicitly matched');
+  assert(topMatch.topMatchReasons.length > 0, 'topMatchReasons populated');
 
   // -------------------------------------------------------------------------
   // Scenario 5: Weak Individual Preference Match & Dietary Constraint Penalty
   // -------------------------------------------------------------------------
   console.log('\n--- [Scenario 5] Weak Match & Dietary Constraint Penalty ---');
   const weakMatch = soloResults.find((r) => r.placeId === sampleMeatBarbecueSpot.id)!;
-  assert(weakMatch.overallMatchScore < 50, 'Meat barbecue spot receives penalized score (< 50) for pure veg traveler');
+  assert(weakMatch.matchScore < 50, 'Meat barbecue spot receives penalized score (< 50) for pure veg traveler');
   assert(weakMatch.isRecommended === false, 'Meat spot is not recommended for pure veg traveler');
   assert(Boolean(weakMatch.dietaryAlert), 'Dietary alert is emitted for non-compliant spot');
 
@@ -223,8 +224,8 @@ async function runB4Tests() {
     preferences: blankTraveler,
     places: [sampleHeritageDosaSpot],
   });
-  assert(blankResults[0]!.overallMatchScore >= 60, 'Graceful handling of empty preferences without throwing errors');
-  assert(blankResults[0]!.primaryMatchReason.length > 0, 'Generates sensible explanation even with missing preferences');
+  assert(blankResults[0]!.matchScore >= 60, 'Graceful handling of empty preferences without throwing errors');
+  assert(blankResults[0]!.topMatchReasons.length > 0, 'Generates sensible explanation even with missing preferences');
 
   // -------------------------------------------------------------------------
   // Scenario 7: Group Preference Blending (Domain 09 ConsensusBlendOutput)
@@ -319,10 +320,55 @@ async function runB4Tests() {
   });
 
   const topGroupSpot = groupResults[0]!;
-  assert(topGroupSpot.placeId === sampleHeritageDosaSpot.id, 'Top group recommendation is the heritage pure veg spot');
-  assert(topGroupSpot.dietarySafetyVerified === true, 'Dietary safety verified for the group union');
+  assert(topGroupSpot.placeId === sampleHeritageDosaSpot.id, 'Top group recommendation is the heritage spot');
+  assert(
+    topGroupSpot.dietarySafetyVerified === false,
+    'Guardrail: Unverified nut allergy in group union prevents false dietary safety guarantee'
+  );
+  assert(
+    topGroupSpot.dietaryStatus === 'UNVERIFIED_DATA',
+    'Dietary status marked as UNVERIFIED_DATA for unverified allergen'
+  );
+  assert(
+    topGroupSpot.compromiseAlerts.some((a) => a.includes('allergen') || a.includes('nut_allergy')),
+    'Compromise alerts contain allergen verification warning'
+  );
   assert(topGroupSpot.memberSatisfactionScores['usr_mem_1']! >= 70, 'Member 1 has high satisfaction score');
   assert(topGroupSpot.memberSatisfactionScores['usr_mem_2']! >= 60, 'Member 2 has healthy satisfaction score');
+
+  // Verify pure vegetarian group achieves VERIFIED_SAFE on pure veg venue
+  const vegOnlyMembers: MemberPreferenceInput[] = [
+    {
+      userId: 'usr_veg_1',
+      displayName: 'Aravinth',
+      vibes: ['heritage'],
+      dietaryRestrictions: ['pure_veg'],
+      maxBudgetAmount: 250,
+      weighting: 1.0,
+    },
+    {
+      userId: 'usr_veg_2',
+      displayName: 'Kiran',
+      vibes: ['heritage'],
+      dietaryRestrictions: ['pure_veg'],
+      maxBudgetAmount: 300,
+      weighting: 1.0,
+    },
+  ];
+
+  const vegGroupResults = await matchGroupPreferences({
+    neighborhood: 'Malleshwaram',
+    members: vegOnlyMembers,
+    places: [sampleHeritageDosaSpot],
+  });
+  assert(
+    vegGroupResults[0]!.dietarySafetyVerified === true,
+    'Dietary safety verified when venue explicitly certifies pure vegetarian'
+  );
+  assert(
+    vegGroupResults[0]!.dietaryStatus === 'VERIFIED_SAFE',
+    'Dietary status marked as VERIFIED_SAFE when venue explicitly certifies pure vegetarian'
+  );
 
   // -------------------------------------------------------------------------
   // Scenario 13: Dietary Violation Disqualifies Group Spot
@@ -330,15 +376,16 @@ async function runB4Tests() {
   console.log('\n--- [Scenario 13] Group Dietary Violation Disqualification ---');
   const meatGroupSpot = groupResults.find((r) => r.placeId === sampleMeatBarbecueSpot.id)!;
   assert(meatGroupSpot.dietarySafetyVerified === false, 'Meat spot fails group dietary safety verification');
+  assert(meatGroupSpot.dietaryStatus === 'CONFLICT_DETECTED', 'Dietary status marked as CONFLICT_DETECTED');
   assert(meatGroupSpot.isRecommended === false, 'Meat spot is NOT recommended for group containing vegetarian member');
-  assert(meatGroupSpot.groupMatchScore <= 40, 'Meat spot score heavily penalized for group');
+  assert(meatGroupSpot.matchScore <= 40, 'Meat spot score heavily penalized for group');
 
   // -------------------------------------------------------------------------
   // Scenario 14: Explainable Match Reasons
   // -------------------------------------------------------------------------
   console.log('\n--- [Scenario 14] Explainable Match Reasons ---');
-  assert(Boolean(topGroupSpot.primaryGroupReason), 'Primary group reason populated');
-  assert(Boolean(topGroupSpot.compromiseNote), 'Compromise note populated');
+  assert(topGroupSpot.topMatchReasons.length > 0, 'topMatchReasons populated');
+  assert(topGroupSpot.compromiseAlerts.length > 0, 'compromiseAlerts populated');
   assert(topGroupSpot.sharedGroupVibesMatched.length > 0, 'Shared group vibes listed');
 
   // -------------------------------------------------------------------------

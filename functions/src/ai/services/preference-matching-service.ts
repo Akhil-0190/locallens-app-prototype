@@ -176,7 +176,7 @@ export function blendGroupPreferences(
 export async function matchSoloPreferences(
   input: SoloMatchInput
 ): Promise<SoloPlaceMatchResult[]> {
-  const { preferences, places, limit = 10 } = input;
+  const { preferences, places, limit = 10, options } = input;
   const results: SoloPlaceMatchResult[] = [];
 
   // Construct text representation of user preferences for semantic vector
@@ -189,7 +189,10 @@ export async function matchSoloPreferences(
     .filter(Boolean)
     .join(' ');
 
-  const userEmbedding = await generateEmbedding(userPrefText || 'authentic neighborhood gems');
+  const userEmbedding = await generateEmbedding(
+    userPrefText || 'authentic neighborhood gems',
+    options
+  );
 
   for (const place of places) {
     // 1. Semantic Vibe Similarity (0 - 100)
@@ -203,107 +206,177 @@ export async function matchSoloPreferences(
       .filter(Boolean)
       .join(' ');
 
-    const placeEmbedding = await generateEmbedding(placeText);
+    const placeEmbedding = await generateEmbedding(placeText, options);
     const cosineSim = computeCosineSimilarity(userEmbedding.values, placeEmbedding.values);
-    const vibeSimilarity = Math.round(cosineSim * 100);
+    const vibeMatch = Math.round(cosineSim * 100);
 
     // 2. Budget Fit Score (0 - 100)
-    let budgetFitScore = 80;
+    let budgetSuitability = 80;
     const maxBudget = preferences.maxBudgetPerMealInr || 250;
     const isBudgetTier = preferences.budgetTier === 'BUDGET';
 
-    if (place.infoParagraph?.toLowerCase().includes('cheap') || place.infoParagraph?.toLowerCase().includes('budget') || place.infoParagraph?.toLowerCase().includes('affordable')) {
-      budgetFitScore = 95;
-    } else if (place.infoParagraph?.toLowerCase().includes('expensive') || place.infoParagraph?.toLowerCase().includes('fine dining')) {
-      budgetFitScore = (isBudgetTier || maxBudget < 300) ? 30 : 70;
+    if (
+      place.infoParagraph?.toLowerCase().includes('cheap') ||
+      place.infoParagraph?.toLowerCase().includes('budget') ||
+      place.infoParagraph?.toLowerCase().includes('affordable')
+    ) {
+      budgetSuitability = 95;
+    } else if (
+      place.infoParagraph?.toLowerCase().includes('expensive') ||
+      place.infoParagraph?.toLowerCase().includes('fine dining')
+    ) {
+      budgetSuitability = isBudgetTier || maxBudget < 300 ? 30 : 70;
     }
 
     // 3. Dietary Compliance Score (0 - 100)
-    let dietaryComplianceScore = 100;
+    // Strict Guardrail: Unverified data is NEVER treated as verified suitability.
+    let dietaryFit = 100;
     let dietaryAlert: string | undefined = undefined;
 
-    const placeLower = (place.infoParagraph + ' ' + (place.categories || []).join(' ')).toLowerCase();
+    const placeLower = (
+      (place.infoParagraph || '') +
+      ' ' +
+      (place.categories || []).join(' ') +
+      ' ' +
+      (place.authenticity?.vibeTags || []).join(' ')
+    ).toLowerCase();
+
     for (const diet of preferences.dietaryRestrictions || []) {
       const d = diet.toLowerCase();
-      if ((d === 'pure_veg' || d === 'vegetarian' || d === 'jain') && placeLower.includes('meat') && !placeLower.includes('pure veg')) {
-        dietaryComplianceScore = Math.min(dietaryComplianceScore, 40);
-        dietaryAlert = `Caution: Place may not be exclusively ${diet.replace('_', ' ')}`;
+      if (d === 'pure_veg' || d === 'vegetarian' || d === 'jain') {
+        if (
+          placeLower.includes('pure veg') ||
+          placeLower.includes('pure_veg') ||
+          placeLower.includes('vegetarian restaurant')
+        ) {
+          dietaryFit = 100;
+        } else if (
+          placeLower.includes('meat') ||
+          placeLower.includes('chicken') ||
+          placeLower.includes('mutton') ||
+          placeLower.includes('pork') ||
+          placeLower.includes('beef') ||
+          placeLower.includes('barbecue')
+        ) {
+          dietaryFit = 0;
+          dietaryAlert = `Explicit non-vegetarian establishment conflicting with ${diet.replace('_', ' ')} preference.`;
+        } else {
+          // Unverified from listing alone: do NOT claim verified suitability
+          dietaryFit = 50;
+          dietaryAlert = `Dietary suitability unverified from available online listing; patron verification advised.`;
+        }
+      } else if (d === 'nut_allergy' || d === 'gluten_free') {
+        // Allergen safety can NEVER be verified from generic place categories
+        if (placeLower.includes(d.replace('_', ' ')) || placeLower.includes(d)) {
+          dietaryFit = 90;
+        } else {
+          dietaryFit = 50;
+          dietaryAlert = `Allergen safety (${diet.replace('_', ' ')}) unverified online; please confirm directly with establishment staff.`;
+        }
       }
     }
 
     // 4. Pacing Suitability Score (0 - 100)
-    let pacingSuitabilityScore = 80;
+    let pacingAlignment = 80;
     const pacing = preferences.preferredPacing;
     if (pacing === 'RELAXED') {
-      if (placeLower.includes('quiet') || placeLower.includes('peaceful') || placeLower.includes('serene') || placeLower.includes('temple') || placeLower.includes('garden')) {
-        pacingSuitabilityScore = 95;
-      } else if (placeLower.includes('crowded') || placeLower.includes('chaotic') || placeLower.includes('rush')) {
-        pacingSuitabilityScore = 60;
+      if (
+        placeLower.includes('quiet') ||
+        placeLower.includes('peaceful') ||
+        placeLower.includes('serene') ||
+        placeLower.includes('temple') ||
+        placeLower.includes('garden')
+      ) {
+        pacingAlignment = 95;
+      } else if (
+        placeLower.includes('crowded') ||
+        placeLower.includes('chaotic') ||
+        placeLower.includes('rush') ||
+        placeLower.includes('packed')
+      ) {
+        pacingAlignment = 60;
       }
     } else if (pacing === 'PACKED') {
-      pacingSuitabilityScore = 90;
+      pacingAlignment = 90;
+    } else {
+      pacingAlignment = 85;
     }
 
     // 5. Authenticity Bonus (0 - 15)
     const authenticityScore = place.authenticity?.authenticityScore || 50;
-    const authenticityBonus = authenticityScore >= 80 ? Math.round((authenticityScore - 70) * 0.5) : 0;
+    const authenticityBonus =
+      authenticityScore >= 80 ? Math.round((authenticityScore - 70) * 0.5) : 0;
 
     // 6. Overall Composite Score
-    // Weightings: 45% Vibe, 20% Budget, 20% Dietary, 15% Pacing + Bonus
     let rawScore =
-      0.45 * vibeSimilarity +
-      0.20 * budgetFitScore +
-      0.20 * dietaryComplianceScore +
-      0.15 * pacingSuitabilityScore +
+      0.45 * vibeMatch +
+      0.20 * budgetSuitability +
+      0.20 * dietaryFit +
+      0.15 * pacingAlignment +
       authenticityBonus;
 
     // If severe dietary conflict, clamp score
-    if (dietaryComplianceScore < 50) {
+    if (dietaryFit < 50) {
       rawScore = Math.min(rawScore, 40);
     }
 
-    const overallMatchScore = Math.max(0, Math.min(100, Math.round(rawScore)));
+    const matchScore = Math.max(0, Math.min(100, Math.round(rawScore)));
 
     // 7. Matched Vibes
     const matchedVibes = (preferences.favoriteVibes || []).filter((vibe) => {
-      const v = vibe.toLowerCase();
-      return (
-        placeLower.includes(v) ||
-        (place.authenticity?.vibeTags || []).some((tag) => tag.toLowerCase().includes(v))
-      );
+      const vKey = vibe.toLowerCase();
+      const vWords = vKey.replace(/_/g, ' ');
+      return placeLower.includes(vKey) || placeLower.includes(vWords);
     });
 
     // 8. Primary Match Reason
-    let primaryMatchReason = `Matches your preference for ${matchedVibes.join(', ') || 'neighborhood culture'}.`;
+    const topMatchReasons: string[] = [];
     if (authenticityScore >= 85) {
-      primaryMatchReason = `Highly authentic local gem (${authenticityScore}/100) matching your ${matchedVibes[0] || 'neighborhood'} interest.`;
+      topMatchReasons.push(
+        `Highly authentic local gem (${authenticityScore}/100) matching your ${matchedVibes[0] || 'neighborhood'} interest.`
+      );
+    } else if (matchedVibes.length > 0) {
+      topMatchReasons.push(`Matches your preference for ${matchedVibes.join(', ')}.`);
+    } else {
+      topMatchReasons.push(`Recommended cultural spot in ${place.formattedAddress.split(',')[0]}.`);
     }
 
-    const isRecommended = overallMatchScore >= 65 && dietaryComplianceScore >= 50;
+    const compromiseAlerts: string[] = [];
+    if (dietaryAlert) {
+      compromiseAlerts.push(dietaryAlert);
+    }
+    if (budgetSuitability <= 50) {
+      compromiseAlerts.push(`Price point may exceed your preferred ${preferences.budgetTier.toLowerCase()} tier.`);
+    }
+
+    const isRecommended = matchScore >= 65 && dietaryFit >= 50;
+    const isOfflineMock = userEmbedding.isOfflineMock || placeEmbedding.isOfflineMock;
 
     const result: SoloPlaceMatchResult = {
       placeId: place.id,
       spotName: place.spotName,
-      overallMatchScore,
+      matchScore,
       isRecommended,
       breakdown: {
-        vibeSimilarity,
-        budgetFitScore,
-        dietaryComplianceScore,
-        pacingSuitabilityScore,
+        vibeMatch,
+        budgetSuitability,
+        dietaryFit,
+        pacingAlignment,
         authenticityBonus,
       },
+      topMatchReasons,
+      compromiseAlerts,
       matchedVibes,
-      primaryMatchReason,
       dietaryAlert,
       practicalTip: place.authenticity?.practicalTips || undefined,
+      isOfflineMock,
     };
 
     results.push(SoloPlaceMatchResultSchema.parse(result));
   }
 
-  // Sort descending by overall match score
-  results.sort((a, b) => b.overallMatchScore - a.overallMatchScore);
+  // Sort descending by match score
+  results.sort((a, b) => b.matchScore - a.matchScore);
   return results.slice(0, limit);
 }
 
@@ -317,13 +390,14 @@ export async function matchSoloPreferences(
 export async function matchGroupPreferences(
   input: GroupBlendAndMatchInput
 ): Promise<GroupPlaceMatchResult[]> {
-  const { members, places, limit = 10 } = input;
+  const { members, places, limit = 10, options } = input;
   const consensus = blendGroupPreferences(members);
   const results: GroupPlaceMatchResult[] = [];
 
   // Generate embedding for consensus group atmosphere
-  const groupAtmosphereText = consensus.consensusAtmosphere.join(' ') + ' ' + consensus.recommendedCategoryFocus.join(' ');
-  const groupEmbedding = await generateEmbedding(groupAtmosphereText);
+  const groupAtmosphereText =
+    consensus.consensusAtmosphere.join(' ') + ' ' + consensus.recommendedCategoryFocus.join(' ');
+  const groupEmbedding = await generateEmbedding(groupAtmosphereText, options);
 
   for (const place of places) {
     const placeText = [
@@ -336,41 +410,11 @@ export async function matchGroupPreferences(
       .filter(Boolean)
       .join(' ');
 
-    const placeEmbedding = await generateEmbedding(placeText);
+    const placeEmbedding = await generateEmbedding(placeText, options);
     const cosineSim = computeCosineSimilarity(groupEmbedding.values, placeEmbedding.values);
-    const vibeSimilarity = Math.round(cosineSim * 100);
+    const vibeMatch = Math.round(cosineSim * 100);
 
-    // Strict Dietary Safety Union Check
-    const placeLower = (place.infoParagraph + ' ' + (place.categories || []).join(' ')).toLowerCase();
-    let dietarySafe = true;
-    for (const diet of consensus.dietaryConstraintsUnion) {
-      const d = diet.toLowerCase();
-      if ((d === 'pure_veg' || d === 'jain' || d === 'vegan') && placeLower.includes('meat') && !placeLower.includes('pure veg')) {
-        dietarySafe = false;
-        break;
-      }
-    }
-
-    const dietaryComplianceScore = dietarySafe ? 100 : 30;
-
-    // Budget Fit for Group Range
-    let budgetFitScore = 80;
-    if (placeLower.includes('cheap') || placeLower.includes('affordable')) {
-      budgetFitScore = 95;
-    } else if (placeLower.includes('fine dining') || placeLower.includes('expensive')) {
-      budgetFitScore = consensus.budgetConsensusRange.maxCurrencyAmount < 300 ? 30 : 70;
-    }
-
-    // Pacing suitability
-    const pacingSuitabilityScore = 80;
-
-    // Authenticity Bonus
-    const authenticityScore = place.authenticity?.authenticityScore || 50;
-    const authenticityBonus = authenticityScore >= 80 ? Math.round((authenticityScore - 70) * 0.5) : 0;
-
-    // Calculate individual member satisfaction scores
-    const memberSatisfactionScores: Record<string, number> = {};
-    const placeAllText = (
+    const placeLower = (
       (place.infoParagraph || '') +
       ' ' +
       (place.categories || []).join(' ') +
@@ -378,22 +422,89 @@ export async function matchGroupPreferences(
       (place.authenticity?.vibeTags || []).join(' ')
     ).toLowerCase();
 
+    // Strict Dietary Safety Union Check
+    let dietaryStatus: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA' = 'VERIFIED_SAFE';
+    let dietarySafetyVerified = true;
+    let dietaryFit = 100;
+    const dietaryAlerts: string[] = [];
+
+    if (consensus.dietaryConstraintsUnion.length > 0) {
+      for (const diet of consensus.dietaryConstraintsUnion) {
+        const d = diet.toLowerCase();
+        if (d === 'pure_veg' || d === 'jain' || d === 'vegetarian') {
+          if (
+            placeLower.includes('pure veg') ||
+            placeLower.includes('pure_veg') ||
+            placeLower.includes('vegetarian restaurant')
+          ) {
+            // Verified compliant
+          } else if (
+            placeLower.includes('meat') ||
+            placeLower.includes('chicken') ||
+            placeLower.includes('mutton') ||
+            placeLower.includes('pork') ||
+            placeLower.includes('beef') ||
+            placeLower.includes('barbecue')
+          ) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's ${diet} requirement.`);
+            break;
+          } else {
+            // Unverified from general listing alone
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlerts.push(`Unverified vegetarian suitability; confirm with venue before group arrival.`);
+          }
+        } else if (d === 'nut_allergy' || d === 'gluten_free') {
+          // Allergens cannot be verified safe from general listing alone
+          dietaryStatus = 'UNVERIFIED_DATA';
+          dietarySafetyVerified = false;
+          dietaryFit = Math.min(dietaryFit, 50);
+          dietaryAlerts.push(`Group member allergen (${diet}) unverified online; please contact kitchen.`);
+        }
+      }
+    }
+
+    // Budget Fit for Group Range
+    let budgetSuitability = 80;
+    if (placeLower.includes('cheap') || placeLower.includes('affordable')) {
+      budgetSuitability = 95;
+    } else if (placeLower.includes('fine dining') || placeLower.includes('expensive')) {
+      budgetSuitability = consensus.budgetConsensusRange.maxCurrencyAmount < 300 ? 30 : 70;
+    }
+
+    // Pacing suitability
+    const pacingAlignment = 80;
+
+    // Authenticity Bonus
+    const authenticityScore = place.authenticity?.authenticityScore || 50;
+    const authenticityBonus =
+      authenticityScore >= 80 ? Math.round((authenticityScore - 70) * 0.5) : 0;
+
+    // Calculate individual member satisfaction scores
+    const memberSatisfactionScores: Record<string, number> = {};
     for (const m of members) {
       const memberVibes = m.vibes || [];
       const matchedCount = memberVibes.filter((v) => {
         const vKey = v.toLowerCase();
         const vWords = vKey.replace(/_/g, ' ');
         return (
-          placeAllText.includes(vKey) ||
-          placeAllText.includes(vWords) ||
+          placeLower.includes(vKey) ||
+          placeLower.includes(vWords) ||
           (place.authenticity?.vibeTags || []).some(
             (tag) => tag.toLowerCase() === vKey || tag.toLowerCase().replace(/_/g, ' ') === vWords
           )
         );
       }).length;
       const ratio = memberVibes.length > 0 ? matchedCount / memberVibes.length : 0.7;
-      let memberScore = Math.round(ratio * 60 + vibeSimilarity * 0.4);
-      if (!dietarySafe && m.dietaryRestrictions?.some((d) => consensus.dietaryConstraintsUnion.includes(d))) {
+      let memberScore = Math.round(ratio * 60 + vibeMatch * 0.4);
+      if (
+        dietaryStatus === 'CONFLICT_DETECTED' &&
+        m.dietaryRestrictions?.some((d) => consensus.dietaryConstraintsUnion.includes(d))
+      ) {
         memberScore = Math.min(memberScore, 30);
       }
       memberSatisfactionScores[m.userId] = Math.max(0, Math.min(100, memberScore));
@@ -401,55 +512,64 @@ export async function matchGroupPreferences(
 
     // Overall Group Score
     let groupMatchScore = Math.round(
-      0.45 * vibeSimilarity +
-      0.25 * dietaryComplianceScore +
-      0.20 * budgetFitScore +
-      0.10 * pacingSuitabilityScore +
+      0.45 * vibeMatch +
+      0.25 * dietaryFit +
+      0.20 * budgetSuitability +
+      0.10 * pacingAlignment +
       authenticityBonus
     );
 
-    if (!dietarySafe) {
+    if (dietaryStatus === 'CONFLICT_DETECTED') {
       groupMatchScore = Math.min(groupMatchScore, 40);
     }
     groupMatchScore = Math.max(0, Math.min(100, groupMatchScore));
 
     // Shared Group Vibes Matched
-    const sharedGroupVibesMatched = consensus.consensusAtmosphere.filter((vibe) =>
-      placeLower.includes(vibe.toLowerCase()) ||
-      (place.authenticity?.vibeTags || []).some((tag) => tag.toLowerCase().includes(vibe.toLowerCase()))
+    const sharedGroupVibesMatched = consensus.consensusAtmosphere.filter(
+      (vibe) =>
+        placeLower.includes(vibe.toLowerCase()) ||
+        (place.authenticity?.vibeTags || []).some((tag) => tag.toLowerCase().includes(vibe.toLowerCase()))
     );
 
     // Primary Group Reason
-    let primaryGroupReason = `Fulfills group consensus on ${sharedGroupVibesMatched.join(', ') || 'neighborhood experience'}.`;
-    if (!dietarySafe) {
-      primaryGroupReason = `Caution: Violates group dietary constraint union.`;
+    const topMatchReasons: string[] = [];
+    if (dietaryStatus === 'CONFLICT_DETECTED') {
+      topMatchReasons.push(`Caution: Conflicts with group dietary constraints.`);
+    } else {
+      topMatchReasons.push(
+        `Fulfills group consensus on ${sharedGroupVibesMatched.join(', ') || 'neighborhood experience'}.`
+      );
     }
 
-    const isRecommended = groupMatchScore >= 65 && dietarySafe;
+    const compromiseAlerts: string[] = [...consensus.compromiseFactors, ...dietaryAlerts];
+    const isRecommended = groupMatchScore >= 65 && dietaryStatus !== 'CONFLICT_DETECTED';
+    const isOfflineMock = groupEmbedding.isOfflineMock || placeEmbedding.isOfflineMock;
 
     const groupResult: GroupPlaceMatchResult = {
       placeId: place.id,
       spotName: place.spotName,
-      groupMatchScore,
+      matchScore: groupMatchScore,
       isRecommended,
       breakdown: {
-        vibeSimilarity,
-        budgetFitScore,
-        dietaryComplianceScore,
-        pacingSuitabilityScore,
+        vibeMatch,
+        budgetSuitability,
+        dietaryFit,
+        pacingAlignment,
         authenticityBonus,
       },
       memberSatisfactionScores,
+      topMatchReasons,
+      compromiseAlerts,
       sharedGroupVibesMatched,
-      primaryGroupReason,
-      compromiseNote: consensus.compromiseFactors[0] || undefined,
-      dietarySafetyVerified: dietarySafe,
+      dietarySafetyVerified,
+      dietaryStatus,
+      isOfflineMock,
     };
 
     results.push(GroupPlaceMatchResultSchema.parse(groupResult));
   }
 
   // Sort descending by group match score
-  results.sort((a, b) => b.groupMatchScore - a.groupMatchScore);
+  results.sort((a, b) => b.matchScore - a.matchScore);
   return results.slice(0, limit);
 }

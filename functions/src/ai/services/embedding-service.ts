@@ -96,11 +96,12 @@ export function generateOfflineTestVector(text: string): number[] {
 
 /**
  * Generates semantic embedding using Gemini Embedding 2.
- * Automatically falls back to deterministic test adapter if offline or unauthenticated.
+ * In production, live API failures throw explicit errors to prevent silent mock injection.
+ * Test adapter fallback is only permitted when explicitly requested (forceOffline or allowTestAdapterFallback).
  */
 export async function generateEmbedding(
   text: string,
-  options?: { forceOffline?: boolean }
+  options?: { forceOffline?: boolean; allowTestAdapterFallback?: boolean }
 ): Promise<EmbeddingVector> {
   const sanitized = (text || '').trim();
   if (!sanitized) {
@@ -116,7 +117,7 @@ export async function generateEmbedding(
   const config = getAIConfig();
   const nowIso = new Date().toISOString();
 
-  // If forceOffline is requested or no API key is available
+  // If forceOffline is explicitly requested or no API key is available in environment
   if (options?.forceOffline || !config.hasApiKey) {
     const offlineVector = generateOfflineTestVector(sanitized);
     const result: EmbeddingVector = {
@@ -142,6 +143,11 @@ export async function generateEmbedding(
         if (!values || !Array.isArray(values) || values.length === 0) {
           throw new Error('Gemini Embedding 2 returned empty or malformed vector array.');
         }
+        if (values.length !== EMBEDDING_DIMENSIONS) {
+          throw new Error(
+            `Gemini Embedding 2 returned unexpected dimension count: ${values.length} (expected ${EMBEDDING_DIMENSIONS})`
+          );
+        }
         return values;
       },
       config.maxRetries
@@ -164,18 +170,23 @@ export async function generateEmbedding(
 
     return EmbeddingVectorSchema.parse(result);
   } catch (error: any) {
-    // If live API fails due to network/unavailable, fall back to offline test adapter with clear indicator
-    console.warn(
-      `[AI Embedding Fallback] Live Gemini Embedding 2 call failed (${error.message}). Using test adapter.`
-    );
-    const offlineVector = generateOfflineTestVector(sanitized);
-    const result: EmbeddingVector = {
-      model: `${GEMINI_EMBEDDING_MODEL_ID}-fallback-adapter`,
-      dimensions: EMBEDDING_DIMENSIONS,
-      values: offlineVector,
-      isOfflineMock: true,
-      generatedAt: nowIso,
-    };
-    return EmbeddingVectorSchema.parse(result);
+    // Only fall back to test adapter if explicitly permitted via options
+    if (options?.allowTestAdapterFallback) {
+      console.warn(
+        `[AI Embedding Fallback] Live Gemini Embedding 2 call failed (${error.message}). Permitted test adapter used.`
+      );
+      const offlineVector = generateOfflineTestVector(sanitized);
+      const result: EmbeddingVector = {
+        model: `${GEMINI_EMBEDDING_MODEL_ID}-fallback-adapter`,
+        dimensions: EMBEDDING_DIMENSIONS,
+        values: offlineVector,
+        isOfflineMock: true,
+        generatedAt: nowIso,
+      };
+      return EmbeddingVectorSchema.parse(result);
+    }
+
+    // Production guardrail: NEVER silently replace failed live calls with mock vectors
+    throw error;
   }
 }
