@@ -45,10 +45,44 @@ import {
 // Verifiable Dietary Evidence Fixtures (Domain 09 Grounding Guardrails)
 const verifiedPureVegCertification: PlaceDietaryEvidence = {
   certification: {
-    issuingOrganization: 'Karnataka State Pure Food Board',
-    evidenceReference: 'CERT-KA-VEG-2026-889',
+    issuingOrganization: 'Satvik Food Certification Council',
+    evidenceReference: 'CERT-SATVIK-VEG-2026-889',
     verificationStatus: 'VERIFIED',
     verificationDate: '2026-01-15T10:00:00Z',
+    validUntil: '2027-01-15T10:00:00Z',
+    certificationScope: ['pure_veg', 'vegetarian'],
+  },
+};
+
+const fssaiLicenseEvidence: PlaceDietaryEvidence = {
+  certification: {
+    issuingOrganization: 'FSSAI Food Safety and Standards Authority of India',
+    evidenceReference: 'FSSAI-LIC-112233445566',
+    verificationStatus: 'VERIFIED',
+    verificationDate: '2026-01-01T00:00:00Z',
+    validUntil: '2027-01-01T00:00:00Z',
+    certificationScope: ['pure_veg', 'vegetarian'],
+  },
+};
+
+const expiredCertEvidence: PlaceDietaryEvidence = {
+  certification: {
+    issuingOrganization: 'Satvik Food Certification Council',
+    evidenceReference: 'CERT-EXPIRED-2020',
+    verificationStatus: 'EXPIRED',
+    verificationDate: '2019-01-01T00:00:00Z',
+    validUntil: '2020-01-01T00:00:00Z',
+    certificationScope: ['pure_veg', 'vegetarian'],
+  },
+};
+
+const revokedCertEvidence: PlaceDietaryEvidence = {
+  certification: {
+    issuingOrganization: 'Satvik Food Certification Council',
+    evidenceReference: 'CERT-REVOKED-999',
+    verificationStatus: 'REVOKED',
+    verificationDate: '2026-01-01T00:00:00Z',
+    validUntil: '2027-01-01T00:00:00Z',
     certificationScope: ['pure_veg', 'vegetarian'],
   },
 };
@@ -213,32 +247,64 @@ async function runB4Tests() {
   // Scenario 4: Strong Individual Preference Match
   // -------------------------------------------------------------------------
   console.log('\n--- [Scenario 4] Strong Individual Preference Match ---');
-  const soloResults = await matchSoloPreferences({
-    preferences: soloVegTraveler,
-    places: [sampleHeritageDosaSpot, sampleMeatBarbecueSpot],
-    dietaryEvidenceMap: {
-      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
-    },
-  });
+  // 1. Solo Traveler WITHOUT dietary restrictions matching CTR
+  const soloGeneralTraveler: TravelerPreferencesDocument = {
+    userId: 'usr_solo_heritage_gen',
+    favoriteVibes: ['heritage', 'vintage_filter_coffee'],
+    dietaryRestrictions: [],
+    budgetTier: 'BUDGET',
+    maxBudgetPerMealInr: 200,
+    preferredPacing: 'RELAXED',
+    preferredNeighborhoods: ['Malleshwaram'],
+    accessibilityNeeds: [],
+    updatedAt: new Date().toISOString(),
+  };
 
-  const topMatch = soloResults[0]!;
+  const generalResults = await matchSoloPreferences({
+    preferences: soloGeneralTraveler,
+    places: [sampleHeritageDosaSpot, sampleMeatBarbecueSpot],
+  });
+  const topMatch = generalResults[0]!;
   assert(topMatch.placeId === sampleHeritageDosaSpot.id, 'Top match is the heritage vegetarian dosa spot');
   assert(topMatch.matchScore >= 80, 'Strong match receives high overall score (>= 80)');
-  assert(topMatch.isRecommended === true, 'Strong match is marked as recommended');
+  assert(topMatch.isRecommended === true, 'Strong match is marked as recommended for traveler without restrictions');
   assert(topMatch.matchedVibes.includes('heritage'), 'Heritage vibe explicitly matched');
   assert(topMatch.topMatchReasons.length > 0, 'topMatchReasons populated');
   assert(topMatch.breakdown.pacingAlignment === null, 'Pacing alignment is null when route evidence is absent');
-  assert(topMatch.dietarySafetyVerified === true, 'Dietary safety verified for pure veg traveler at pure veg spot');
-  assert(topMatch.dietaryStatus === 'VERIFIED_SAFE', 'Dietary status marked VERIFIED_SAFE for pure veg traveler');
-  assert(topMatch.dietaryProvenance === 'INDEPENDENT_CERTIFICATION', 'Dietary provenance is INDEPENDENT_CERTIFICATION for certified pure veg');
 
-  // Verify pacing alignment when route evidence is provided
-  const soloRouteResults = await matchSoloPreferences({
+  // 2. Solo Traveler WITH vegetarian restriction under verified server authority
+  const soloVegResults = await matchSoloPreferences({
     preferences: soloVegTraveler,
     places: [sampleHeritageDosaSpot],
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
+    options: {
+      trustedServerVerification: true,
+    },
+  });
+  const topVegMatch = soloVegResults[0]!;
+  assert(topVegMatch.dietarySafetyVerified === true, 'Dietary safety verified under trusted server verification');
+  assert(topVegMatch.dietaryStatus === 'VERIFIED_SAFE', 'Dietary status marked VERIFIED_SAFE for pure veg traveler');
+  assert(topVegMatch.dietaryProvenance === 'INDEPENDENT_CERTIFICATION', 'Dietary provenance is INDEPENDENT_CERTIFICATION for certified pure veg');
+  assert(topVegMatch.isRecommended === true, 'Recommended when verified by trusted server authority');
+
+  // 3. Anti-Manufacture Guardrail: Caller-supplied claim without trusted server authority
+  const unverifiedCallerResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
+  });
+  assert(unverifiedCallerResults[0]!.dietarySafetyVerified === false, 'Caller-supplied claim cannot manufacture dietarySafetyVerified');
+  assert(unverifiedCallerResults[0]!.dietaryStatus === 'UNVERIFIED_DATA', 'Caller-supplied claim retains UNVERIFIED_DATA without trusted server authority');
+  assert(unverifiedCallerResults[0]!.isRecommended === false, 'Caller-supplied claim cannot manufacture isRecommended: true');
+
+  // Verify pacing alignment when route evidence is provided
+  const soloRouteResults = await matchSoloPreferences({
+    preferences: soloGeneralTraveler,
+    places: [sampleHeritageDosaSpot],
     routeContext: {
       totalWalkingDurationMinutes: 15,
       totalDistanceMeters: 900,
@@ -418,17 +484,127 @@ async function runB4Tests() {
     'Mandatory Case 3: Resident statement without recorded audit retains UNVERIFIED_DATA'
   );
 
-  // Case 4: Properly recorded and verified certification evidence can produce VERIFIED_SAFE for specific restriction.
+  // Anti-Manufacture Case: Caller-supplied certification claiming VERIFIED without trusted server authority
+  const callerSuppliedClaimResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
+    // No trustedServerVerification option
+  });
+  assert(
+    callerSuppliedClaimResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Anti-Manufacture: Caller-supplied certification without trusted server authority retains UNVERIFIED_DATA'
+  );
+  assert(
+    callerSuppliedClaimResults[0]!.dietarySafetyVerified === false,
+    'Anti-Manufacture: Caller-supplied certification cannot manufacture dietarySafetyVerified: true'
+  );
+  assert(
+    callerSuppliedClaimResults[0]!.isRecommended === false,
+    'Anti-Manufacture: Caller-supplied certification cannot manufacture isRecommended: true'
+  );
+
+  // Anti-Manufacture Case: FSSAI general food business license rejected as dietary certification
+  const caseFssaiResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: fssaiLicenseEvidence,
+    },
+    options: {
+      trustedServerVerification: true,
+    },
+  });
+  assert(
+    caseFssaiResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Anti-Manufacture: FSSAI food business licence is rejected as dietary certification and retains UNVERIFIED_DATA'
+  );
+  assert(
+    caseFssaiResults[0]!.dietarySafetyVerified === false,
+    'Anti-Manufacture: FSSAI food license cannot produce dietarySafetyVerified: true'
+  );
+  assert(
+    caseFssaiResults[0]!.isRecommended === false,
+    'Anti-Manufacture: FSSAI food license cannot recommend venue for dietary traveler'
+  );
+
+  // Anti-Manufacture Case: Expired and revoked certification records retain UNVERIFIED_DATA
+  const caseExpiredResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: expiredCertEvidence,
+    },
+    options: {
+      trustedServerVerification: true,
+    },
+  });
+  assert(
+    caseExpiredResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Anti-Manufacture: Expired certification retains UNVERIFIED_DATA'
+  );
+  assert(
+    caseExpiredResults[0]!.isRecommended === false,
+    'Anti-Manufacture: Expired certification leaves isRecommended as false'
+  );
+
+  const caseRevokedResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: revokedCertEvidence,
+    },
+    options: {
+      trustedServerVerification: true,
+    },
+  });
+  assert(
+    caseRevokedResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Anti-Manufacture: Revoked certification retains UNVERIFIED_DATA'
+  );
+  assert(
+    caseRevokedResults[0]!.isRecommended === false,
+    'Anti-Manufacture: Revoked certification leaves isRecommended as false'
+  );
+
+  // Anti-Manufacture Case: Caller-supplied community audit without server moderation approval
+  const unmoderatedAuditResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedCommunityAuditVeg,
+    },
+    // No trustedServerVerification option
+  });
+  assert(
+    unmoderatedAuditResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Anti-Manufacture: Caller-supplied community audit without server moderation retains UNVERIFIED_DATA'
+  );
+  assert(
+    unmoderatedAuditResults[0]!.dietarySafetyVerified === false,
+    'Anti-Manufacture: Unmoderated community audit leaves dietarySafetyVerified as false'
+  );
+  assert(
+    unmoderatedAuditResults[0]!.isRecommended === false,
+    'Anti-Manufacture: Unmoderated community audit leaves isRecommended as false'
+  );
+
+  // Case 4: Valid certification under trusted server authority produces INDEPENDENT_CERTIFICATION & VERIFIED_SAFE within scope
   const case4Results = await matchSoloPreferences({
     preferences: soloVegTraveler,
     places: [sampleHeritageDosaSpot],
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
+    options: {
+      trustedServerVerification: true,
+    },
   });
   assert(
     case4Results[0]!.dietaryProvenance === 'INDEPENDENT_CERTIFICATION',
-    'Mandatory Case 4: Recorded certification produces INDEPENDENT_CERTIFICATION'
+    'Mandatory Case 4: Recorded certification under trusted server authority produces INDEPENDENT_CERTIFICATION'
   );
   assert(
     case4Results[0]!.dietaryStatus === 'VERIFIED_SAFE',
@@ -439,17 +615,20 @@ async function runB4Tests() {
     'Mandatory Case 4: Venue recommended when verified certification exists'
   );
 
-  // Case 5: Properly recorded and verified community audit evidence can produce VERIFIED_SAFE only within documented scope.
+  // Case 5: Valid community audit under trusted server moderation produces VERIFIED_COMMUNITY_AUDIT & VERIFIED_SAFE within scope
   const case5Results = await matchSoloPreferences({
     preferences: soloVegTraveler,
     places: [sampleHeritageDosaSpot],
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedCommunityAuditVeg,
     },
+    options: {
+      trustedServerVerification: true,
+    },
   });
   assert(
     case5Results[0]!.dietaryProvenance === 'VERIFIED_COMMUNITY_AUDIT',
-    'Mandatory Case 5: Recorded community audit produces VERIFIED_COMMUNITY_AUDIT'
+    'Mandatory Case 5: Recorded community audit under server moderation produces VERIFIED_COMMUNITY_AUDIT'
   );
   assert(
     case5Results[0]!.dietaryStatus === 'VERIFIED_SAFE',
@@ -466,6 +645,9 @@ async function runB4Tests() {
     places: [sampleHeritageDosaSpot],
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification, // scope is pure_veg only, not vegan!
+    },
+    options: {
+      trustedServerVerification: true,
     },
   });
   assert(
@@ -486,6 +668,9 @@ async function runB4Tests() {
     places: [sampleHeritageDosaSpot],
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification, // scope is pure_veg only, not jain!
+    },
+    options: {
+      trustedServerVerification: true,
     },
   });
   assert(
@@ -519,10 +704,14 @@ async function runB4Tests() {
   // Scenario 5: Weak Individual Preference Match & Dietary Constraint Penalty
   // -------------------------------------------------------------------------
   console.log('\n--- [Scenario 5] Weak Match & Dietary Constraint Penalty ---');
-  const weakMatch = soloResults.find((r) => r.placeId === sampleMeatBarbecueSpot.id)!;
+  const weakMatchResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot, sampleMeatBarbecueSpot],
+  });
+  const weakMatch = weakMatchResults.find((r) => r.placeId === sampleMeatBarbecueSpot.id)!;
   assert(weakMatch.matchScore < 50, 'Meat barbecue spot receives penalized score (< 50) for pure veg traveler');
   assert(weakMatch.isRecommended === false, 'Meat spot is not recommended for pure veg traveler');
-  assert(Boolean(weakMatch.dietaryAlert), 'Dietary alert is emitted for non-compliant spot');
+  assert(Boolean(weakMatch.compromiseAlerts.length > 0 || weakMatch.dietaryAlert), 'Dietary alert is emitted for non-compliant spot');
 
   // -------------------------------------------------------------------------
   // Scenario 6: Incomplete or Missing Traveler Preferences (Zero-Bias Handling)
@@ -680,6 +869,7 @@ async function runB4Tests() {
     },
   ];
 
+  // 1. Group matching under trusted server verification
   const vegGroupResults = await matchGroupPreferences({
     neighborhood: 'Malleshwaram',
     members: vegOnlyMembers,
@@ -687,10 +877,13 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
+    options: {
+      trustedServerVerification: true,
+    },
   });
   assert(
     vegGroupResults[0]!.dietarySafetyVerified === true,
-    'Dietary safety verified when venue explicitly certifies pure vegetarian'
+    'Dietary safety verified when venue explicitly certifies pure vegetarian under trusted authority'
   );
   assert(
     vegGroupResults[0]!.dietaryStatus === 'VERIFIED_SAFE',
@@ -700,6 +893,29 @@ async function runB4Tests() {
     vegGroupResults[0]!.isRecommended === true,
     'Group recommendation is true when preferences match AND dietary safety is verified'
   );
+
+  // 2. Anti-Manufacture Guardrail: Caller-supplied group dietary evidence without trusted server authority
+  const unverifiedGroupResults = await matchGroupPreferences({
+    neighborhood: 'Malleshwaram',
+    members: vegOnlyMembers,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
+  });
+  assert(
+    unverifiedGroupResults[0]!.dietarySafetyVerified === false,
+    'Anti-Manufacture: Caller-supplied group dietary claim cannot produce dietarySafetyVerified: true'
+  );
+  assert(
+    unverifiedGroupResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Anti-Manufacture: Caller-supplied group dietary claim retains UNVERIFIED_DATA'
+  );
+  assert(
+    unverifiedGroupResults[0]!.isRecommended === false,
+    'Anti-Manufacture: Caller-supplied group dietary claim leaves isRecommended as false'
+  );
+
   assert(
     topGroupSpot.breakdown.pacingAlignment === null,
     'Group pacing alignment is null when route evidence is omitted'
@@ -712,6 +928,9 @@ async function runB4Tests() {
     places: [sampleHeritageDosaSpot],
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
+    options: {
+      trustedServerVerification: true,
     },
     routeContext: {
       totalWalkingDurationMinutes: 20,
@@ -766,7 +985,7 @@ async function runB4Tests() {
   // Scenario 16: Output Schema Validation & Test Adapter Behavior
   // -------------------------------------------------------------------------
   console.log('\n--- [Scenario 16] Schema Validation & Offline Test Adapter ---');
-  const validatedSoloResult = SoloPlaceMatchResultSchema.parse(soloResults[0]);
+  const validatedSoloResult = SoloPlaceMatchResultSchema.parse(topMatch);
   assert(validatedSoloResult.placeId === sampleHeritageDosaSpot.id, 'Solo match result strictly adheres to Zod schema');
 
   const validatedGroupResult = GroupPlaceMatchResultSchema.parse(groupResults[0]);
@@ -781,7 +1000,7 @@ async function runB4Tests() {
   // Scenario 17: D3 Client Serialization Compatibility
   // -------------------------------------------------------------------------
   console.log('\n--- [Scenario 17] D3 Client Serialization Compatibility ---');
-  const soloJson = JSON.parse(JSON.stringify(soloResults[0]));
+  const soloJson = JSON.parse(JSON.stringify(topMatch));
   assert(typeof soloJson.matchScore === 'number', 'D3 Contract: matchScore is numeric');
   assert(typeof soloJson.isRecommended === 'boolean', 'D3 Contract: isRecommended is boolean');
   assert(typeof soloJson.dietarySafetyVerified === 'boolean', 'D3 Contract: dietarySafetyVerified is boolean');

@@ -88,21 +88,27 @@ Task B4 implements semantic vector representation, solo traveler preference matc
 ### A. Strict Dietary Constraints Union & 4-Part Verification Architecture
 If **any** single group member has a dietary restriction or allergen (e.g., pure veg, vegan, nut allergy, jain), it is added to `dietaryConstraintsUnion`.
 
-#### The 4-Part Separation of Concerns:
+#### The 4-Part Separation of Concerns & Anti-Manufacture Safeguards:
 1. **Place Identity Verification (`place.isVerified`)**:
    - Confirms that the venue identity physically matches Google Places or Maps Grounding.
    - Grounding a place's coordinates and name does **NOT** certify its kitchen practices or dietary claims.
-2. **Dietary Provenance (`dietaryProvenance`)**:
-   - `INDEPENDENT_CERTIFICATION`: Requires verifiable structured certification (`issuingOrganization`, `evidenceReference`, `verificationStatus: 'VERIFIED'`, `verificationDate`, and `certificationScope` covering the requested diet). Directory listings, description claims (e.g., "certified pure veg kitchen"), or AI claims strictly DO NOT qualify.
-   - `VERIFIED_COMMUNITY_AUDIT`: Requires verifiable structured audit report (`auditorId`, `auditorName`, `auditDate`, `kitchenConditionAssessed`, `evidenceSource`, `verificationStatus: 'VERIFIED'`, and `auditScope` covering the requested diet). Resident identity attribution alone does NOT qualify.
+2. **Dietary Provenance (`dietaryProvenance`) & Anti-Manufacture Safeguards**:
+   - `INDEPENDENT_CERTIFICATION`: Requires verifiable structured certification (`issuingOrganization`, `evidenceReference`, `verificationStatus: 'VERIFIED'`, `verificationDate`, and `certificationScope` covering the requested diet).
+     - **Disqualification of Non-Dietary Authorities:** FSSAI or municipal trade licenses issue statutory food hygiene/safety licenses, NOT specialized dietary (pure vegetarian, vegan, Jain, allergen-free) certifications; citing them is strictly rejected.
+     - **Expiration & Revocation:** Records with expired `validUntil` or `REVOKED` status are rejected.
+     - **Anti-Manufacture Guardrail:** Raw caller input, unverified client payloads, directory listings, or AI text strictly **cannot** manufacture verified status. In the absence of an authorized server-side trusted verification authority, caller-supplied records are treated as untrusted and evaluate to `UNVERIFIED_DATA`.
+   - `VERIFIED_COMMUNITY_AUDIT`: Requires verifiable structured audit report (`auditorId`, `auditorName`, `auditDate`, `kitchenConditionAssessed`, `evidenceSource`, `verificationStatus: 'VERIFIED'`, and `auditScope` covering the requested diet). Resident identity attribution (`isVerifiedResident`) alone does NOT qualify without an authorized server-side moderation workflow.
    - `DIRECTORY_LISTING_ONLY`: Directory category tags (`categories: ['pure_veg']`) or ungrounded text claims. This alone is **insufficient** for dietary certification.
    - `UNSTATED`: No dietary claims present.
 3. **Actual Suitability (`dietaryStatus`)**:
-   - `VERIFIED_SAFE`: Awarded **only** when dietary provenance is `INDEPENDENT_CERTIFICATION` or `VERIFIED_COMMUNITY_AUDIT` AND the certification/audit scope matches the requested restriction.
-   - `UNVERIFIED_DATA`: Assigned whenever provenance is `DIRECTORY_LISTING_ONLY` or `UNSTATED`, or when allergen/cross-contamination cannot be certified online, or when scope does not cover the restriction (e.g., pure_veg does not cover vegan or Jain).
+   - `VERIFIED_SAFE`: Awarded **only** when dietary provenance is `INDEPENDENT_CERTIFICATION` or `VERIFIED_COMMUNITY_AUDIT` AND authenticated by a trusted server authority AND the certification/audit scope matches the requested restriction.
+   - `UNVERIFIED_DATA`: Assigned whenever provenance is `DIRECTORY_LISTING_ONLY` or `UNSTATED`, or when allergen/cross-contamination cannot be certified online, or when scope does not cover the restriction (e.g., pure_veg does not cover vegan or Jain), or when caller input lacks trusted server-side authentication.
    - `CONFLICT_DETECTED`: Explicit conflicting food served (e.g., meat at pure veg request).
 4. **Recommendation Sufficiency (`isRecommended`)**:
    - Invariant: A venue is **never** recommended (`isRecommended: false`) if any traveler restriction has `dietaryStatus !== 'VERIFIED_SAFE'`, regardless of how high the taste match score is.
+
+> [!IMPORTANT]
+> **Production Limitation Statement:** In the current Startup Buildathon 2026 phase, no real statutory dietary certification registry (e.g., automated third-party dietary audit database) or authorized server-side moderation pipeline is active. Therefore, in the live application, all caller-supplied records, directory metadata, and contributor claims are kept unverified (`UNVERIFIED_DATA`), and venues with unverified dietary claims are not recommended for travelers with those dietary restrictions (`isRecommended: false`).
 
 - **Zero False-Positive Safety Guarantees:** Generic Google Maps categories **never** certify allergen safety (e.g., nut allergy, celiac gluten-free). If a venue does not possess explicit allergen-free certification, it is classified as `dietaryStatus: 'UNVERIFIED_DATA'` with `dietarySafetyVerified: false` and an explicit compromise alert is emitted.
 - **Conflict Disqualification:** A place that serves explicit non-vegetarian food when a member is vegetarian is classified as `CONFLICT_DETECTED`, receives a penalized score (<= 40), and is disqualified from recommendations (`isRecommended: false`).
@@ -157,7 +163,7 @@ Each group recommendation calculates a per-member satisfaction score (`memberSat
 
 ---
 
-## 6. Verification Scenarios (17 Scenarios / 110 Assertions Passed)
+## 6. Verification Scenarios (17 Scenarios / 130 Assertions Passed)
 
 | # | Scenario | Verification Focus | Result |
 |---|---|---|---|

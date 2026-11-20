@@ -70,10 +70,11 @@ export type DietaryProvenance = z.infer<typeof DietaryProvenanceSchema>;
 // ==============================================================================
 
 export const DietaryCertificationEvidenceSchema = z.object({
-  issuingOrganization: z.string().min(1).describe('Identifiable certifying body (e.g. Halal Certification Authority, Vegan Society)'),
+  issuingOrganization: z.string().min(1).describe('Identifiable certifying body (e.g. Halal Certification Authority, Vegan Society). FSSAI/general licenses strictly prohibited as dietary proof.'),
   evidenceReference: z.string().min(1).describe('Certificate number, license ID, or official registry URL'),
-  verificationStatus: z.enum(['VERIFIED', 'PENDING', 'REVOKED']).describe('Official verification state'),
+  verificationStatus: z.enum(['VERIFIED', 'PENDING', 'EXPIRED', 'REVOKED', 'UNVERIFIED']).describe('Official verification state'),
   verificationDate: z.string().describe('ISO date of audit/certification'),
+  validUntil: z.string().optional().describe('ISO expiration date of certification'),
   certificationScope: z.array(z.string()).min(1).describe('Specific dietary scopes certified, e.g. ["pure_veg"], ["halal"], ["vegan"], ["jain"]'),
 });
 
@@ -85,7 +86,7 @@ export const DietaryCommunityAuditEvidenceSchema = z.object({
   auditDate: z.string().describe('ISO date of on-site inspection/audit'),
   kitchenConditionAssessed: z.string().min(1).describe('Specific documented kitchen practices (e.g. dedicated cookware, no root vegetables)'),
   evidenceSource: z.string().min(1).describe('Audit documentation source or submission ID'),
-  verificationStatus: z.enum(['VERIFIED', 'UNVERIFIED']).describe('Status of the community audit'),
+  verificationStatus: z.enum(['VERIFIED', 'DISPUTED', 'UNVERIFIED']).describe('Status of the community audit'),
   auditScope: z.array(z.string()).min(1).describe('Specific dietary scopes covered by the audit'),
 });
 
@@ -162,6 +163,8 @@ export interface SoloMatchInput {
   options?: {
     forceOffline?: boolean;
     allowTestAdapterFallback?: boolean;
+    /** Server-side trusted verification authority attestation. Inactive for ordinary caller payloads. */
+    trustedServerVerification?: boolean;
   };
 }
 
@@ -182,5 +185,7 @@ export interface GroupBlendAndMatchInput {
   options?: {
     forceOffline?: boolean;
     allowTestAdapterFallback?: boolean;
+    /** Server-side trusted verification authority attestation. Inactive for ordinary caller payloads. */
+    trustedServerVerification?: boolean;
   };
 }
