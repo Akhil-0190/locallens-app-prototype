@@ -176,7 +176,7 @@ export function blendGroupPreferences(
 export async function matchSoloPreferences(
   input: SoloMatchInput
 ): Promise<SoloPlaceMatchResult[]> {
-  const { preferences, places, limit = 10, options } = input;
+  const { preferences, places, limit = 10, options, routeContext } = input;
   const results: SoloPlaceMatchResult[] = [];
 
   // Construct text representation of user preferences for semantic vector
@@ -229,7 +229,10 @@ export async function matchSoloPreferences(
     }
 
     // 3. Dietary Compliance Score (0 - 100)
-    // Strict Guardrail: Unverified data is NEVER treated as verified suitability.
+    // STRICT GUARDRAIL: Pure veg, vegan, and Jain are NOT interchangeable.
+    // Unverified data is NEVER treated as verified suitability.
+    let dietaryStatus: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA' = 'VERIFIED_SAFE';
+    let dietarySafetyVerified = true;
     let dietaryFit = 100;
     let dietaryAlert: string | undefined = undefined;
 
@@ -241,65 +244,128 @@ export async function matchSoloPreferences(
       (place.authenticity?.vibeTags || []).join(' ')
     ).toLowerCase();
 
-    for (const diet of preferences.dietaryRestrictions || []) {
-      const d = diet.toLowerCase();
-      if (d === 'pure_veg' || d === 'vegetarian' || d === 'jain') {
-        if (
-          placeLower.includes('pure veg') ||
-          placeLower.includes('pure_veg') ||
-          placeLower.includes('vegetarian restaurant')
-        ) {
-          dietaryFit = 100;
-        } else if (
-          placeLower.includes('meat') ||
-          placeLower.includes('chicken') ||
-          placeLower.includes('mutton') ||
-          placeLower.includes('pork') ||
-          placeLower.includes('beef') ||
-          placeLower.includes('barbecue')
-        ) {
-          dietaryFit = 0;
-          dietaryAlert = `Explicit non-vegetarian establishment conflicting with ${diet.replace('_', ' ')} preference.`;
-        } else {
-          // Unverified from listing alone: do NOT claim verified suitability
-          dietaryFit = 50;
-          dietaryAlert = `Dietary suitability unverified from available online listing; patron verification advised.`;
-        }
-      } else if (d === 'nut_allergy' || d === 'gluten_free') {
-        // Allergen safety can NEVER be verified from generic place categories
-        if (placeLower.includes(d.replace('_', ' ')) || placeLower.includes(d)) {
-          dietaryFit = 90;
-        } else {
-          dietaryFit = 50;
-          dietaryAlert = `Allergen safety (${diet.replace('_', ' ')}) unverified online; please confirm directly with establishment staff.`;
+    const userDiets = preferences.dietaryRestrictions || [];
+    if (userDiets.length > 0) {
+      for (const diet of userDiets) {
+        const d = diet.toLowerCase();
+        if (d === 'pure_veg' || d === 'vegetarian') {
+          if (
+            placeLower.includes('pure veg') ||
+            placeLower.includes('pure_veg') ||
+            (place.categories || []).includes('pure_veg')
+          ) {
+            // Verified lacto-vegetarian
+          } else if (
+            placeLower.includes('meat') ||
+            placeLower.includes('chicken') ||
+            placeLower.includes('pork') ||
+            placeLower.includes('beef') ||
+            placeLower.includes('barbecue')
+          ) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlert = `Explicit non-vegetarian establishment conflicting with ${diet.replace('_', ' ')} preference.`;
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlert = `Vegetarian suitability unverified from available online listing; patron confirmation advised.`;
+          }
+        } else if (d === 'vegan') {
+          // Vegan requires strictly plant-based (no ghee, butter, curd, milk, honey).
+          // Pure veg South Indian restaurants heavily use ghee/butter on dosas and dairy milk in coffee.
+          if (
+            placeLower.includes('vegan') ||
+            placeLower.includes('plant-based') ||
+            placeLower.includes('dairy-free')
+          ) {
+            // Verified vegan
+          } else if (
+            placeLower.includes('meat') ||
+            placeLower.includes('chicken') ||
+            placeLower.includes('pork') ||
+            placeLower.includes('beef')
+          ) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlert = `Meat-serving establishment conflicting with vegan requirement.`;
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlert = `Vegan suitability unverified: pure vegetarian venues commonly use ghee, butter, and dairy.`;
+          }
+        } else if (d === 'jain') {
+          // Jain requires strictly no root vegetables (onion, garlic, potato, carrot).
+          if (
+            placeLower.includes('jain food') ||
+            placeLower.includes('jain menu') ||
+            placeLower.includes('no onion no garlic')
+          ) {
+            // Verified Jain
+          } else if (
+            placeLower.includes('meat') ||
+            placeLower.includes('chicken') ||
+            placeLower.includes('pork') ||
+            placeLower.includes('beef')
+          ) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlert = `Meat-serving establishment conflicting with Jain requirement.`;
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlert = `Jain suitability (no root vegetables, onions, or garlic) unverified online; patron confirmation required.`;
+          }
+        } else if (d === 'halal') {
+          if (placeLower.includes('halal certified') || placeLower.includes('halal meat')) {
+            // Verified halal
+          } else if (placeLower.includes('pork') || placeLower.includes('bacon')) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlert = `Pork-serving establishment conflicting with halal requirement.`;
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlert = `Halal certification unverified from online listing; please verify with management.`;
+          }
+        } else if (d === 'nut_allergy' || d === 'gluten_free') {
+          // Allergens can NEVER be verified from generic categories alone
+          dietaryStatus = 'UNVERIFIED_DATA';
+          dietarySafetyVerified = false;
+          dietaryFit = Math.min(dietaryFit, 50);
+          dietaryAlert = `Allergen safety (${diet.replace('_', ' ')}) unverified online; cross-contamination risk unknown. Contact kitchen directly.`;
         }
       }
     }
 
-    // 4. Pacing Suitability Score (0 - 100)
-    let pacingAlignment = 80;
+    // 4. Pacing Suitability Score
+    // GUARDRAIL: Do NOT invent arbitrary high scores based on categories alone.
+    // When route evidence is available, score based on actual walking duration.
+    // When route evidence is unavailable, return null rather than inventing a score.
+    let pacingAlignment: number | null = null;
     const pacing = preferences.preferredPacing;
-    if (pacing === 'RELAXED') {
-      if (
-        placeLower.includes('quiet') ||
-        placeLower.includes('peaceful') ||
-        placeLower.includes('serene') ||
-        placeLower.includes('temple') ||
-        placeLower.includes('garden')
-      ) {
-        pacingAlignment = 95;
-      } else if (
-        placeLower.includes('crowded') ||
-        placeLower.includes('chaotic') ||
-        placeLower.includes('rush') ||
-        placeLower.includes('packed')
-      ) {
-        pacingAlignment = 60;
+
+    if (routeContext?.totalWalkingDurationMinutes !== undefined) {
+      const walkMins = routeContext.totalWalkingDurationMinutes;
+      if (pacing === 'RELAXED') {
+        pacingAlignment = walkMins <= 20 ? 95 : walkMins <= 35 ? 70 : 40;
+      } else if (pacing === 'PACKED') {
+        pacingAlignment = walkMins >= 30 ? 95 : 75;
+      } else {
+        // BALANCED
+        pacingAlignment = walkMins <= 30 ? 90 : 65;
       }
-    } else if (pacing === 'PACKED') {
-      pacingAlignment = 90;
-    } else {
-      pacingAlignment = 85;
     }
 
     // 5. Authenticity Bonus (0 - 15)
@@ -308,12 +374,22 @@ export async function matchSoloPreferences(
       authenticityScore >= 80 ? Math.round((authenticityScore - 70) * 0.5) : 0;
 
     // 6. Overall Composite Score
-    let rawScore =
-      0.45 * vibeMatch +
-      0.20 * budgetSuitability +
-      0.20 * dietaryFit +
-      0.15 * pacingAlignment +
-      authenticityBonus;
+    let rawScore: number;
+    if (pacingAlignment !== null) {
+      rawScore =
+        0.45 * vibeMatch +
+        0.20 * budgetSuitability +
+        0.20 * dietaryFit +
+        0.15 * pacingAlignment +
+        authenticityBonus;
+    } else {
+      // Re-normalize weights when route evidence is unavailable (no fabricated score)
+      rawScore =
+        0.50 * vibeMatch +
+        0.25 * budgetSuitability +
+        0.25 * dietaryFit +
+        authenticityBonus;
+    }
 
     // If severe dietary conflict, clamp score
     if (dietaryFit < 50) {
@@ -349,7 +425,19 @@ export async function matchSoloPreferences(
       compromiseAlerts.push(`Price point may exceed your preferred ${preferences.budgetTier.toLowerCase()} tier.`);
     }
 
-    const isRecommended = matchScore >= 65 && dietaryFit >= 50;
+    // CRITICAL GUARDRAIL: An overall match score MUST NEVER imply verified dietary safety.
+    // If the traveler has dietary restrictions, the place is NOT recommended unless dietary safety is verified!
+    const hasDietaryRestrictions = userDiets.length > 0;
+    const isRecommended =
+      matchScore >= 65 &&
+      (!hasDietaryRestrictions || dietaryStatus === 'VERIFIED_SAFE');
+
+    if (hasDietaryRestrictions && dietaryStatus === 'UNVERIFIED_DATA' && matchScore >= 65) {
+      compromiseAlerts.push(
+        'High preference alignment, but not recommended for dining until venue confirms dietary/allergen suitability.'
+      );
+    }
+
     const isOfflineMock = userEmbedding.isOfflineMock || placeEmbedding.isOfflineMock;
 
     const result: SoloPlaceMatchResult = {
@@ -367,6 +455,8 @@ export async function matchSoloPreferences(
       topMatchReasons,
       compromiseAlerts,
       matchedVibes,
+      dietarySafetyVerified,
+      dietaryStatus,
       dietaryAlert,
       practicalTip: place.authenticity?.practicalTips || undefined,
       isOfflineMock,
@@ -390,7 +480,7 @@ export async function matchSoloPreferences(
 export async function matchGroupPreferences(
   input: GroupBlendAndMatchInput
 ): Promise<GroupPlaceMatchResult[]> {
-  const { members, places, limit = 10, options } = input;
+  const { members, places, limit = 10, options, routeContext } = input;
   const consensus = blendGroupPreferences(members);
   const results: GroupPlaceMatchResult[] = [];
 
@@ -423,6 +513,7 @@ export async function matchGroupPreferences(
     ).toLowerCase();
 
     // Strict Dietary Safety Union Check
+    // Pure veg, vegan, and Jain are evaluated individually and NOT treated as interchangeable.
     let dietaryStatus: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA' = 'VERIFIED_SAFE';
     let dietarySafetyVerified = true;
     let dietaryFit = 100;
@@ -431,13 +522,13 @@ export async function matchGroupPreferences(
     if (consensus.dietaryConstraintsUnion.length > 0) {
       for (const diet of consensus.dietaryConstraintsUnion) {
         const d = diet.toLowerCase();
-        if (d === 'pure_veg' || d === 'jain' || d === 'vegetarian') {
+        if (d === 'pure_veg' || d === 'vegetarian') {
           if (
             placeLower.includes('pure veg') ||
             placeLower.includes('pure_veg') ||
-            placeLower.includes('vegetarian restaurant')
+            (place.categories || []).includes('pure_veg')
           ) {
-            // Verified compliant
+            // Verified pure vegetarian
           } else if (
             placeLower.includes('meat') ||
             placeLower.includes('chicken') ||
@@ -452,11 +543,73 @@ export async function matchGroupPreferences(
             dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's ${diet} requirement.`);
             break;
           } else {
-            // Unverified from general listing alone
             dietaryStatus = 'UNVERIFIED_DATA';
             dietarySafetyVerified = false;
             dietaryFit = Math.min(dietaryFit, 50);
             dietaryAlerts.push(`Unverified vegetarian suitability; confirm with venue before group arrival.`);
+          }
+        } else if (d === 'vegan') {
+          if (
+            placeLower.includes('vegan') ||
+            placeLower.includes('plant-based') ||
+            placeLower.includes('dairy-free')
+          ) {
+            // Verified vegan
+          } else if (
+            placeLower.includes('meat') ||
+            placeLower.includes('chicken') ||
+            placeLower.includes('pork') ||
+            placeLower.includes('beef')
+          ) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's vegan requirement.`);
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlerts.push(`Vegan compliance unverified: pure veg venues commonly use ghee, butter, and dairy.`);
+          }
+        } else if (d === 'jain') {
+          if (
+            placeLower.includes('jain food') ||
+            placeLower.includes('jain menu') ||
+            placeLower.includes('no onion no garlic')
+          ) {
+            // Verified Jain
+          } else if (
+            placeLower.includes('meat') ||
+            placeLower.includes('chicken') ||
+            placeLower.includes('pork') ||
+            placeLower.includes('beef')
+          ) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's Jain requirement.`);
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlerts.push(`Jain suitability (no root vegetables, onions, or garlic) unverified online.`);
+          }
+        } else if (d === 'halal') {
+          if (placeLower.includes('halal certified') || placeLower.includes('halal meat')) {
+            // Verified halal
+          } else if (placeLower.includes('pork') || placeLower.includes('bacon')) {
+            dietaryStatus = 'CONFLICT_DETECTED';
+            dietarySafetyVerified = false;
+            dietaryFit = 0;
+            dietaryAlerts.push(`Conflict: Venue serves pork, violating group member's halal requirement.`);
+            break;
+          } else {
+            dietaryStatus = 'UNVERIFIED_DATA';
+            dietarySafetyVerified = false;
+            dietaryFit = Math.min(dietaryFit, 50);
+            dietaryAlerts.push(`Halal certification unverified online.`);
           }
         } else if (d === 'nut_allergy' || d === 'gluten_free') {
           // Allergens cannot be verified safe from general listing alone
@@ -476,8 +629,12 @@ export async function matchGroupPreferences(
       budgetSuitability = consensus.budgetConsensusRange.maxCurrencyAmount < 300 ? 30 : 70;
     }
 
-    // Pacing suitability
-    const pacingAlignment = 80;
+    // Pacing suitability: Use routeContext if available, otherwise return null
+    let pacingAlignment: number | null = null;
+    if (routeContext?.totalWalkingDurationMinutes !== undefined) {
+      const walkMins = routeContext.totalWalkingDurationMinutes;
+      pacingAlignment = walkMins <= 30 ? 90 : 65;
+    }
 
     // Authenticity Bonus
     const authenticityScore = place.authenticity?.authenticityScore || 50;
@@ -511,18 +668,26 @@ export async function matchGroupPreferences(
     }
 
     // Overall Group Score
-    let groupMatchScore = Math.round(
-      0.45 * vibeMatch +
-      0.25 * dietaryFit +
-      0.20 * budgetSuitability +
-      0.10 * pacingAlignment +
-      authenticityBonus
-    );
+    let rawGroupScore: number;
+    if (pacingAlignment !== null) {
+      rawGroupScore =
+        0.45 * vibeMatch +
+        0.25 * dietaryFit +
+        0.20 * budgetSuitability +
+        0.10 * pacingAlignment +
+        authenticityBonus;
+    } else {
+      rawGroupScore =
+        0.50 * vibeMatch +
+        0.25 * dietaryFit +
+        0.25 * budgetSuitability +
+        authenticityBonus;
+    }
 
     if (dietaryStatus === 'CONFLICT_DETECTED') {
-      groupMatchScore = Math.min(groupMatchScore, 40);
+      rawGroupScore = Math.min(rawGroupScore, 40);
     }
-    groupMatchScore = Math.max(0, Math.min(100, groupMatchScore));
+    const groupMatchScore = Math.max(0, Math.min(100, Math.round(rawGroupScore)));
 
     // Shared Group Vibes Matched
     const sharedGroupVibesMatched = consensus.consensusAtmosphere.filter(
@@ -542,7 +707,19 @@ export async function matchGroupPreferences(
     }
 
     const compromiseAlerts: string[] = [...consensus.compromiseFactors, ...dietaryAlerts];
-    const isRecommended = groupMatchScore >= 65 && dietaryStatus !== 'CONFLICT_DETECTED';
+
+    // CRITICAL GUARDRAIL: If group has dietary restrictions, venue is NOT recommended unless verified safe!
+    const hasGroupDietaryRestrictions = consensus.dietaryConstraintsUnion.length > 0;
+    const isRecommended =
+      groupMatchScore >= 65 &&
+      (!hasGroupDietaryRestrictions || dietaryStatus === 'VERIFIED_SAFE');
+
+    if (hasGroupDietaryRestrictions && dietaryStatus === 'UNVERIFIED_DATA' && groupMatchScore >= 65) {
+      compromiseAlerts.push(
+        'High group preference alignment, but not recommended for group dining until venue confirms dietary/allergen suitability.'
+      );
+    }
+
     const isOfflineMock = groupEmbedding.isOfflineMock || placeEmbedding.isOfflineMock;
 
     const groupResult: GroupPlaceMatchResult = {

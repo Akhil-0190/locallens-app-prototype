@@ -194,6 +194,72 @@ async function runB4Tests() {
   assert(topMatch.isRecommended === true, 'Strong match is marked as recommended');
   assert(topMatch.matchedVibes.includes('heritage'), 'Heritage vibe explicitly matched');
   assert(topMatch.topMatchReasons.length > 0, 'topMatchReasons populated');
+  assert(topMatch.breakdown.pacingAlignment === null, 'Pacing alignment is null when route evidence is absent');
+  assert(topMatch.dietarySafetyVerified === true, 'Dietary safety verified for pure veg traveler at pure veg spot');
+  assert(topMatch.dietaryStatus === 'VERIFIED_SAFE', 'Dietary status marked VERIFIED_SAFE for pure veg traveler');
+
+  // Verify pacing alignment when route evidence is provided
+  const soloRouteResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    routeContext: {
+      totalWalkingDurationMinutes: 15,
+      totalDistanceMeters: 900,
+      numberOfStops: 2,
+    },
+  });
+  assert(soloRouteResults[0]!.breakdown.pacingAlignment !== null, 'Pacing alignment calculated when routeContext is provided');
+  assert(soloRouteResults[0]!.breakdown.pacingAlignment === 95, 'Relaxed pacing score calculated from 15 min walk duration');
+
+  // Verify Vegan Traveler vs Pure Veg Venue (CTR uses butter/ghee/milk)
+  const soloVeganTraveler: TravelerPreferencesDocument = {
+    userId: 'usr_solo_vegan',
+    favoriteVibes: ['heritage'],
+    dietaryRestrictions: ['vegan'],
+    budgetTier: 'BUDGET',
+    maxBudgetPerMealInr: 200,
+    preferredPacing: 'RELAXED',
+    preferredNeighborhoods: ['Malleshwaram'],
+    accessibilityNeeds: [],
+    updatedAt: new Date().toISOString(),
+  };
+  const veganResults = await matchSoloPreferences({
+    preferences: soloVeganTraveler,
+    places: [sampleHeritageDosaSpot],
+  });
+  const veganMatch = veganResults[0]!;
+  assert(veganMatch.dietarySafetyVerified === false, 'Pure veg venue alone does NOT verify vegan suitability');
+  assert(veganMatch.dietaryStatus === 'UNVERIFIED_DATA', 'Vegan status is UNVERIFIED_DATA due to butter/ghee/dairy risk');
+  assert(veganMatch.isRecommended === false, 'Venue is NOT recommended when vegan safety is unverified despite high vibe match');
+  assert(
+    veganMatch.compromiseAlerts.some((a) => a.toLowerCase().includes('vegan') || a.toLowerCase().includes('dairy') || a.toLowerCase().includes('ghee')),
+    'Emits vegan alert about butter/ghee/dairy usage in South Indian pure veg venues'
+  );
+
+  // Verify Jain Traveler vs Pure Veg Venue (masala dosa contains potato & onion)
+  const soloJainTraveler: TravelerPreferencesDocument = {
+    userId: 'usr_solo_jain',
+    favoriteVibes: ['heritage'],
+    dietaryRestrictions: ['jain'],
+    budgetTier: 'BUDGET',
+    maxBudgetPerMealInr: 200,
+    preferredPacing: 'RELAXED',
+    preferredNeighborhoods: ['Malleshwaram'],
+    accessibilityNeeds: [],
+    updatedAt: new Date().toISOString(),
+  };
+  const jainResults = await matchSoloPreferences({
+    preferences: soloJainTraveler,
+    places: [sampleHeritageDosaSpot],
+  });
+  const jainMatch = jainResults[0]!;
+  assert(jainMatch.dietarySafetyVerified === false, 'Pure veg venue alone does NOT verify Jain suitability');
+  assert(jainMatch.dietaryStatus === 'UNVERIFIED_DATA', 'Jain status is UNVERIFIED_DATA without root-veg verification');
+  assert(jainMatch.isRecommended === false, 'Venue is NOT recommended when Jain safety is unverified');
+  assert(
+    jainMatch.compromiseAlerts.some((a) => a.toLowerCase().includes('jain') || a.toLowerCase().includes('root') || a.toLowerCase().includes('onion')),
+    'Emits Jain alert about root vegetables and onions'
+  );
 
   // -------------------------------------------------------------------------
   // Scenario 5: Weak Individual Preference Match & Dietary Constraint Penalty
@@ -330,7 +396,11 @@ async function runB4Tests() {
     'Dietary status marked as UNVERIFIED_DATA for unverified allergen'
   );
   assert(
-    topGroupSpot.compromiseAlerts.some((a) => a.includes('allergen') || a.includes('nut_allergy')),
+    topGroupSpot.isRecommended === false,
+    'Guardrail: Group venue with unverified allergen is NOT recommended despite high preference score'
+  );
+  assert(
+    topGroupSpot.compromiseAlerts.some((a) => a.includes('allergen') || a.includes('nut_allergy') || a.includes('dietary/allergen suitability')),
     'Compromise alerts contain allergen verification warning'
   );
   assert(topGroupSpot.memberSatisfactionScores['usr_mem_1']! >= 70, 'Member 1 has high satisfaction score');
@@ -368,6 +438,10 @@ async function runB4Tests() {
   assert(
     vegGroupResults[0]!.dietaryStatus === 'VERIFIED_SAFE',
     'Dietary status marked as VERIFIED_SAFE when venue explicitly certifies pure vegetarian'
+  );
+  assert(
+    vegGroupResults[0]!.isRecommended === true,
+    'Group recommendation is true when preferences match AND dietary safety is verified'
   );
 
   // -------------------------------------------------------------------------
@@ -422,6 +496,34 @@ async function runB4Tests() {
   const offlineVector = await generateEmbedding('Offline test verification text', { forceOffline: true });
   assert(offlineVector.isOfflineMock === true, 'Offline adapter vector explicitly flagged as isOfflineMock: true');
   assert(offlineVector.dimensions === 3072, 'Offline adapter vector maintains exact 3,072 dimensions');
+
+  // -------------------------------------------------------------------------
+  // Scenario 17: D3 Client Serialization Compatibility
+  // -------------------------------------------------------------------------
+  console.log('\n--- [Scenario 17] D3 Client Serialization Compatibility ---');
+  const soloJson = JSON.parse(JSON.stringify(soloResults[0]));
+  assert(typeof soloJson.matchScore === 'number', 'D3 Contract: matchScore is numeric');
+  assert(typeof soloJson.isRecommended === 'boolean', 'D3 Contract: isRecommended is boolean');
+  assert(typeof soloJson.dietarySafetyVerified === 'boolean', 'D3 Contract: dietarySafetyVerified is boolean');
+  assert(
+    ['VERIFIED_SAFE', 'CONFLICT_DETECTED', 'UNVERIFIED_DATA'].includes(soloJson.dietaryStatus),
+    'D3 Contract: dietaryStatus is valid enum'
+  );
+  assert(Array.isArray(soloJson.topMatchReasons), 'D3 Contract: topMatchReasons is array of strings');
+  assert(Array.isArray(soloJson.compromiseAlerts), 'D3 Contract: compromiseAlerts is array of strings');
+  assert(typeof soloJson.isOfflineMock === 'boolean', 'D3 Contract: isOfflineMock is boolean');
+  assert(soloJson.breakdown && typeof soloJson.breakdown.vibeMatch === 'number', 'D3 Contract: breakdown contains vibeMatch');
+  assert(soloJson.breakdown && typeof soloJson.breakdown.budgetSuitability === 'number', 'D3 Contract: breakdown contains budgetSuitability');
+  assert(soloJson.breakdown && typeof soloJson.breakdown.dietaryFit === 'number', 'D3 Contract: breakdown contains dietaryFit');
+  assert(
+    soloJson.breakdown && (soloJson.breakdown.pacingAlignment === null || typeof soloJson.breakdown.pacingAlignment === 'number'),
+    'D3 Contract: pacingAlignment is nullable number'
+  );
+
+  const groupJson = JSON.parse(JSON.stringify(groupResults[0]));
+  assert(typeof groupJson.matchScore === 'number', 'D3 Group Contract: matchScore is numeric');
+  assert(typeof groupJson.memberSatisfactionScores === 'object', 'D3 Group Contract: memberSatisfactionScores is object');
+  assert(Array.isArray(groupJson.sharedGroupVibesMatched), 'D3 Group Contract: sharedGroupVibesMatched is array');
 
   // -------------------------------------------------------------------------
   // Summary

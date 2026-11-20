@@ -42,7 +42,7 @@ export const MatchScoreBreakdownSchema = z.object({
   vibeMatch: z.number().min(0).max(100).describe('Cosine similarity between user vibes and spot categories/vibes'),
   budgetSuitability: z.number().min(0).max(100).describe('Score reflecting alignment with user budget tier & max meal budget'),
   dietaryFit: z.number().min(0).max(100).describe('100 if fully verified compliant, 0 if severe dietary conflict, 50 if unverified/unknown'),
-  pacingAlignment: z.number().min(0).max(100).describe('Alignment with travel pacing (relaxed vs packed)'),
+  pacingAlignment: z.number().min(0).max(100).nullable().default(null).describe('Alignment with travel pacing when route/duration evidence exists; null when route evidence is unavailable'),
   authenticityBonus: z.number().min(0).max(20).default(0).describe('Bonus points awarded for high authenticity scores (> 80)'),
 });
 
@@ -64,11 +64,13 @@ export const SoloPlaceMatchResultSchema = z.object({
   placeId: z.string(),
   spotName: z.string(),
   matchScore: z.number().min(0).max(100).describe('Composite match score from 0 to 100'),
-  isRecommended: z.boolean().describe('True if match score >= 65 and zero hard constraint violations'),
+  isRecommended: z.boolean().describe('True if match score >= 65 and dietary safety is verified; false if dietary conflict or unverified'),
   breakdown: MatchScoreBreakdownSchema,
   topMatchReasons: z.array(z.string()).describe('Explanations of why this spot matches the traveler'),
-  compromiseAlerts: z.array(z.string()).default([]).describe('Notices about minor mismatches or budget adjustments'),
+  compromiseAlerts: z.array(z.string()).default([]).describe('Notices about minor mismatches, budget adjustments, or unverified dietary data'),
   matchedVibes: z.array(z.string()).default([]).describe('Specific user vibes that strongly matched this spot'),
+  dietarySafetyVerified: z.boolean().describe('True ONLY if venue has verified compliance with user dietary restrictions; false if unverified or conflict'),
+  dietaryStatus: DietaryStatusSchema.describe('VERIFIED_SAFE, CONFLICT_DETECTED, or UNVERIFIED_DATA'),
   dietaryAlert: z.string().optional().describe('Warning if spot has limited options or unverified dietary information'),
   practicalTip: z.string().optional().describe('Contextual visit tip derived from place enrichment'),
   isOfflineMock: z.boolean().default(false).describe('True if vector was computed via offline test adapter rather than live Gemini API'),
@@ -105,6 +107,12 @@ export interface SoloMatchInput {
   preferences: z.infer<typeof TravelerPreferencesDocumentSchema>;
   places: z.infer<typeof CanonicalPlaceDocumentSchema>[];
   limit?: number;
+  /** Optional walking route evidence from Developer C (RoutesService) */
+  routeContext?: {
+    totalWalkingDurationMinutes?: number;
+    totalDistanceMeters?: number;
+    numberOfStops?: number;
+  };
   options?: {
     forceOffline?: boolean;
     allowTestAdapterFallback?: boolean;
@@ -117,6 +125,12 @@ export interface GroupBlendAndMatchInput {
   members: z.infer<typeof MemberPreferenceInputSchema>[];
   places: z.infer<typeof CanonicalPlaceDocumentSchema>[];
   limit?: number;
+  /** Optional walking route evidence from Developer C (RoutesService) */
+  routeContext?: {
+    totalWalkingDurationMinutes?: number;
+    totalDistanceMeters?: number;
+    numberOfStops?: number;
+  };
   options?: {
     forceOffline?: boolean;
     allowTestAdapterFallback?: boolean;
