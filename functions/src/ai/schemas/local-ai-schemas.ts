@@ -60,7 +60,7 @@ export type AICoreFeature = z.infer<typeof AICoreFeatureSchema>;
  * https://developers.google.com/ml-kit/genai/
  */
 export const AICoreReadinessStatusSchema = z.enum([
-  'UNSUPPORTED_OS_VERSION', // Requires Android 14+ (API 34+)
+  'UNSUPPORTED_OS_VERSION', // Requires Android 8.0+ (API 26+) for Google ML Kit GenAI Prompt API
   'PACKAGE_NOT_INSTALLED',  // com.google.android.aicore package not present
   'FEATURE_NOT_SUPPORTED',  // Specific feature API unsupported on device SoC
   'MODEL_DOWNLOADABLE',     // Feature supported; model weights can be downloaded
