@@ -21,7 +21,7 @@
  * - Missing menu items or unreadable signage are strictly reported as unreadable or undefined.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
 import { getAIConfig } from '../config/env.js';
 import { executeWithRetry } from '../client/gemini-client.js';
@@ -75,7 +75,9 @@ export async function initializeLiveSession(
   request: LiveSessionTokenRequest
 ): Promise<LiveSessionTokenResponse> {
   const sessionId = `live_sess_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-  const webSocketEndpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`;
+  // Constrained WebSocket endpoint for ephemeral token access
+  const webSocketEndpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained`;
+  const targetModel = 'models/gemini-2.0-flash-exp';
 
   const neighborhood = request.neighborhoodHint || 'Bengaluru Neighborhoods';
   const systemInstructionsApplied = `You are the Neighborhood Guide Street Assistant for ${neighborhood}.
@@ -104,7 +106,7 @@ Support regional languages (${request.preferredLanguage}) and English interchang
           expireTime: new Date(Date.now() + 900 * 1000).toISOString(),
           newSessionExpireTime: new Date(Date.now() + 300 * 1000).toISOString(),
           liveConnectConstraints: {
-            model: 'models/gemini-2.0-flash-exp',
+            model: targetModel,
           },
         },
       });
@@ -137,11 +139,17 @@ Support regional languages (${request.preferredLanguage}) and English interchang
     notes = 'No Gemini API key configured. Provider ephemeral token creation is unavailable.';
   }
 
+  const clientConnectionUrl = ephemeralToken
+    ? `${webSocketEndpoint}?access_token=${ephemeralToken}`
+    : null;
+
   const response: LiveSessionTokenResponse = {
     sessionId,
     ephemeralToken,
     webSocketEndpoint,
-    model: 'gemini-3.8-live',
+    clientConnectionUrl,
+    authMethod: 'QUERY_PARAM_ACCESS_TOKEN',
+    model: targetModel,
     expiresAt,
     ttlSeconds,
     deliveryMode: 'LIVE_STREAMING',
@@ -838,11 +846,24 @@ export function formatGeminiHandoffContext(
 ): GeminiHandoffResponse {
   const generatedAt = new Date().toISOString();
 
+  // Compute deterministic challenge token for the preview
+  const challengeHash = createHash('sha256')
+    .update(`${context.travelerId}:${context.activeNeighborhood}:${context.recentSpotCards.length}`)
+    .digest('hex')
+    .slice(0, 16);
+  const consentChallengeToken = `consent_chk_${challengeHash}`;
+
+  const coordsApprox = context.currentCoordinates
+    ? `${context.currentCoordinates.latitude.toFixed(3)}° N, ${context.currentCoordinates.longitude.toFixed(3)}° E`
+    : undefined;
+
   const transferPayloadPreview = {
     neighborhood: context.activeNeighborhood,
     coordinatesShared: Boolean(context.currentCoordinates),
+    coordinatesApproximate: coordsApprox,
     routeSummary: context.currentRouteSummary,
     spotsCount: context.recentSpotCards.length,
+    spotNames: context.recentSpotCards.map((s) => s.spotName),
     conversationSnippetsCount: context.recentConversationSnippets.length,
   };
 
@@ -862,10 +883,11 @@ export function formatGeminiHandoffContext(
 
   const handoffDisclaimer = 'Continuing in Gemini exports public location, route, and dialogue context to Google Gemini web assistant. Private authentication credentials remain protected.';
 
-  // If traveler has NOT granted explicit consent, require confirmation and return preview + cancellation path
+  // Phase 1: Traveler has NOT confirmed consent in UI yet
   if (!context.userConsentGranted) {
     return GeminiHandoffResponseSchema.parse({
       consentStatus: 'CONSENT_REQUIRED',
+      consentChallengeToken,
       handoffUri: null,
       transferPayloadPreview,
       transferPayloadJson: null,
@@ -877,7 +899,23 @@ export function formatGeminiHandoffContext(
     });
   }
 
-  // Traveler explicitly confirmed consent: formulate transfer payload and deep link
+  // Phase 2: Traveler confirmed consent in UI, verify consentChallengeToken matches
+  if (!context.consentChallengeToken || context.consentChallengeToken !== consentChallengeToken) {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CANCELLED',
+      consentChallengeToken,
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: 'Consent verification failed or expired. Please review the export preview again.',
+      generatedAt,
+    });
+  }
+
+  // Traveler explicitly confirmed consent with matching challenge: formulate transfer payload and deep link
   const payloadData = {
     app: 'NeighborhoodGuide',
     travelerId: context.travelerId,
@@ -895,6 +933,7 @@ export function formatGeminiHandoffContext(
 
   return GeminiHandoffResponseSchema.parse({
     consentStatus: 'CONSENT_GRANTED',
+    consentChallengeToken,
     handoffUri,
     transferPayloadPreview,
     transferPayloadJson,

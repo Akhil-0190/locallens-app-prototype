@@ -20,6 +20,10 @@ import * as logger from 'firebase-functions/logger';
 import { randomUUID } from 'node:crypto';
 import { ApiSuccessResponse } from '../../types/contracts/index.js';
 import {
+  assertRateLimit,
+  assertLiveSessionTokenIssuance,
+} from '../utils/rate-limiter.js';
+import {
   initializeLiveSession as serviceInitLiveSession,
   askStreetCopilot as serviceAskCopilot,
   translateText as serviceTranslateText,
@@ -46,6 +50,12 @@ function requestId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 12);
 }
 
+function checkAppCheckIfEnforced(request: any) {
+  if (process.env.ENFORCE_APP_CHECK === 'true' && !request.app) {
+    throw new HttpsError('failed-precondition', 'Firebase App Check token is missing or invalid.');
+  }
+}
+
 function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
   return {
     success: true,
@@ -65,9 +75,11 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  */
 export const initializeLiveSession = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to start a Live session.');
   }
+  assertLiveSessionTokenIssuance(request.auth.uid);
 
   const parseResult = LiveSessionTokenRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -89,9 +101,11 @@ export const initializeLiveSession = onCall(async (request) => {
  */
 export const askStreetCopilot = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to use Street Copilot.');
   }
+  assertRateLimit(request.auth.uid, 'askStreetCopilot');
 
   const parseResult = StreetCopilotRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -113,9 +127,11 @@ export const askStreetCopilot = onCall(async (request) => {
  */
 export const translateText = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to translate text.');
   }
+  assertRateLimit(request.auth.uid, 'translateText');
 
   const parseResult = TranslationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -187,9 +203,11 @@ export const getEtiquetteGuidance = onCall(async (request) => {
  */
 export const translateCameraSignage = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to use visual translation.');
   }
+  assertRateLimit(request.auth.uid, 'translateCameraSignage');
 
   const parseResult = CameraVisualTranslationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -212,9 +230,11 @@ export const translateCameraSignage = onCall(async (request) => {
  */
 export const generateAudioGuidance = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to generate audio guidance.');
   }
+  assertRateLimit(request.auth.uid, 'generateAudioGuidance');
 
   const parseResult = AudioGuidanceContentRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -240,6 +260,7 @@ export const explainPlanBReroute = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to explain Plan-B reroutes.');
   }
+  assertRateLimit(request.auth.uid, 'explainPlanBReroute');
 
   const parseResult = PlanBExplanationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -264,6 +285,7 @@ export const formatGeminiHandoff = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to initiate Gemini handoff.');
   }
+  assertRateLimit(request.auth.uid, 'formatGeminiHandoff');
 
   const parseResult = GeminiHandoffContextSchema.safeParse(request.data);
   if (!parseResult.success) {

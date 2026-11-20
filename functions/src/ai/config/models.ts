@@ -173,12 +173,12 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
     notes: 'LIVE TESTED & VERIFIED. Produces normalized 3,072-dim multimodal vectors for cosine similarity operations.',
   },
 
-  // Corrected: Gemini 3.8 Live -> gemini-3.8-live
+  // Gemini Live Multimodal endpoint on Gemini Developer API
   GEMINI_LIVE_MULTIMODAL: {
-    apiModelId: 'gemini-3.8-live',
-    displayName: 'Gemini 3.8 Live (Bidirectional Streaming)',
-    alias: 'Gemini 3.8 Live',
-    primaryUse: 'Low-latency bidirectional voice translation, live audio guidance, and conversational assistant via WebSocket',
+    apiModelId: 'models/gemini-2.0-flash-exp',
+    displayName: 'Gemini 2.0 Flash Live (Bidirectional Streaming)',
+    alias: 'Gemini 2.0 Flash Live',
+    primaryUse: 'Low-latency bidirectional voice translation, live audio guidance, and conversational assistant via WebSocket BidiGenerateContentConstrained',
     availability: 'PUBLIC_PREVIEW',
     testStatus: 'UNTESTED_ENDPOINT',
     contextWindow: {
@@ -200,7 +200,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 500,
       },
     },
-    notes: 'Designated endpoint for Gemini 3.8 Live bidirectional streaming. Untested in this turn; requires WebSocket streaming client.',
+    notes: 'Configured for Gemini Developer API (Google AI Studio) v1alpha BidiGenerateContentConstrained WebSocket. In this product, models/gemini-2.0-flash-exp is the supported Multimodal Live model. The hypothetical model "gemini-3.8-live" is not available through the Gemini Developer API product; the registry explicitly configures the real supported model models/gemini-2.0-flash-exp to ensure 100% agreement with token creation constraints.',
   },
 
   // Clarified: Gemini Nano on-device via Android AICore / ML Kit
@@ -272,8 +272,12 @@ export function resolveModelDefinition(identifier: string): AIModelDefinition | 
   if (MODEL_REGISTRY[identifier]) {
     return MODEL_REGISTRY[identifier];
   }
-  // Check apiModelId or alias match
+  const idLower = identifier.toLowerCase();
+  // Check apiModelId, alias match, or legacy alias match
   return Object.values(MODEL_REGISTRY).find(
-    (m) => m.apiModelId === identifier || m.alias.toLowerCase() === identifier.toLowerCase()
+    (m) =>
+      m.apiModelId === identifier ||
+      m.alias.toLowerCase() === idLower ||
+      (m === MODEL_REGISTRY.GEMINI_LIVE_MULTIMODAL && idLower === 'gemini 3.8 live')
   );
 }

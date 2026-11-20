@@ -85,7 +85,9 @@ export const LiveSessionTokenResponseSchema = z.object({
   sessionId: z.string().min(1),
   ephemeralToken: z.string().nullable(), // Null when provider token minting is unavailable
   webSocketEndpoint: z.string().url(),
-  model: z.string(),
+  clientConnectionUrl: z.string().url().nullable(), // Full WebSocket connection URL with ?access_token= parameter
+  authMethod: z.literal('QUERY_PARAM_ACCESS_TOKEN'),
+  model: z.string(), // Exactly matches provider model constraint: models/gemini-2.0-flash-exp
   expiresAt: z.string().nullable(), // Null when live session is unavailable
   ttlSeconds: z.number().int().nonnegative(),
   deliveryMode: AssistanceDeliveryModeSchema,
@@ -341,17 +343,21 @@ export const GeminiHandoffContextSchema = z.object({
   })).default([]),
   recentConversationSnippets: z.array(z.string()).default([]),
   userConsentGranted: z.boolean().default(false), // Explicit traveler confirmation required
+  consentChallengeToken: z.string().optional(), // Required in Phase 2 confirmation
 });
 export type GeminiHandoffContext = z.infer<typeof GeminiHandoffContextSchema>;
 
 export const GeminiHandoffResponseSchema = z.object({
   consentStatus: z.enum(['CONSENT_GRANTED', 'CONSENT_REQUIRED', 'CANCELLED']),
+  consentChallengeToken: z.string(), // Cryptographic/digest token linking Phase 1 preview to Phase 2 confirmation
   handoffUri: z.string().url().nullable(), // Null until traveler explicitly grants consent
   transferPayloadPreview: z.object({
     neighborhood: z.string(),
     coordinatesShared: z.boolean(),
+    coordinatesApproximate: z.string().optional(),
     routeSummary: z.string().optional(),
     spotsCount: z.number(),
+    spotNames: z.array(z.string()),
     conversationSnippetsCount: z.number(),
   }),
   transferPayloadJson: z.string().nullable(), // Null until traveler explicitly grants consent

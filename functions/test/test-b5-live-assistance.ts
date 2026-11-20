@@ -40,6 +40,11 @@ import {
 } from '../src/ai/schemas/assistance-schemas.js';
 import { PlanBExplanationContext } from '../src/maps/types/weather.types.js';
 import { getAIConfig } from '../src/ai/config/env.js';
+import {
+  checkRateLimit,
+  assertLiveSessionTokenIssuance,
+  clearRateLimitsForTesting,
+} from '../src/ai/utils/rate-limiter.js';
 
 let passed = 0;
 let total = 0;
@@ -73,7 +78,7 @@ async function runB5Tests() {
   // =========================================================================
   // Test Suite 1: Gemini Live Session Handshake & Ephemeral Token Minting
   // =========================================================================
-  console.log('--- [Suite 1] Gemini 3.8 Live WebSocket Handshake & Token Minting ---');
+  console.log('--- [Suite 1] Gemini Live WebSocket Handshake & Token Minting ---');
 
   const liveSession = await initializeLiveSession({
     travelerId: 'usr_traveler_101',
@@ -83,9 +88,13 @@ async function runB5Tests() {
   });
 
   assert(LiveSessionTokenResponseSchema.safeParse(liveSession).success, 'LiveSessionTokenResponse conforms strictly to Zod schema');
-  assert(liveSession.model === 'gemini-3.8-live', 'Targets registered Gemini 3.8 Live model');
+  assert(liveSession.model === 'models/gemini-2.0-flash-exp', 'Targets official Developer API Multimodal Live model models/gemini-2.0-flash-exp');
   assert(liveSession.deliveryMode === 'LIVE_STREAMING', 'Explicitly labeled deliveryMode: LIVE_STREAMING');
-  assert(liveSession.webSocketEndpoint.startsWith('wss://'), 'Returns valid wss:// streaming WebSocket endpoint');
+  assert(
+    liveSession.webSocketEndpoint === 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
+    'Targets official BidiGenerateContentConstrained WebSocket endpoint'
+  );
+  assert(liveSession.authMethod === 'QUERY_PARAM_ACCESS_TOKEN', 'Specifies QUERY_PARAM_ACCESS_TOKEN authentication format');
   assert(liveSession.diagnostics.providerMechanism.includes('authTokens.create'), 'Identifies official Google Provider mechanism');
   assert(liveSession.ephemeralToken === null ? !liveSession.isLiveSessionSupported : liveSession.isLiveSessionSupported, 'Honest provider state: no fake tokens returned when offline');
   assert(liveSession.ephemeralToken === null || !liveSession.ephemeralToken.includes('AIzaSy'), 'Zero leakage: raw Google API keys are NEVER returned to client');
@@ -304,11 +313,11 @@ async function runB5Tests() {
   );
 
   // =========================================================================
-  // Test Suite 9: Continue in Gemini Handoff Interface (Explicit Consent)
+  // Test Suite 9: Continue in Gemini Handoff Interface (Two-Phase Explicit Consent)
   // =========================================================================
   console.log('\n--- [Suite 9] Continue in Gemini Handoff Interface ---');
 
-  // Case A: Traveler has NOT granted consent yet
+  // Case A: Traveler has NOT granted consent yet (Phase 1: Preview & Challenge)
   const handoffRequiresConsent = formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
@@ -323,11 +332,29 @@ async function runB5Tests() {
 
   assert(GeminiHandoffResponseSchema.safeParse(handoffRequiresConsent).success, 'Handoff preview conforms to schema');
   assert(handoffRequiresConsent.consentStatus === 'CONSENT_REQUIRED', 'Demands explicit user consent before data export');
+  assert(handoffRequiresConsent.consentChallengeToken.startsWith('consent_chk_'), 'Issues cryptographic consent challenge token');
   assert(handoffRequiresConsent.handoffUri === null, 'Does NOT generate handoff deep link without consent');
   assert(handoffRequiresConsent.cancellationPath === 'REMAIN_IN_APP', 'Provides safe cancellation path (REMAIN_IN_APP)');
   assert(handoffRequiresConsent.transferPayloadPreview.neighborhood === 'Malleshwaram', 'Presents transparent payload preview to user');
+  assert(handoffRequiresConsent.transferPayloadPreview.spotNames.includes('CTR Shri Sagar'), 'Includes explicit spot names in preview');
 
-  // Case B: Traveler confirms and grants consent
+  // Case B: Traveler confirmed but challenge token was corrupted/mismatched
+  const handoffMismatched = formatGeminiHandoffContext({
+    travelerId: 'usr_traveler_101',
+    activeNeighborhood: 'Malleshwaram',
+    currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
+    currentRouteSummary: 'Malleshwaram Heritage Breakfast Walk (4 stops)',
+    recentSpotCards: [
+      { spotName: 'CTR Shri Sagar', category: 'tiffin_hall', openHours: '7:30 AM - 12:30 PM' },
+    ],
+    recentConversationSnippets: ['What is the best dish at CTR?'],
+    userConsentGranted: true,
+    consentChallengeToken: 'invalid_corrupted_token',
+  });
+  assert(handoffMismatched.consentStatus === 'CANCELLED', 'Rejects handoff when consent challenge token is invalid');
+  assert(handoffMismatched.handoffUri === null, 'No URI generated on mismatched consent challenge');
+
+  // Case C: Traveler confirmed with valid challenge token (Phase 2: Confirmed Handoff)
   const handoffConfirmed = formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
@@ -338,6 +365,7 @@ async function runB5Tests() {
     ],
     recentConversationSnippets: ['What is the best dish at CTR?'],
     userConsentGranted: true,
+    consentChallengeToken: handoffRequiresConsent.consentChallengeToken,
   });
 
   assert(handoffConfirmed.consentStatus === 'CONSENT_GRANTED', 'Marks consent status as granted');
@@ -345,6 +373,48 @@ async function runB5Tests() {
   assert(handoffConfirmed.transferredAttributes.includes('activeNeighborhood'), 'Transfers activeNeighborhood');
   assert(handoffConfirmed.omittedAttributes.includes('rawPaymentTokens'), 'Omits private payment tokens');
   assert(handoffConfirmed.handoffDisclaimer.length > 0, 'Contains explicit privacy and data transfer disclaimer');
+
+  // =========================================================================
+  // Test Suite 11: Rate Limiting & Abuse Prevention Controls
+  // =========================================================================
+  console.log('\n--- [Suite 11] Rate Limiting & Abuse Prevention Controls ---');
+
+  clearRateLimitsForTesting();
+
+  // Test 1: Normal requests allowed under limit
+  const check1 = checkRateLimit('user_test_999', 'askStreetCopilot');
+  assert(check1.allowed, 'First request under policy limit is allowed');
+  assert(check1.remaining === 19, 'Remaining request count correctly decremented (19)');
+
+  // Test 2: Rapid Live session token minting restricted (concurrency / loop prevention)
+  let firstTokenAllowed = false;
+  try {
+    assertLiveSessionTokenIssuance('user_test_live_1');
+    firstTokenAllowed = true;
+  } catch {
+    firstTokenAllowed = false;
+  }
+  assert(firstTokenAllowed, 'First live token issuance is allowed');
+
+  let secondTokenBlocked = false;
+  try {
+    assertLiveSessionTokenIssuance('user_test_live_1');
+  } catch (err: any) {
+    if (err.code === 'resource-exhausted') {
+      secondTokenBlocked = true;
+    }
+  }
+  assert(secondTokenBlocked, 'Rapid subsequent live token issuance within 15s is blocked (resource-exhausted)');
+
+  // Test 3: Exhausting policy limit
+  for (let i = 0; i < 19; i++) {
+    checkRateLimit('user_test_999', 'askStreetCopilot');
+  }
+  const checkExhausted = checkRateLimit('user_test_999', 'askStreetCopilot');
+  assert(!checkExhausted.allowed, 'Exceeding 20 req/min policy limit correctly blocks request');
+  assert(checkExhausted.remaining === 0, 'Remaining count is 0 when rate limit is exceeded');
+
+  clearRateLimitsForTesting();
 
   // =========================================================================
   // Test Suite 10: Live Gemini API Integration (Conditional)

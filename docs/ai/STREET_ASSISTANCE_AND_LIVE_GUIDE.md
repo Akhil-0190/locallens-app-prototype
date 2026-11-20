@@ -28,18 +28,23 @@ Task B5 introduces three operational delivery tiers:
 
 ## 2. Gemini Live Security, Token Lifecycle & Model Verification
 
-### A. The Ephemeral Token Architecture
-Client devices (Flutter on Android/iOS) must **never** hold permanent Google AI Studio API credentials. Instead:
-1. Flutter client calls authenticated Cloud Function: `Assistance-initializeLiveSession`.
-2. Backend validates Firebase Auth user token (`request.auth.uid`).
-3. Backend calls Google's official Developer API via `@google/genai` SDK:
-   `client.authTokens.create({ config: { uses: 1, expireTime: ..., liveConnectConstraints: { ... } } })`.
-4. Provider-backed token (`tokenResponse.name`) is returned with exact provider expiry.
-5. **Honest Provider Fallback:** If the Google Live API endpoint, network, or credentials are unavailable, the backend reports `isLiveSessionSupported: false` and `ephemeralToken: null`. It **never** manufactures a synthetic local UUID as a fake credential.
-6. **Live Model Status:** The target model `gemini-3.8-live` is configured in the centralized registry as an `UNTESTED_ENDPOINT` pending live provider socket verification.
-7. Client connects directly to the streaming endpoint:
-   `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`
-8. On expiration, the client re-authenticates to mint a fresh token.
+### A. Gemini Developer API Product & Model Alignment
+- **Target Platform:** Google Gemini Developer API (Google AI Studio via `@google/genai` v1alpha SDK).
+- **Supported Live Model:** `models/gemini-2.0-flash-exp` (the official model supporting bidirectional multimodal streaming in the Developer API v1alpha).
+- **Product Mismatch Resolution:** The hypothetical model ID `gemini-3.8-live` does not exist in the Gemini Developer API catalog. The central registry, backend token constraints, and service return objects now agree 100% on `models/gemini-2.0-flash-exp`.
+- **Live Model Verification Status:** `models/gemini-2.0-flash-exp` is categorized as `UNTESTED_ENDPOINT` in the registry and marked as unverified until live WebSocket bidirectional streaming succeeds against Google's servers.
+
+### B. Correct Ephemeral-Token WebSocket Protocol
+When using Google Developer API ephemeral tokens, connections must use the constrained endpoint and query parameter authentication:
+- **WebSocket Endpoint:**
+  `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained`
+- **Authentication Method:**
+  `?access_token=<ephemeral_token>` (passed as a URL query parameter; NOT bearer headers or session params).
+- **Full Client Connection URL:**
+  `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${ephemeralToken}`
+- **Constrained Locking:** The session is cryptographically locked by Google to the exact model (`models/gemini-2.0-flash-exp`) and system instructions configured during token minting. The client cannot modify locked fields.
+- **Expiry Enforcement:** Single-use session token with a 15-minute (`ttlSeconds: 900`) message rejection boundary and 5-minute session initialization window.
+- **Honest Offline Reporting:** In offline sandboxes or when API credentials/network are unavailable, the service returns `isLiveSessionSupported: false` and `ephemeralToken: null`. Zero fake tokens or local UUIDs are ever returned.
 
 ---
 
@@ -51,19 +56,21 @@ Developer B provides callable Firebase Cloud Functions under the `Assistance` na
 - **Inspected Schema Parity (Achieved):** The field names, types, enums, and nullability for `OrderingCard` / `CulturalOrderingCard` match 100% with Developer D's Dart definition in `lib/services/street_assistance_service.dart`.
 - **Wire Integration (Pending D6/D7):** Developer D must replace client mock generators with live `FirebaseFunctions.instance.httpsCallable('Assistance-...')` invocations when implementing production UI.
 
-### Callable Abuse Controls & Authentication
+### Callable Abuse Controls, Quotas & App Check
 
-| Cloud Function Callable | Authentication (`request.auth`) | Abuse Controls & Rate Limiting | Status |
-| :--- | :--- | :--- | :--- |
-| `Assistance-initializeLiveSession` | **Required** | Auth check + 15m provider token bound | Billed AI operation |
-| `Assistance-askStreetCopilot` | **Required** | Auth check + query length bound (1000 chars) | Billed AI operation |
-| `Assistance-translateText` | **Required** | Auth check + source length bound (2000 chars) | Billed AI operation |
-| `Assistance-getOrderingPhrases` | Optional | Payload size limit (< 4KB) | Public curated content |
-| `Assistance-getEtiquetteGuidance` | Optional | Payload size limit (< 4KB) | Public curated content |
-| `Assistance-translateCameraSignage`| **Required** | Auth check + MIME whitelist + base64 bounds | Billed AI operation |
-| `Assistance-generateAudioGuidance` | **Required** | Auth check + input param bounds | Billed AI operation |
-| `Assistance-explainPlanBReroute` | **Required** | Auth check + strict Zod schema parsing | Traveler route alert |
-| `Assistance-formatGeminiHandoff` | **Required** | Auth check + Explicit Consent verification | Privacy-protected handoff |
+To protect externally billed Google AI operations and prevent quota exhaustion:
+
+| Cloud Function Callable | Authentication (`request.auth`) | App Check Required | Sliding-Window Rate Limit | Abuse & Cost Controls |
+| :--- | :--- | :--- | :--- | :--- |
+| `Assistance-initializeLiveSession` | **Required** | **Yes** (Production) | Max 5 calls / 15 min | Single active token per user; 15s cooldown |
+| `Assistance-askStreetCopilot` | **Required** | **Yes** (Production) | Max 20 calls / min | Query capped at 1,000 chars; history max 10 |
+| `Assistance-translateText` | **Required** | **Yes** (Production) | Max 30 calls / min | Source text capped at 2,000 chars |
+| `Assistance-translateCameraSignage`| **Required** | **Yes** (Production) | Max 10 calls / min | MIME whitelist + base64 payload bounds |
+| `Assistance-generateAudioGuidance` | **Required** | **Yes** (Production) | Max 15 calls / min | Spoken word count strictly capped < 60 |
+| `Assistance-explainPlanBReroute` | **Required** | Optional | Max 10 calls / min | Strict PlanBExplanationContext validation |
+| `Assistance-formatGeminiHandoff` | **Required** | Optional | Max 5 calls / min | Cryptographic two-phase consent challenge |
+| `Assistance-getOrderingPhrases` | Optional | Optional | Payload < 4KB | In-memory zero-cost curated phrase deck |
+| `Assistance-getEtiquetteGuidance` | Optional | Optional | Payload < 4KB | In-memory zero-cost curated etiquette deck |
 
 ### Example Request & Response: Camera Signage Translation
 **Request Payload:**
@@ -128,16 +135,32 @@ To keep spoken walking guidance clear and safe on busy streets:
 
 ---
 
-## 6. Continue in Gemini Handoff Interface & Explicit Consent
+## 6. Continue in Gemini Handoff Agreement & Two-Phase Consent Protocol
 
-Prepares the structured context payload for the optional "Continue in Gemini" capability:
-- **Explicit Traveler Confirmation:** Requires `userConsentGranted: true` before formulating the handoff URI.
-- **Transparent Data Preview:** When `userConsentGranted: false`, returns `consentStatus: 'CONSENT_REQUIRED'`, `handoffUri: null`, and `transferPayloadPreview` so the user sees exactly what is shared (neighborhood, coordinates, spots, dialogue) before consenting.
-- **Cancellation Path:** Provides a distinct `cancellationPath: 'REMAIN_IN_APP'` allowing the traveler to reject the transfer and stay within Neighborhood Guide.
-- **Transferred Context:** `activeNeighborhood`, `currentCoordinates`, `currentRouteSummary`, recent spot cards, and recent dialogue history.
-- **Omitted Data:** Payment tokens, private user authentication credentials, internal database identifiers (`omittedAttributes`).
-- **Handoff Target:** Official Gemini web application deep-link: `https://gemini.google.com/app?context=...`.
-- *Note:* Agent Skills execution is retained for Task B7.
+Prepares the structured context payload for the optional "Continue in Gemini" capability with end-to-end user consent verification:
+
+### Two-Phase Confirmation Flow:
+1. **Phase 1 (Inspection & Preview):**
+   - Flutter client calls `Assistance-formatGeminiHandoff` with `{ userConsentGranted: false }`.
+   - Backend returns `consentStatus: 'CONSENT_REQUIRED'`, `consentChallengeToken`, and `transferPayloadPreview`.
+   - `handoffUri` remains strictly `null`.
+2. **User Confirmation Dialog (Developer D UI):**
+   - Flutter client renders modal displaying `transferPayloadPreview`:
+     - Neighborhood: e.g. "Malleshwaram"
+     - GPS Sharing: Approximate coordinates (e.g. `12.998° N, 77.571° E`)
+     - Route & Spots: "Malleshwaram Breakfast Walk (CTR Shri Sagar, ...)"
+     - Conversation: Count of recent dialogue snippets shared.
+   - User choices:
+     - **[Cancel / Stay in Guide]:** Dialog closes, takes `cancellationPath: 'REMAIN_IN_APP'`, 0 data exported.
+     - **[Share & Continue in Gemini]:** Explicit affirmative action triggers Phase 2.
+3. **Phase 2 (Verified Export):**
+   - Flutter client sends `{ userConsentGranted: true, consentChallengeToken: '<challenge_from_phase_1>' }`.
+   - Backend validates the challenge token against session hash.
+   - If valid, returns `consentStatus: 'CONSENT_GRANTED'` and `handoffUri`.
+   - If challenge token is missing or mismatched, returns `consentStatus: 'CANCELLED'` and blocks export.
+4. **Privacy Protection:**
+   - Raw payment tokens, user passwords, and internal database IDs are permanently excluded (`omittedAttributes`).
+   - Deep-link targets official Gemini web app: `https://gemini.google.com/app?context=...`.
 
 ---
 
