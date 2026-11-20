@@ -19,8 +19,11 @@ export * from './services/routes.service';
 export * from './services/url-parser.service';
 export * from './services/grounding.service';
 export * from './services/crowd-management.service';
+export * from './services/weather.service';
+export * from './services/plan-b.service';
 
 export * from './fixtures/sample-places.fixture';
 export * from './fixtures/sample-routes.fixture';
 export * from './fixtures/sample-evidence.fixture';
 export * from './fixtures/sample-crowd.fixture';
+export * from './fixtures/sample-weather.fixture';
