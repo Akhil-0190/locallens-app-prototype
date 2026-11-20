@@ -18,7 +18,9 @@ export * from './services/places.service';
 export * from './services/routes.service';
 export * from './services/url-parser.service';
 export * from './services/grounding.service';
+export * from './services/crowd-management.service';
 
 export * from './fixtures/sample-places.fixture';
 export * from './fixtures/sample-routes.fixture';
 export * from './fixtures/sample-evidence.fixture';
+export * from './fixtures/sample-crowd.fixture';
