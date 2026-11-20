@@ -39,7 +39,31 @@ import {
 import {
   SoloPlaceMatchResultSchema,
   GroupPlaceMatchResultSchema,
+  PlaceDietaryEvidence,
 } from '../src/ai/schemas/matching-schemas.js';
+
+// Verifiable Dietary Evidence Fixtures (Domain 09 Grounding Guardrails)
+const verifiedPureVegCertification: PlaceDietaryEvidence = {
+  certification: {
+    issuingOrganization: 'Karnataka State Pure Food Board',
+    evidenceReference: 'CERT-KA-VEG-2026-889',
+    verificationStatus: 'VERIFIED',
+    verificationDate: '2026-01-15T10:00:00Z',
+    certificationScope: ['pure_veg', 'vegetarian'],
+  },
+};
+
+const verifiedCommunityAuditVeg: PlaceDietaryEvidence = {
+  communityAudit: {
+    auditorId: 'aud_priya_resident_42',
+    auditorName: 'Priya Sharma',
+    auditDate: '2026-02-10T09:30:00Z',
+    kitchenConditionAssessed: 'Inspected separate dedicated vegetarian cookware, zero non-veg storage on premises',
+    evidenceSource: 'submission_audit_doc_9912',
+    verificationStatus: 'VERIFIED',
+    auditScope: ['pure_veg', 'vegetarian'],
+  },
+};
 
 let passed = 0;
 let total = 0;
@@ -192,6 +216,9 @@ async function runB4Tests() {
   const soloResults = await matchSoloPreferences({
     preferences: soloVegTraveler,
     places: [sampleHeritageDosaSpot, sampleMeatBarbecueSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
   });
 
   const topMatch = soloResults[0]!;
@@ -209,6 +236,9 @@ async function runB4Tests() {
   const soloRouteResults = await matchSoloPreferences({
     preferences: soloVegTraveler,
     places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
     routeContext: {
       totalWalkingDurationMinutes: 15,
       totalDistanceMeters: 900,
@@ -310,6 +340,180 @@ async function runB4Tests() {
   assert(unverifiedResults[0]!.dietarySafetyVerified === false, 'Unverified venue record cannot produce VERIFIED_SAFE');
   assert(unverifiedResults[0]!.dietaryStatus === 'UNVERIFIED_DATA', 'Unverified venue record stays UNVERIFIED_DATA');
   assert(unverifiedResults[0]!.isRecommended === false, 'Unverified venue is NOT recommended for dietary traveler');
+
+  // -------------------------------------------------------------------------
+  // Mandatory Dietary Evidence Tests (7 Explicit Verification Cases)
+  // -------------------------------------------------------------------------
+  console.log('\n--- [Mandatory Dietary Evidence: 7 Required Cases] ---');
+
+  // Case 1: Description containing "certified pure veg kitchen" without supporting certification evidence
+  // cannot produce INDEPENDENT_CERTIFICATION.
+  const case1TextClaimSpot: CanonicalPlaceDocument = {
+    ...sampleHeritageDosaSpot,
+    id: 'spot_case1_text_only',
+    infoParagraph: 'Generational certified pure veg kitchen tawa since 1924.',
+  };
+  const case1Results = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [case1TextClaimSpot],
+  });
+  assert(
+    case1Results[0]!.dietaryProvenance !== 'INDEPENDENT_CERTIFICATION',
+    'Mandatory Case 1: Text claim without supporting evidence cannot produce INDEPENDENT_CERTIFICATION'
+  );
+  assert(
+    case1Results[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Mandatory Case 1: Text claim without supporting evidence retains UNVERIFIED_DATA'
+  );
+
+  // Case 2: A pure_veg directory category cannot produce VERIFIED_SAFE.
+  const case2CategorySpot: CanonicalPlaceDocument = {
+    ...sampleHeritageDosaSpot,
+    id: 'spot_case2_cat_only',
+    infoParagraph: 'Traditional local restaurant serving dosas and coffee.',
+    categories: ['breakfast_restaurant', 'pure_veg'],
+  };
+  const case2Results = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [case2CategorySpot],
+  });
+  assert(
+    case2Results[0]!.dietaryStatus !== 'VERIFIED_SAFE',
+    'Mandatory Case 2: pure_veg directory category cannot produce VERIFIED_SAFE'
+  );
+  assert(
+    case2Results[0]!.dietarySafetyVerified === false,
+    'Mandatory Case 2: pure_veg category alone leaves dietarySafetyVerified as false'
+  );
+  assert(
+    case2Results[0]!.isRecommended === false,
+    'Mandatory Case 2: pure_veg category alone leaves isRecommended as false'
+  );
+
+  // Case 3: A verified resident's dietary statement without a recorded audit cannot produce VERIFIED_COMMUNITY_AUDIT.
+  const case3ResidentSpot: CanonicalPlaceDocument = {
+    ...sampleHeritageDosaSpot,
+    id: 'spot_case3_resident_statement',
+    contributorAttribution: {
+      userId: 'usr_priya_resident',
+      displayName: 'Priya Sharma',
+      badgeTitle: 'Local Historian',
+      isVerifiedResident: true,
+    },
+    authenticity: {
+      ...sampleHeritageDosaSpot.authenticity,
+      localSentimentSummary: 'Verified resident Priya says the kitchen is 100% pure veg and authentic.',
+    },
+  };
+  const case3Results = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [case3ResidentSpot],
+  });
+  assert(
+    case3Results[0]!.dietaryProvenance !== 'VERIFIED_COMMUNITY_AUDIT',
+    'Mandatory Case 3: Resident statement without recorded audit cannot produce VERIFIED_COMMUNITY_AUDIT'
+  );
+  assert(
+    case3Results[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Mandatory Case 3: Resident statement without recorded audit retains UNVERIFIED_DATA'
+  );
+
+  // Case 4: Properly recorded and verified certification evidence can produce VERIFIED_SAFE for specific restriction.
+  const case4Results = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
+  });
+  assert(
+    case4Results[0]!.dietaryProvenance === 'INDEPENDENT_CERTIFICATION',
+    'Mandatory Case 4: Recorded certification produces INDEPENDENT_CERTIFICATION'
+  );
+  assert(
+    case4Results[0]!.dietaryStatus === 'VERIFIED_SAFE',
+    'Mandatory Case 4: Recorded certification produces VERIFIED_SAFE for covered restriction'
+  );
+  assert(
+    case4Results[0]!.isRecommended === true,
+    'Mandatory Case 4: Venue recommended when verified certification exists'
+  );
+
+  // Case 5: Properly recorded and verified community audit evidence can produce VERIFIED_SAFE only within documented scope.
+  const case5Results = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedCommunityAuditVeg,
+    },
+  });
+  assert(
+    case5Results[0]!.dietaryProvenance === 'VERIFIED_COMMUNITY_AUDIT',
+    'Mandatory Case 5: Recorded community audit produces VERIFIED_COMMUNITY_AUDIT'
+  );
+  assert(
+    case5Results[0]!.dietaryStatus === 'VERIFIED_SAFE',
+    'Mandatory Case 5: Recorded community audit produces VERIFIED_SAFE within scope'
+  );
+  assert(
+    case5Results[0]!.isRecommended === true,
+    'Mandatory Case 5: Venue recommended when covered by verified community audit'
+  );
+
+  // Case 6: Evidence that does not cover vegan, Jain, or specific allergy cannot certify suitability for those requirements.
+  const case6Vegan = await matchSoloPreferences({
+    preferences: soloVeganTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification, // scope is pure_veg only, not vegan!
+    },
+  });
+  assert(
+    case6Vegan[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Mandatory Case 6: Pure veg certification does NOT certify vegan suitability'
+  );
+  assert(
+    case6Vegan[0]!.dietarySafetyVerified === false,
+    'Mandatory Case 6: Vegan safety remains false under pure veg certification'
+  );
+  assert(
+    case6Vegan[0]!.isRecommended === false,
+    'Mandatory Case 6: Pure veg certification does NOT recommend venue for vegan'
+  );
+
+  const case6Jain = await matchSoloPreferences({
+    preferences: soloJainTraveler,
+    places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification, // scope is pure_veg only, not jain!
+    },
+  });
+  assert(
+    case6Jain[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Mandatory Case 6: Pure veg certification does NOT certify Jain suitability'
+  );
+  assert(
+    case6Jain[0]!.isRecommended === false,
+    'Mandatory Case 6: Pure veg certification does NOT recommend venue for Jain'
+  );
+
+  // Case 7: Insufficient or conflicting evidence retains UNVERIFIED_DATA or CONFLICT_DETECTED.
+  const case7Conflict = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [sampleMeatBarbecueSpot],
+  });
+  assert(
+    case7Conflict[0]!.dietaryStatus === 'CONFLICT_DETECTED',
+    'Mandatory Case 7: Conflicting food retains CONFLICT_DETECTED'
+  );
+  assert(
+    case7Conflict[0]!.dietarySafetyVerified === false,
+    'Mandatory Case 7: Conflicting food leaves dietarySafetyVerified as false'
+  );
+  assert(
+    case7Conflict[0]!.isRecommended === false,
+    'Mandatory Case 7: Conflicting food leaves isRecommended as false'
+  );
 
   // -------------------------------------------------------------------------
   // Scenario 5: Weak Individual Preference Match & Dietary Constraint Penalty
@@ -480,6 +684,9 @@ async function runB4Tests() {
     neighborhood: 'Malleshwaram',
     members: vegOnlyMembers,
     places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
   });
   assert(
     vegGroupResults[0]!.dietarySafetyVerified === true,
@@ -503,6 +710,9 @@ async function runB4Tests() {
     neighborhood: 'Malleshwaram',
     members: vegOnlyMembers,
     places: [sampleHeritageDosaSpot],
+    dietaryEvidenceMap: {
+      [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+    },
     routeContext: {
       totalWalkingDurationMinutes: 20,
       totalDistanceMeters: 1200,

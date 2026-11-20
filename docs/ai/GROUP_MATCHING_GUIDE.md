@@ -93,13 +93,13 @@ If **any** single group member has a dietary restriction or allergen (e.g., pure
    - Confirms that the venue identity physically matches Google Places or Maps Grounding.
    - Grounding a place's coordinates and name does **NOT** certify its kitchen practices or dietary claims.
 2. **Dietary Provenance (`dietaryProvenance`)**:
-   - `INDEPENDENT_CERTIFICATION`: Official statutory certification or verified dedicated kitchen (e.g., FSSAI certified pure veg, dedicated pure veg kitchen).
-   - `VERIFIED_COMMUNITY_AUDIT`: Verified resident auditor (`contributorAttribution.isVerifiedResident === true`) explicitly certifying kitchen practices.
-   - `DIRECTORY_LISTING_ONLY`: Directory category tags (`categories: ['pure_veg']`) or ungrounded claims. This alone is **insufficient** for dietary certification.
+   - `INDEPENDENT_CERTIFICATION`: Requires verifiable structured certification (`issuingOrganization`, `evidenceReference`, `verificationStatus: 'VERIFIED'`, `verificationDate`, and `certificationScope` covering the requested diet). Directory listings, description claims (e.g., "certified pure veg kitchen"), or AI claims strictly DO NOT qualify.
+   - `VERIFIED_COMMUNITY_AUDIT`: Requires verifiable structured audit report (`auditorId`, `auditorName`, `auditDate`, `kitchenConditionAssessed`, `evidenceSource`, `verificationStatus: 'VERIFIED'`, and `auditScope` covering the requested diet). Resident identity attribution alone does NOT qualify.
+   - `DIRECTORY_LISTING_ONLY`: Directory category tags (`categories: ['pure_veg']`) or ungrounded text claims. This alone is **insufficient** for dietary certification.
    - `UNSTATED`: No dietary claims present.
 3. **Actual Suitability (`dietaryStatus`)**:
-   - `VERIFIED_SAFE`: Awarded **only** when dietary provenance is `INDEPENDENT_CERTIFICATION` or `VERIFIED_COMMUNITY_AUDIT`.
-   - `UNVERIFIED_DATA`: Assigned whenever provenance is `DIRECTORY_LISTING_ONLY` or `UNSTATED`, or when allergen/cross-contamination cannot be certified online.
+   - `VERIFIED_SAFE`: Awarded **only** when dietary provenance is `INDEPENDENT_CERTIFICATION` or `VERIFIED_COMMUNITY_AUDIT` AND the certification/audit scope matches the requested restriction.
+   - `UNVERIFIED_DATA`: Assigned whenever provenance is `DIRECTORY_LISTING_ONLY` or `UNSTATED`, or when allergen/cross-contamination cannot be certified online, or when scope does not cover the restriction (e.g., pure_veg does not cover vegan or Jain).
    - `CONFLICT_DETECTED`: Explicit conflicting food served (e.g., meat at pure veg request).
 4. **Recommendation Sufficiency (`isRecommended`)**:
    - Invariant: A venue is **never** recommended (`isRecommended: false`) if any traveler restriction has `dietaryStatus !== 'VERIFIED_SAFE'`, regardless of how high the taste match score is.
@@ -157,7 +157,7 @@ Each group recommendation calculates a per-member satisfaction score (`memberSat
 
 ---
 
-## 6. Verification Scenarios (17 Scenarios / 88 Assertions Passed)
+## 6. Verification Scenarios (17 Scenarios / 110 Assertions Passed)
 
 | # | Scenario | Verification Focus | Result |
 |---|---|---|---|

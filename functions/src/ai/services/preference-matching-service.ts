@@ -25,6 +25,7 @@ import {
   SoloMatchInput,
   GroupBlendAndMatchInput,
   DietaryProvenance,
+  PlaceDietaryEvidence,
 } from '../schemas/matching-schemas.js';
 import {
   generateEmbedding,
@@ -42,10 +43,16 @@ import type { CanonicalPlaceDocument } from '../../types/contracts/index.js';
  * 2. Dietary provenance (Independent certification vs community audit vs directory listing)
  * 3. Actual suitability (VERIFIED_SAFE, CONFLICT_DETECTED, UNVERIFIED_DATA)
  * 4. Recommendation sufficiency (Unverified data can NEVER produce isRecommended: true)
+ * 
+ * GUARDRAILS:
+ * - A text description alone ("certified pure veg") does NOT establish certification.
+ * - An unsupported resident attribution does NOT establish community audit.
+ * - Structured certification/audit evidence with identifiable issuer, date, status, and scope is required.
  */
 function evaluateDietaryRestriction(
   place: CanonicalPlaceDocument,
-  dietaryRestriction: string
+  dietaryRestriction: string,
+  dietaryEvidence?: PlaceDietaryEvidence
 ): {
   status: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA';
   safetyVerified: boolean;
@@ -66,11 +73,8 @@ function evaluateDietaryRestriction(
     (place.authenticity?.practicalTips || '')
   ).toLowerCase();
 
-  const isVerifiedResident = Boolean(place.contributorAttribution?.isVerifiedResident);
-
-  // 1. PURE VEG / VEGETARIAN
+  // 1. CONFLICT DETECTION (Immediate disqualification if conflicting food is served)
   if (d === 'pure_veg' || d === 'vegetarian') {
-    // Conflict check: Explicit meat/seafood on premises
     if (
       placeLower.includes('meat') ||
       placeLower.includes('chicken') ||
@@ -89,15 +93,45 @@ function evaluateDietaryRestriction(
         alert: `Establishment serves meat/poultry, conflicting with vegetarian requirement.`,
       };
     }
-
-    // Grounded Independent Certification (Statutory / Certified Kitchen)
+  } else if (d === 'vegan' || d === 'jain') {
     if (
-      placeLower.includes('certified pure vegetarian') ||
-      placeLower.includes('certified pure veg') ||
-      placeLower.includes('fssai certified pure veg') ||
-      placeLower.includes('dedicated pure vegetarian kitchen') ||
-      placeLower.includes('certified 100% vegetarian')
+      placeLower.includes('meat') ||
+      placeLower.includes('chicken') ||
+      placeLower.includes('pork') ||
+      placeLower.includes('beef') ||
+      placeLower.includes('mutton') ||
+      placeLower.includes('fish') ||
+      placeLower.includes('seafood')
     ) {
+      return {
+        status: 'CONFLICT_DETECTED',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 0,
+        alert: `Meat-serving establishment conflicting with ${d} requirement.`,
+      };
+    }
+  } else if (d === 'halal') {
+    if (placeLower.includes('pork') || placeLower.includes('bacon')) {
+      return {
+        status: 'CONFLICT_DETECTED',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 0,
+        alert: `Pork-serving establishment conflicting with halal requirement.`,
+      };
+    }
+  }
+
+  // 2. IDENTIFIABLE INDEPENDENT CERTIFICATION EVIDENCE
+  // Requires recorded issuing organisation, evidence reference, verified status, and matching scope.
+  // Unverified text descriptions or AI claims CANNOT qualify.
+  const cert = dietaryEvidence?.certification;
+  if (cert && cert.verificationStatus === 'VERIFIED') {
+    const isCovered = (cert.certificationScope || []).some(
+      (scope) => scope.toLowerCase() === d || (d === 'vegetarian' && scope.toLowerCase() === 'pure_veg')
+    );
+    if (isCovered) {
       return {
         status: 'VERIFIED_SAFE',
         safetyVerified: true,
@@ -105,14 +139,17 @@ function evaluateDietaryRestriction(
         dietaryFit: 100,
       };
     }
+  }
 
-    // Grounded Verified Community Audit (Verified Resident Auditor confirming kitchen practices)
-    if (
-      isVerifiedResident &&
-      (placeLower.includes('verified pure veg kitchen') ||
-        placeLower.includes('verified resident kitchen audit') ||
-        placeLower.includes('resident verified pure veg'))
-    ) {
+  // 3. IDENTIFIABLE VERIFIED COMMUNITY AUDIT EVIDENCE
+  // Requires recorded auditor, audit date, documented kitchen practices, verified status, and matching scope.
+  // Unsupported resident statements alone CANNOT qualify.
+  const audit = dietaryEvidence?.communityAudit;
+  if (audit && audit.verificationStatus === 'VERIFIED') {
+    const isCovered = (audit.auditScope || []).some(
+      (scope) => scope.toLowerCase() === d || (d === 'vegetarian' && scope.toLowerCase() === 'pure_veg')
+    );
+    if (isCovered) {
       return {
         status: 'VERIFIED_SAFE',
         safetyVerified: true,
@@ -120,9 +157,12 @@ function evaluateDietaryRestriction(
         dietaryFit: 100,
       };
     }
+  }
 
-    // Directory Listing Only (Categories or general uncertified claims)
-    // CRITICAL: A directory category or Google Places identity match alone is NOT certification!
+  // 4. DIRECTORY LISTING ONLY / UNVERIFIED DATA
+  // Descriptive phrases ("certified pure veg kitchen tawa"), generic categories, or resident statements
+  // without recorded certification or audit evidence MUST remain UNVERIFIED_DATA.
+  if (d === 'pure_veg' || d === 'vegetarian') {
     if (
       (place.categories || []).includes('pure_veg') ||
       placeLower.includes('pure veg') ||
@@ -133,11 +173,9 @@ function evaluateDietaryRestriction(
         safetyVerified: false,
         provenance: 'DIRECTORY_LISTING_ONLY',
         dietaryFit: 70,
-        alert: `Venue listing indicates pure vegetarian category, but operational kitchen certification is unverified online. Patron inquiry advised.`,
+        alert: `Venue listing indicates pure vegetarian category, but official certification or recorded audit evidence is unverified. Patron inquiry advised.`,
       };
     }
-
-    // Unstated
     return {
       status: 'UNVERIFIED_DATA',
       safetyVerified: false,
@@ -147,51 +185,16 @@ function evaluateDietaryRestriction(
     };
   }
 
-  // 2. VEGAN
   if (d === 'vegan') {
-    if (
-      placeLower.includes('meat') ||
-      placeLower.includes('chicken') ||
-      placeLower.includes('pork') ||
-      placeLower.includes('beef')
-    ) {
-      return {
-        status: 'CONFLICT_DETECTED',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 0,
-        alert: `Meat-serving establishment conflicting with vegan requirement.`,
-      };
-    }
-
-    if (
-      placeLower.includes('certified vegan') ||
-      placeLower.includes('certified 100% vegan') ||
-      placeLower.includes('dedicated vegan kitchen')
-    ) {
-      return {
-        status: 'VERIFIED_SAFE',
-        safetyVerified: true,
-        provenance: 'INDEPENDENT_CERTIFICATION',
-        dietaryFit: 100,
-      };
-    }
-
-    if (
-      placeLower.includes('vegan') ||
-      placeLower.includes('plant-based') ||
-      placeLower.includes('dairy-free')
-    ) {
+    if (placeLower.includes('vegan') || placeLower.includes('plant-based')) {
       return {
         status: 'UNVERIFIED_DATA',
         safetyVerified: false,
         provenance: 'DIRECTORY_LISTING_ONLY',
         dietaryFit: 60,
-        alert: `Listing mentions vegan/plant-based options, but operational cross-contamination protocols are unverified.`,
+        alert: `Listing mentions vegan options, but operational dairy-free certification is unverified.`,
       };
     }
-
-    // Pure veg venues using butter/ghee/milk
     return {
       status: 'UNVERIFIED_DATA',
       safetyVerified: false,
@@ -201,50 +204,16 @@ function evaluateDietaryRestriction(
     };
   }
 
-  // 3. JAIN
   if (d === 'jain') {
-    if (
-      placeLower.includes('meat') ||
-      placeLower.includes('chicken') ||
-      placeLower.includes('pork') ||
-      placeLower.includes('beef')
-    ) {
-      return {
-        status: 'CONFLICT_DETECTED',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 0,
-        alert: `Meat-serving establishment conflicting with Jain requirement.`,
-      };
-    }
-
-    if (
-      placeLower.includes('certified jain') ||
-      placeLower.includes('dedicated jain counter') ||
-      placeLower.includes('statutory jain kitchen')
-    ) {
-      return {
-        status: 'VERIFIED_SAFE',
-        safetyVerified: true,
-        provenance: 'INDEPENDENT_CERTIFICATION',
-        dietaryFit: 100,
-      };
-    }
-
-    if (
-      placeLower.includes('jain food') ||
-      placeLower.includes('jain menu') ||
-      placeLower.includes('no onion no garlic')
-    ) {
+    if (placeLower.includes('jain food') || placeLower.includes('no onion no garlic')) {
       return {
         status: 'UNVERIFIED_DATA',
         safetyVerified: false,
         provenance: 'DIRECTORY_LISTING_ONLY',
         dietaryFit: 60,
-        alert: `Jain options mentioned, but separate prep area for root vegetables unverified.`,
+        alert: `Jain options mentioned, but separate root-vegetable-free kitchen audit is unverified.`,
       };
     }
-
     return {
       status: 'UNVERIFIED_DATA',
       safetyVerified: false,
@@ -254,33 +223,13 @@ function evaluateDietaryRestriction(
     };
   }
 
-  // 4. HALAL
   if (d === 'halal') {
-    if (placeLower.includes('pork') || placeLower.includes('bacon')) {
-      return {
-        status: 'CONFLICT_DETECTED',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 0,
-        alert: `Pork-serving establishment conflicting with halal requirement.`,
-      };
-    }
-
-    if (placeLower.includes('halal certified') || placeLower.includes('certified halal')) {
-      return {
-        status: 'VERIFIED_SAFE',
-        safetyVerified: true,
-        provenance: 'INDEPENDENT_CERTIFICATION',
-        dietaryFit: 100,
-      };
-    }
-
     return {
       status: 'UNVERIFIED_DATA',
       safetyVerified: false,
       provenance: 'DIRECTORY_LISTING_ONLY',
       dietaryFit: 50,
-      alert: `Halal certification unverified from online listing; please verify with management.`,
+      alert: `Halal certification evidence unverified from online listing; please verify with management.`,
     };
   }
 
@@ -440,7 +389,7 @@ export function blendGroupPreferences(
 export async function matchSoloPreferences(
   input: SoloMatchInput
 ): Promise<SoloPlaceMatchResult[]> {
-  const { preferences, places, limit = 10, options, routeContext } = input;
+  const { preferences, places, limit = 10, options, routeContext, dietaryEvidenceMap } = input;
   const results: SoloPlaceMatchResult[] = [];
 
   // Construct text representation of user preferences for semantic vector
@@ -509,13 +458,15 @@ export async function matchSoloPreferences(
     let dietaryFit = 100;
     let dietaryAlert: string | undefined = undefined;
 
+    const placeEvidence = dietaryEvidenceMap?.[place.id] || (place as any).dietaryEvidence;
+
     const userDiets = preferences.dietaryRestrictions || [];
     if (userDiets.length > 0) {
       dietarySafetyVerified = false; // default to false until proven verified
       let allVerifiedSafe = true;
 
       for (const diet of userDiets) {
-        const evalResult = evaluateDietaryRestriction(place, diet);
+        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence);
         if (evalResult.status === 'CONFLICT_DETECTED') {
           dietaryStatus = 'CONFLICT_DETECTED';
           allVerifiedSafe = false;
@@ -672,7 +623,7 @@ export async function matchSoloPreferences(
 export async function matchGroupPreferences(
   input: GroupBlendAndMatchInput
 ): Promise<GroupPlaceMatchResult[]> {
-  const { members, places, limit = 10, options, routeContext } = input;
+  const { members, places, limit = 10, options, routeContext, dietaryEvidenceMap } = input;
   const consensus = blendGroupPreferences(members);
   const results: GroupPlaceMatchResult[] = [];
 
@@ -682,6 +633,7 @@ export async function matchGroupPreferences(
   const groupEmbedding = await generateEmbedding(groupAtmosphereText, options);
 
   for (const place of places) {
+    const placeEvidence = dietaryEvidenceMap?.[place.id] || (place as any).dietaryEvidence;
     const placeText = [
       place.spotName,
       place.primaryCategory,
@@ -717,7 +669,7 @@ export async function matchGroupPreferences(
       let allVerifiedSafe = true;
 
       for (const diet of consensus.dietaryConstraintsUnion) {
-        const evalResult = evaluateDietaryRestriction(place, diet);
+        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence);
         if (evalResult.status === 'CONFLICT_DETECTED') {
           dietaryStatus = 'CONFLICT_DETECTED';
           allVerifiedSafe = false;

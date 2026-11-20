@@ -66,6 +66,39 @@ export const DietaryProvenanceSchema = z.enum([
 export type DietaryProvenance = z.infer<typeof DietaryProvenanceSchema>;
 
 // ==============================================================================
+// Structured Dietary Evidence Schemas (B4 Grounding Guardrails)
+// ==============================================================================
+
+export const DietaryCertificationEvidenceSchema = z.object({
+  issuingOrganization: z.string().min(1).describe('Identifiable certifying body (e.g. Halal Certification Authority, Vegan Society)'),
+  evidenceReference: z.string().min(1).describe('Certificate number, license ID, or official registry URL'),
+  verificationStatus: z.enum(['VERIFIED', 'PENDING', 'REVOKED']).describe('Official verification state'),
+  verificationDate: z.string().describe('ISO date of audit/certification'),
+  certificationScope: z.array(z.string()).min(1).describe('Specific dietary scopes certified, e.g. ["pure_veg"], ["halal"], ["vegan"], ["jain"]'),
+});
+
+export type DietaryCertificationEvidence = z.infer<typeof DietaryCertificationEvidenceSchema>;
+
+export const DietaryCommunityAuditEvidenceSchema = z.object({
+  auditorId: z.string().min(1).describe('Identifiable auditor or verified resident ID'),
+  auditorName: z.string().min(1).describe('Name of the auditor/contributor'),
+  auditDate: z.string().describe('ISO date of on-site inspection/audit'),
+  kitchenConditionAssessed: z.string().min(1).describe('Specific documented kitchen practices (e.g. dedicated cookware, no root vegetables)'),
+  evidenceSource: z.string().min(1).describe('Audit documentation source or submission ID'),
+  verificationStatus: z.enum(['VERIFIED', 'UNVERIFIED']).describe('Status of the community audit'),
+  auditScope: z.array(z.string()).min(1).describe('Specific dietary scopes covered by the audit'),
+});
+
+export type DietaryCommunityAuditEvidence = z.infer<typeof DietaryCommunityAuditEvidenceSchema>;
+
+export const PlaceDietaryEvidenceSchema = z.object({
+  certification: DietaryCertificationEvidenceSchema.optional(),
+  communityAudit: DietaryCommunityAuditEvidenceSchema.optional(),
+});
+
+export type PlaceDietaryEvidence = z.infer<typeof PlaceDietaryEvidenceSchema>;
+
+// ==============================================================================
 // 3. Solo Preference Matching Schema
 // ==============================================================================
 
@@ -117,6 +150,8 @@ export type GroupPlaceMatchResult = z.infer<typeof GroupPlaceMatchResultSchema>;
 export interface SoloMatchInput {
   preferences: z.infer<typeof TravelerPreferencesDocumentSchema>;
   places: z.infer<typeof CanonicalPlaceDocumentSchema>[];
+  /** Optional structured dietary evidence keyed by placeId */
+  dietaryEvidenceMap?: Record<string, PlaceDietaryEvidence>;
   limit?: number;
   /** Optional walking route evidence from Developer C (RoutesService) */
   routeContext?: {
@@ -135,6 +170,8 @@ export interface GroupBlendAndMatchInput {
   neighborhood: string;
   members: z.infer<typeof MemberPreferenceInputSchema>[];
   places: z.infer<typeof CanonicalPlaceDocumentSchema>[];
+  /** Optional structured dietary evidence keyed by placeId */
+  dietaryEvidenceMap?: Record<string, PlaceDietaryEvidence>;
   limit?: number;
   /** Optional walking route evidence from Developer C (RoutesService) */
   routeContext?: {
