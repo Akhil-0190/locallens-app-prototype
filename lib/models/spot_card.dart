@@ -13,6 +13,7 @@ class SpotCard {
   final int hourlyLimit;
   final int currentVisitors;
   final List<String> vibeTags;
+  final ContributorAttribution? contributedBy;
 
   SpotCard({
     required this.id,
@@ -27,6 +28,7 @@ class SpotCard {
     this.hourlyLimit = 6,
     this.currentVisitors = 0,
     this.vibeTags = const [],
+    this.contributedBy,
   });
 
   factory SpotCard.fromMap(String id, Map<String, dynamic> data) {
@@ -43,6 +45,10 @@ class SpotCard {
       hourlyLimit: data['hourlyLimit'] ?? 6,
       currentVisitors: data['currentVisitors'] ?? 0,
       vibeTags: List<String>.from(data['vibeTags'] ?? []),
+      contributedBy: data['contributedBy'] != null
+          ? ContributorAttribution.fromMap(
+              Map<String, dynamic>.from(data['contributedBy']))
+          : null,
     );
   }
 
@@ -53,6 +59,37 @@ class SpotCard {
       'photoUrls': photoUrls,
       'isVerified': false,
       'createdAt': DateTime.now().toIso8601String(),
+      if (contributedBy != null) 'contributedBy': contributedBy!.toMap(),
     };
   }
+}
+
+class ContributorAttribution {
+  final String userId;
+  final String displayName;
+  final String badgeTitle;
+  final bool isVerifiedResident;
+
+  const ContributorAttribution({
+    required this.userId,
+    required this.displayName,
+    this.badgeTitle = 'Neighborhood Insider',
+    this.isVerifiedResident = true,
+  });
+
+  factory ContributorAttribution.fromMap(Map<String, dynamic> data) {
+    return ContributorAttribution(
+      userId: data['userId'] ?? '',
+      displayName: data['displayName'] ?? 'Local Resident',
+      badgeTitle: data['badgeTitle'] ?? 'Neighborhood Insider',
+      isVerifiedResident: data['isVerifiedResident'] ?? true,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'userId': userId,
+    'displayName': displayName,
+    'badgeTitle': badgeTitle,
+    'isVerifiedResident': isVerifiedResident,
+  };
 }
