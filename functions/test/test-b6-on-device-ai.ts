@@ -67,12 +67,12 @@ async function runB6TestSuite() {
     language: 'en',
   };
 
-  // 1.1: Reject Android API < 34
-  const api33Telemetry = { ...baseTelemetry, apiLevel: 33 };
-  const resApi33 = evaluateAICoreReadiness(api33Telemetry, 'SUMMARIZATION', 'READY', 'en');
+  // 1.1: Reject Android API < 26 (ML Kit GenAI minimum SDK requirement)
+  const api25Telemetry = { ...baseTelemetry, apiLevel: 25 };
+  const resApi25 = evaluateAICoreReadiness(api25Telemetry, 'SUMMARIZATION', 'READY', 'en');
   assert(
-    resApi33.status === 'UNSUPPORTED_OS_VERSION' && !resApi33.isReady,
-    'Rejects Android API < 34 with UNSUPPORTED_OS_VERSION'
+    resApi25.status === 'UNSUPPORTED_OS_VERSION' && !resApi25.isReady,
+    'Rejects Android API < 26 with UNSUPPORTED_OS_VERSION'
   );
 
   // 1.2: Reject when com.google.android.aicore package is missing

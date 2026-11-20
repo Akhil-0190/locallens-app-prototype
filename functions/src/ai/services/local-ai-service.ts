@@ -93,12 +93,14 @@ export function evaluateAICoreReadiness(
   dynamicModelState: 'DOWNLOADABLE' | 'DOWNLOADING' | 'READY' | 'UNAVAILABLE' = 'DOWNLOADABLE',
   requestedLanguage: string = 'en'
 ): { status: AICoreReadinessStatus; isReady: boolean; reason: string } {
-  // Check 1: Android 14+ (API 34+) requirement
-  if (telemetry.apiLevel < 34) {
+  // Check 1: ML Kit GenAI library prerequisite: Android 8.0+ (API 26+)
+  // Note: API 26+ is the library minSdk prerequisite; actual model availability
+  // is evaluated dynamically via GenerativeModel.checkStatus() (FeatureStatus).
+  if (telemetry.apiLevel < 26) {
     return {
       status: 'UNSUPPORTED_OS_VERSION',
       isReady: false,
-      reason: `AICore requires Android 14+ (API 34+). Current device API: ${telemetry.apiLevel}.`,
+      reason: `ML Kit GenAI Prompt API requires minimum Android 8.0+ (API 26+). Current device API: ${telemetry.apiLevel}.`,
     };
   }
 

@@ -230,7 +230,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client (com.google.mlkit:genai-prompt:1.0.0-beta4) on Android 14+ (API 34+). Support is evaluated via ML Kit GenAI dynamic feature status checks (FeatureStatus: AVAILABLE, DOWNLOADABLE, DOWNLOADING, UNAVAILABLE). Requires feature-specific readiness checks (Direct model, Summarization, Rewrite, Vision), foreground execution, and supported language (English-first). Developer B defines AI schemas and capability contracts; Android Kotlin bridge owned by Developer D.',
+    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client (com.google.mlkit:genai-prompt:1.0.0-beta4, minSdk 26+). Support is evaluated dynamically via ML Kit GenAI status checks (FeatureStatus: AVAILABLE, DOWNLOADABLE, DOWNLOADING, UNAVAILABLE). Requires feature-specific readiness checks (Direct model, Summarization, Rewrite, Vision), foreground execution, and supported language (English-first). Developer B defines AI schemas and capability contracts; Android Kotlin bridge owned by Developer D.',
   },
 
   // Corrected: Gemma 4 E2B edge runtime artifact via llama.cpp
