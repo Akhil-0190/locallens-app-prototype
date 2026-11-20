@@ -1,0 +1,24 @@
+{
+  "name": "neighborhoodguideapp-functions",
+  "version": "1.0.0",
+  "description": "LocalLens Firebase Cloud Functions backend - Maps, Places, AI and Shared Services",
+  "main": "lib/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types src/maps/tests/normalization.test.ts src/maps/tests/quota-handler.test.ts src/maps/tests/places.test.ts src/maps/tests/routes.test.ts",
+    "test:maps": "node --test --experimental-strip-types src/maps/tests/normalization.test.ts src/maps/tests/quota-handler.test.ts src/maps/tests/places.test.ts src/maps/tests/routes.test.ts"
+  },
+  "keywords": [
+    "firebase",
+    "cloud-functions",
+    "maps",
+    "places-new",
+    "routes-api"
+  ],
+  "author": "InnovoTribe Team (Developer C)",
+  "license": "UNLICENSED",
+  "private": true
+}
