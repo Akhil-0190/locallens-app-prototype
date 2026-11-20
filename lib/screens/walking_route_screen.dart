@@ -842,7 +842,7 @@ class _StreetAssistanceSheetState
                         ],
                       ),
                       const SizedBox(height: 16),
-                      if (_conversationResponse != null)
+                      if (_conversationResponse != null) ...[
                         Card(
                           color: Colors.teal.shade50,
                           child: Padding(
@@ -853,6 +853,22 @@ class _StreetAssistanceSheetState
                             ),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.open_in_new, size: 16),
+                          label: const Text('Continue in Gemini (Deep Link Handoff)'),
+                          onPressed: () {
+                            final prompt = _queryController.text.trim();
+                            ref.read(streetAssistanceServiceProvider).launchGeminiHandoff(
+                              contextPrompt: prompt.isNotEmpty
+                                  ? prompt
+                                  : 'Help me navigate Malleshwaram street food and culture.',
+                              neighborhood: 'Malleshwaram',
+                              currentStop: 'CTR (Shri Sagar)',
+                            );
+                          },
+                        ),
+                      ],
                     ],
                   ),
 

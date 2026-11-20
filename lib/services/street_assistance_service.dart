@@ -1,4 +1,5 @@
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Model representing regional cultural greetings and vendor interaction phrases.
 class OrderingCard {
@@ -157,5 +158,37 @@ class StreetAssistanceService {
           'Heritage signage of Central Tiffin Room dating back to early 20th century Bengaluru.',
       isSimulated: true,
     );
+  }
+
+  /// Objective 9: Gemini Ecosystem Handoff
+  ///
+  /// Launches Gemini external application or web prompt with preserved local route context.
+  /// Falls back gracefully to browser URL if the native Gemini app is not installed.
+  Future<bool> launchGeminiHandoff({
+    required String contextPrompt,
+    String? neighborhood,
+    String? currentStop,
+  }) async {
+    final buffer = StringBuffer();
+    if (neighborhood != null && neighborhood.isNotEmpty) {
+      buffer.write('Exploring $neighborhood, Bengaluru. ');
+    }
+    if (currentStop != null && currentStop.isNotEmpty) {
+      buffer.write('Currently at $currentStop. ');
+    }
+    buffer.write(contextPrompt);
+
+    final encodedPrompt = Uri.encodeComponent(buffer.toString());
+    final uri = Uri.parse('https://gemini.google.com/app?prompt=$encodedPrompt');
+
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        return await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+      return launched;
+    } catch (_) {
+      return false;
+    }
   }
 }
