@@ -161,13 +161,21 @@ COMPLETED           CANCELLED
  to guide ledger)
 ```
 
-### 7.3 Financial Escrow & Ledger Invariant
+### 7.3 Financial Escrow, Refund Concurrency & Ledger Invariant
 - Platform Fee: 10%, minimum ₹25 (`priceInr - platformFeeInr = guideNetInr`).
 - Upon `completeGuidanceBooking`, `guideNetInr` is credited to `contributor_rewards/{guideUserId}` inside a Firestore transaction.
 - If `unrecoveredAdjustmentInr > 0`, net earnings offset clawback debt first.
 - Strict invariant enforced:
   $$\text{totalEarningsInr} + \text{unrecoveredAdjustmentInr} = \text{availableBalanceInr} + \text{withdrawnTotalInr}$$
 - Guide receives +50 reputation points per completed guidance session.
+
+#### Refund Concurrency, Idempotency & Failure Recovery:
+- Rejection and cancellation of paid sessions trigger a genuine payment gateway refund outside the Firestore transaction.
+- **Two-Phase Atomic Refund Locking:**
+  1. *Phase 1 (Transaction):* Asserts authorization and status, derives deterministic idempotency key (`ref_<bookingId>`), checks that no in-flight refund is active, and atomically sets `refundStatus: 'PENDING'`, `refundIdempotencyKey`, and `refundInitiatedAt`. Concurrent requests seeing `PENDING` within the 60s timeout window are blocked.
+  2. *Phase 2 (External Call):* Invokes `paymentAdapter.refundPayment(...)` with `idempotencyKey` outside of any transaction to prevent holding database locks across network operations.
+  3. *Phase 3 (Transaction):* Upon adapter confirmation, atomically finalizes document status (`CANCELLED` or `REJECTED`), `paymentStatus: 'FAILED'`, `refundStatus: 'COMPLETED'`, `refundReference`, and `refundedAt`.
+- If the external refund fails or throws, `refundStatus` is marked `'FAILED'`. Stale or interrupted operations can be safely recovered via retry with the identical idempotency key without issuing duplicate disbursements.
 
 ### 7.4 Callables
 - `registerGuidanceOffering`

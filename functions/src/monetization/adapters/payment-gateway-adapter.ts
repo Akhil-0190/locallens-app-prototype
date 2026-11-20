@@ -50,6 +50,7 @@ export interface RefundPaymentParams {
   gatewayReference: string;
   amountInr: number;
   reason?: string;
+  idempotencyKey?: string;
 }
 
 export interface PaymentRefundResult {

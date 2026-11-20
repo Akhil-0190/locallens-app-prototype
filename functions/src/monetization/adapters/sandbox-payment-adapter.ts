@@ -21,6 +21,7 @@ import { PaymentMode } from '../../types/contracts/index.js';
 
 export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
   private readonly mode: PaymentMode = 'SANDBOX';
+  private readonly simulatedRefunds = new Map<string, PaymentRefundResult>();
 
   public getMode(): PaymentMode {
     return this.mode;
@@ -37,6 +38,8 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
       prefix = 'sandbox_sim_pass_';
     } else if (params.transactionId.startsWith('guidance_')) {
       prefix = 'sandbox_sim_guidance_';
+    } else if (params.transactionId.startsWith('sub_')) {
+      prefix = 'sandbox_sim_sub_';
     }
     const shortRef = randomUUID().replace(/-/g, '').slice(0, 12);
     const gatewayReference = `${prefix}${shortRef}`;
@@ -107,6 +110,10 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
   public async refundPayment(
     params: RefundPaymentParams
   ): Promise<PaymentRefundResult> {
+    if (params.idempotencyKey && this.simulatedRefunds.has(params.idempotencyKey)) {
+      return this.simulatedRefunds.get(params.idempotencyKey)!;
+    }
+
     if (!params.gatewayReference.startsWith('sandbox_sim_')) {
       return {
         refunded: false,
@@ -121,7 +128,7 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
     const shortRef = randomUUID().replace(/-/g, '').slice(0, 10);
     const refundReference = `sandbox_sim_ref_${shortRef}`;
 
-    return {
+    const result: PaymentRefundResult = {
       refunded: true,
       refundReference,
       paymentMode: this.mode,
@@ -129,6 +136,12 @@ export class SandboxPaymentAdapter implements PaymentGatewayAdapter {
       refundedAt: new Date().toISOString(),
       isSimulated: true,
     };
+
+    if (params.idempotencyKey) {
+      this.simulatedRefunds.set(params.idempotencyKey, result);
+    }
+
+    return result;
   }
 }
 

@@ -26,7 +26,7 @@ import { defaultPaymentAdapter } from './adapters/sandbox-payment-adapter.js';
 
 const tippingService = new TippingService(defaultPaymentAdapter);
 const passService = new PassService(defaultPaymentAdapter);
-const merchantService = new MerchantSubscriptionService();
+const merchantService = new MerchantSubscriptionService(defaultPaymentAdapter);
 const contributorService = new ContributorProfileService();
 const guidanceService = new GuidanceService(defaultPaymentAdapter);
 
@@ -382,7 +382,7 @@ export const registerPartnerSubscription = onCall(async (request) => {
   }
 
   try {
-    const subscription = await merchantService.registerPartnerSubscription({
+    const result = await merchantService.registerPartnerSubscription({
       merchantPlaceId,
       businessName,
       contactEmail,
@@ -394,15 +394,58 @@ export const registerPartnerSubscription = onCall(async (request) => {
     });
 
     logger.info('Partner merchant subscription registered', {
-      subscriptionId: subscription.subscriptionId,
+      subscriptionId: result.subscription.subscriptionId,
       merchantPlaceId,
       plan: subscriptionPlan,
+      isPendingPayment: result.isPendingPayment,
     });
 
-    return successEnvelope(subscription, startMs);
+    return successEnvelope(result, startMs);
   } catch (err: unknown) {
     logger.error('Error registering partner subscription', { error: err });
     throw new HttpsError('invalid-argument', (err as Error).message || 'Failed to register subscription.');
+  }
+});
+
+/**
+ * Callable: confirmPartnerSubscriptionPayment (A5-V-04)
+ * Confirms payment for a paid merchant partner subscription.
+ */
+export const confirmPartnerSubscriptionPayment = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { subscriptionId, simulatedOutcome } = (request.data as Record<string, unknown>) || {};
+  if (!subscriptionId || typeof subscriptionId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid subscriptionId is required.');
+  }
+
+  try {
+    const isAdmin = request.auth.token?.role === 'admin' || request.auth.token?.role === 'moderator';
+    const outcome =
+      simulatedOutcome === 'SUCCESS' || simulatedOutcome === 'FAILURE'
+        ? (simulatedOutcome as 'SUCCESS' | 'FAILURE')
+        : undefined;
+
+    const result = await merchantService.confirmPartnerSubscriptionPayment({
+      subscriptionId,
+      callerUserId: request.auth.uid,
+      simulatedOutcome: outcome,
+      isAdminOverride: isAdmin,
+    });
+
+    logger.info('Partner subscription payment confirmed', {
+      subscriptionId,
+      merchantPlaceId: result.subscription.merchantPlaceId,
+      isIdempotentReplay: result.isIdempotentReplay,
+    });
+
+    return successEnvelope(result, startMs);
+  } catch (err: unknown) {
+    logger.error('Error confirming partner subscription payment', { error: err });
+    throw new HttpsError('failed-precondition', (err as Error).message || 'Failed to confirm partner subscription payment.');
   }
 });
 

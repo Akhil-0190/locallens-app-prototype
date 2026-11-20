@@ -55,7 +55,8 @@ export interface PartnerMerchantSubscription {
     terms: string;                      // e.g. "Free filter coffee with any breakfast thali"
   };
   paymentMode: PaymentMode;             // 'SANDBOX' or 'LIVE'
-  isActive: boolean;
+  paymentGatewayReference?: string;     // Gateway transaction ref (sandbox: "sandbox_sim_sub_...")
+  isActive: boolean;                    // true for COMMUNITY_FREE; false for paid plans until confirmed
   expiresAt: string;                    // ISO 8601 UTC
   createdAt: string;                    // ISO 8601 UTC
   updatedAt: string;                    // ISO 8601 UTC
@@ -93,3 +94,21 @@ When a traveler initiates audio navigation (Domain 08) or downloads an offline p
    - `purchaseRoutePass({ tier, neighborhood, accessibleRouteIds?, mode? })`
    - `verifyRoutePassAccess({ routeId, neighborhood? })`
    - `listUserPasses()`
+   - `registerPartnerSubscription({ merchantPlaceId, businessName, contactEmail, subscriptionPlan, activeDiscountOffer?, durationDays? })`
+   - `confirmPartnerSubscriptionPayment({ subscriptionId, simulatedOutcome? })`
+   - `getPublicPartnerOffer({ merchantPlaceId })`
+
+---
+
+## 6. Partner Merchant Subscription Lifecycle & Payment Gating (A5-V-04)
+
+1. **Tier Pricing & Gating:**
+   - `COMMUNITY_FREE`: ₹0 — Activates immediately upon registration (`isActive: true`).
+   - `VERIFIED_PARTNER`: ₹999/year — Initial status `isActive: false`, `isPendingPayment: true`.
+   - `FEATURED_HERITAGE`: ₹2,499/year — Initial status `isActive: false`, `isPendingPayment: true`.
+2. **Server-Side Activation Guard:**
+   - Paid tiers are only activated (`isActive: true`) via `confirmPartnerSubscriptionPayment` after adapter payment verification and fail-closed environment validation.
+   - Public discount offers are strictly filtered on `isActive === true` and valid expiration, ensuring unconfirmed subscriptions cannot be published.
+3. **Idempotency & Authorization:**
+   - Replay confirmation returns `isIdempotentReplay: true` without duplicate mutations.
+   - Authorization restricts confirmation to the authenticated place owner (`merchantPlaceId === callerUserId`) or administrator.

@@ -24,6 +24,7 @@ import {
 import {
   PaymentGatewayAdapter,
   PaymentIntentResult,
+  PaymentRefundResult,
 } from '../adapters/payment-gateway-adapter.js';
 import { defaultPaymentAdapter } from '../adapters/sandbox-payment-adapter.js';
 import { validateSettlementEnvironment } from '../config/payment-environment.js';
@@ -299,106 +300,182 @@ export class GuidanceService {
   }
 
   /**
+   * Internal processor for rejecting or cancelling guidance bookings with safe refund concurrency,
+   * deterministic idempotency keys, and recovery guarantees.
+   */
+  private async processRefundAndTransition(
+    input: GuidanceActionInput,
+    targetStatus: 'REJECTED' | 'CANCELLED',
+    defaultReason: string
+  ): Promise<GuidanceBookingDocument> {
+    const bookingRef = db.collection('guidance_bookings').doc(input.bookingId);
+    const idempotencyKey = `ref_${input.bookingId}`;
+    const claimTimeoutMs = 60000; // 60s timeout for stale in-flight operations
+
+    // Phase 1: Atomic transaction to validate caller, verify status, and claim refund lock
+    const claimedBooking = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(bookingRef);
+      if (!snap.exists) {
+        throw new Error(`Guidance booking ${input.bookingId} not found.`);
+      }
+      const booking = snap.data() as GuidanceBookingDocument;
+
+      // Authorization and state guards
+      if (targetStatus === 'REJECTED') {
+        if (booking.guideUserId !== input.callerUserId && !input.isAdminOverride) {
+          throw new Error('Unauthorized: Only the assigned local guide or administrator may reject this request.');
+        }
+        if (booking.status === 'REJECTED') {
+          return booking; // Idempotent replay
+        }
+        if (booking.status !== 'REQUESTED') {
+          throw new Error(`Cannot reject booking in ${booking.status} status. Must be REQUESTED.`);
+        }
+      } else {
+        // CANCELLED
+        const isTraveler = booking.travelerUserId === input.callerUserId;
+        const isGuide = booking.guideUserId === input.callerUserId;
+        if (!isTraveler && !isGuide && !input.isAdminOverride) {
+          throw new Error('Unauthorized: Only the traveler, guide, or administrator may cancel this booking.');
+        }
+        if (booking.status === 'CANCELLED') {
+          return booking; // Idempotent replay
+        }
+        if (booking.status === 'COMPLETED' || booking.status === 'REJECTED') {
+          throw new Error(`Cannot cancel booking with status ${booking.status}.`);
+        }
+      }
+
+      // If payment was not completed, no external refund needed: transition immediately
+      if (booking.paymentStatus !== 'COMPLETED') {
+        const now = new Date().toISOString();
+        const updated: GuidanceBookingDocument = {
+          ...booking,
+          status: targetStatus,
+          ...(targetStatus === 'REJECTED'
+            ? { rejectionReason: input.reason || defaultReason }
+            : { cancellationReason: input.reason || defaultReason }),
+          updatedAt: now,
+        };
+        GuidanceBookingDocumentSchema.parse(updated);
+        tx.set(bookingRef, updated);
+        return updated;
+      }
+
+      // If already refunded successfully, return
+      if (booking.refundStatus === 'COMPLETED') {
+        return booking;
+      }
+
+      // Concurrency Lock: Check if another refund operation is currently PENDING
+      if (booking.refundStatus === 'PENDING') {
+        const initiatedTime = booking.refundInitiatedAt ? new Date(booking.refundInitiatedAt).getTime() : 0;
+        const elapsed = Date.now() - initiatedTime;
+        if (elapsed < claimTimeoutMs) {
+          throw new Error('A refund operation is currently pending for this booking. Please try again shortly.');
+        }
+        // If elapsed >= claimTimeoutMs, permit safe recovery retry using the same idempotency key
+      }
+
+      const now = new Date().toISOString();
+      const updated: GuidanceBookingDocument = {
+        ...booking,
+        refundStatus: 'PENDING',
+        refundIdempotencyKey: idempotencyKey,
+        refundInitiatedAt: now,
+        updatedAt: now,
+      };
+      GuidanceBookingDocumentSchema.parse(updated);
+      tx.set(bookingRef, updated);
+      return updated;
+    });
+
+    // If already finalized (unpaid or already completed), return immediately
+    if (
+      claimedBooking.status === targetStatus &&
+      (claimedBooking.paymentStatus !== 'COMPLETED' || claimedBooking.refundStatus === 'COMPLETED')
+    ) {
+      return claimedBooking;
+    }
+
+    // Phase 2: External payment adapter refund call OUTSIDE Firestore transaction
+    let refundResult: PaymentRefundResult;
+    try {
+      refundResult = await this.paymentAdapter.refundPayment({
+        transactionId: claimedBooking.bookingId,
+        gatewayReference: claimedBooking.paymentGatewayReference || '',
+        amountInr: claimedBooking.priceInr,
+        reason: input.reason || defaultReason,
+        idempotencyKey,
+      });
+    } catch (err: any) {
+      // Record FAILED state so subsequent retry can safely re-attempt
+      await bookingRef.update({
+        refundStatus: 'FAILED',
+        updatedAt: new Date().toISOString(),
+      });
+      throw err;
+    }
+
+    if (!refundResult.refunded) {
+      await bookingRef.update({
+        refundStatus: 'FAILED',
+        updatedAt: new Date().toISOString(),
+      });
+      throw new Error(`Refund failed: ${refundResult.failureReason || 'Declined by payment processor'}`);
+    }
+
+    // Phase 3: Finalize booking status and refund record in Firestore transaction
+    const finalizedBooking = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(bookingRef);
+      const booking = (snap.data() || claimedBooking) as GuidanceBookingDocument;
+      const now = new Date().toISOString();
+
+      const updated: GuidanceBookingDocument = {
+        ...booking,
+        status: targetStatus,
+        ...(targetStatus === 'REJECTED'
+          ? { rejectionReason: input.reason || defaultReason }
+          : { cancellationReason: input.reason || defaultReason }),
+        paymentStatus: 'FAILED',
+        refundStatus: 'COMPLETED',
+        refundReference: refundResult.refundReference,
+        refundedAt: now,
+        updatedAt: now,
+      };
+
+      GuidanceBookingDocumentSchema.parse(updated);
+      tx.set(bookingRef, updated);
+      return updated;
+    });
+
+    return finalizedBooking;
+  }
+
+  /**
    * Guide rejects a requested guidance session.
+   * Atomically claims refund lock, executes external refund outside transaction,
+   * and finalizes booking state with refund evidence.
    */
   public async rejectGuidanceRequest(input: GuidanceActionInput): Promise<GuidanceBookingDocument> {
-    const bookingRef = db.collection('guidance_bookings').doc(input.bookingId);
-    const snap = await bookingRef.get();
-
-    if (!snap.exists) {
-      throw new Error(`Guidance booking ${input.bookingId} not found.`);
-    }
-
-    const booking = snap.data() as GuidanceBookingDocument;
-
-    if (booking.guideUserId !== input.callerUserId && !input.isAdminOverride) {
-      throw new Error('Unauthorized: Only the assigned local guide or administrator may reject this request.');
-    }
-
-    if (booking.status !== 'REQUESTED') {
-      throw new Error(`Cannot reject booking in ${booking.status} status. Must be REQUESTED.`);
-    }
-
-    const now = new Date().toISOString();
-
-    // If traveler has already completed payment, execute genuine refund via payment adapter
-    if (booking.paymentStatus === 'COMPLETED') {
-      const refundResult = await this.paymentAdapter.refundPayment({
-        transactionId: booking.bookingId,
-        gatewayReference: booking.paymentGatewayReference || '',
-        amountInr: booking.priceInr,
-        reason: input.reason || 'Guide rejected guidance request.',
-      });
-
-      if (!refundResult.refunded) {
-        throw new Error(`Refund failed: ${refundResult.failureReason || 'Declined by payment processor'}`);
-      }
-    }
-
-    const updatedBooking: GuidanceBookingDocument = {
-      ...booking,
-      status: 'REJECTED',
-      rejectionReason: input.reason || 'Guide is unavailable at the requested time.',
-      paymentStatus: booking.paymentStatus === 'COMPLETED' ? 'FAILED' : booking.paymentStatus,
-      updatedAt: now,
-    };
-
-    GuidanceBookingDocumentSchema.parse(updatedBooking);
-    await bookingRef.set(updatedBooking);
-    return updatedBooking;
+    return this.processRefundAndTransition(
+      input,
+      'REJECTED',
+      'Guide is unavailable at the requested time.'
+    );
   }
 
   /**
    * Traveler or Guide cancels a guidance booking prior to completion.
+   * Atomically claims refund lock, executes external refund outside transaction,
+   * and finalizes booking state with refund evidence.
    */
   public async cancelGuidanceBooking(input: GuidanceActionInput): Promise<GuidanceBookingDocument> {
-    const bookingRef = db.collection('guidance_bookings').doc(input.bookingId);
-    const snap = await bookingRef.get();
-
-    if (!snap.exists) {
-      throw new Error(`Guidance booking ${input.bookingId} not found.`);
-    }
-
-    const booking = snap.data() as GuidanceBookingDocument;
-
-    const isTraveler = booking.travelerUserId === input.callerUserId;
-    const isGuide = booking.guideUserId === input.callerUserId;
-
-    if (!isTraveler && !isGuide && !input.isAdminOverride) {
-      throw new Error('Unauthorized: Only the traveler, guide, or administrator may cancel this booking.');
-    }
-
-    if (booking.status === 'COMPLETED' || booking.status === 'CANCELLED' || booking.status === 'REJECTED') {
-      throw new Error(`Cannot cancel booking with status ${booking.status}.`);
-    }
-
-    const now = new Date().toISOString();
-
-    // If traveler has already completed payment, execute genuine refund via payment adapter
-    if (booking.paymentStatus === 'COMPLETED') {
-      const refundResult = await this.paymentAdapter.refundPayment({
-        transactionId: booking.bookingId,
-        gatewayReference: booking.paymentGatewayReference || '',
-        amountInr: booking.priceInr,
-        reason: input.reason || 'Guidance session cancelled by participant.',
-      });
-
-      if (!refundResult.refunded) {
-        throw new Error(`Refund failed: ${refundResult.failureReason || 'Declined by payment processor'}`);
-      }
-    }
-
-    const updatedBooking: GuidanceBookingDocument = {
-      ...booking,
-      status: 'CANCELLED',
-      cancellationReason: input.reason || 'Cancelled by participant.',
-      paymentStatus: booking.paymentStatus === 'COMPLETED' ? 'FAILED' : booking.paymentStatus,
-      updatedAt: now,
-    };
-
-    GuidanceBookingDocumentSchema.parse(updatedBooking);
-    await bookingRef.set(updatedBooking);
-    return updatedBooking;
+    return this.processRefundAndTransition(
+      input,
+      'CANCELLED',
+      'Guidance session cancelled by participant.'
+    );
   }
 
   /**

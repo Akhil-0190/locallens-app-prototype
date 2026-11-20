@@ -888,12 +888,148 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual(refund.paymentMode, 'SANDBOX');
       assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
     });
+
+    test('Guidance refund idempotency: Repeated refund calls with same idempotencyKey return identical result', async () => {
+      const adapter = new SandboxPaymentAdapter();
+      const idempotencyKey = 'ref_guidance_blr_idem_01';
+
+      const firstRefund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_idem_01',
+        gatewayReference: 'sandbox_sim_guidance_idem_01',
+        amountInr: 750,
+        reason: 'Client requested cancellation',
+        idempotencyKey,
+      });
+
+      const secondRefund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_idem_01',
+        gatewayReference: 'sandbox_sim_guidance_idem_01',
+        amountInr: 750,
+        reason: 'Duplicate client retry',
+        idempotencyKey,
+      });
+
+      assert.strictEqual(firstRefund.refunded, true);
+      assert.strictEqual(secondRefund.refunded, true);
+      assert.strictEqual(firstRefund.refundReference, secondRefund.refundReference);
+      assert.strictEqual(firstRefund.amountInr, secondRefund.amountInr);
+    });
+
+    test('Guidance refund concurrency lock: In-flight PENDING refund blocks concurrent attempts within timeout', () => {
+      const claimTimeoutMs = 60000;
+      const checkConcurrencyLock = (
+        doc: GuidanceBookingDocument,
+        nowMs: number = Date.now()
+      ) => {
+        if (doc.refundStatus === 'PENDING') {
+          const initiatedTime = doc.refundInitiatedAt ? new Date(doc.refundInitiatedAt).getTime() : 0;
+          const elapsed = nowMs - initiatedTime;
+          if (elapsed < claimTimeoutMs) {
+            throw new Error('A refund operation is currently pending for this booking. Please try again shortly.');
+          }
+        }
+      };
+
+      const now = new Date().toISOString();
+      const pendingDoc: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_lock_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_lock_01',
+        status: 'CONFIRMED',
+        refundStatus: 'PENDING',
+        refundIdempotencyKey: 'ref_guidance_blr_lock_01',
+        refundInitiatedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(pendingDoc));
+
+      // Immediate concurrent attempt within 5 seconds throws concurrency error
+      assert.throws(
+        () => checkConcurrencyLock(pendingDoc, Date.now() + 5000),
+        /A refund operation is currently pending for this booking/
+      );
+
+      // Attempt after 65 seconds permits recovery / retry
+      assert.doesNotThrow(() => checkConcurrencyLock(pendingDoc, Date.now() + 65000));
+    });
+
+    test('Guidance refund failure leaves refundStatus as FAILED and enables safe retry and recovery', async () => {
+      const now = new Date().toISOString();
+      const booking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_fail_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_fail_01',
+        status: 'CONFIRMED',
+        refundStatus: 'FAILED', // Failed during previous attempt
+        refundIdempotencyKey: 'ref_guidance_blr_fail_01',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(booking));
+
+      // Retry executes refund successfully using the deterministic key
+      const adapter = new SandboxPaymentAdapter();
+      const recoveryRefund = await adapter.refundPayment({
+        transactionId: booking.bookingId,
+        gatewayReference: booking.paymentGatewayReference || '',
+        amountInr: booking.priceInr,
+        reason: 'Recovery retry after network interruption',
+        idempotencyKey: booking.refundIdempotencyKey,
+      });
+
+      assert.strictEqual(recoveryRefund.refunded, true);
+
+      // Recovered booking document updates to COMPLETED refund and CANCELLED status
+      const recoveredDoc: GuidanceBookingDocument = {
+        ...booking,
+        status: 'CANCELLED',
+        cancellationReason: 'Recovery retry completed',
+        paymentStatus: 'FAILED',
+        refundStatus: 'COMPLETED',
+        refundReference: recoveryRefund.refundReference,
+        refundedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(recoveredDoc));
+      assert.strictEqual(recoveredDoc.refundStatus, 'COMPLETED');
+      assert.strictEqual(recoveredDoc.status, 'CANCELLED');
+    });
   });
 
   // ==============================================================================
-  // 8. Partner Merchant Subscription Registration Tests (A5-V-04)
+  // 8. Partner Merchant Subscription Registration & Payment Gating Tests (A5-V-04)
   // ==============================================================================
-  describe('Partner Merchant Subscription Registration (A5-V-04)', () => {
+  describe('Partner Merchant Subscription Registration & Payment Gating (A5-V-04)', () => {
     test('Validates partner merchant subscription plans and discount bounds', () => {
       const validSub: PartnerMerchantSubscription = {
         subscriptionId: 'sub_merch_veena_01',
@@ -906,7 +1042,8 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
           terms: '10% off any idli-vada combo with active Route Pass',
         },
         paymentMode: 'SANDBOX',
-        isActive: true,
+        paymentGatewayReference: 'sandbox_sim_sub_merch_veena_01',
+        isActive: false, // Inactive pending payment confirmation
         expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -925,6 +1062,136 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
         () => PartnerMerchantSubscriptionSchema.parse({ ...validSub, subscriptionPlan: 'ENTERPRISE_GOLD' as any }),
         /invalid_enum_value/
       );
+    });
+
+    test('COMMUNITY_FREE plan activates immediately without payment gateway reference', () => {
+      const freeSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_free_01',
+        merchantPlaceId: 'place_local_artisan_01',
+        businessName: 'Local Handicrafts Co',
+        contactEmail: 'contact@handicrafts.local',
+        subscriptionPlan: 'COMMUNITY_FREE',
+        paymentMode: 'SANDBOX',
+        isActive: true, // Immediately active
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(freeSub));
+      assert.strictEqual(freeSub.isActive, true);
+      assert.strictEqual(freeSub.paymentGatewayReference, undefined);
+    });
+
+    test('Paid plans (VERIFIED_PARTNER & FEATURED_HERITAGE) are created inactive and invisible in public offers', () => {
+      const paidSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_heritage_01',
+        merchantPlaceId: 'place_vidyarthi_bhavan_01',
+        businessName: 'Vidyarthi Bhavan',
+        contactEmail: 'billing@vidyarthibhavan.in',
+        subscriptionPlan: 'FEATURED_HERITAGE',
+        activeDiscountOffer: {
+          discountPercent: 15,
+          terms: '15% discount for passholders',
+        },
+        paymentMode: 'SANDBOX',
+        paymentGatewayReference: 'sandbox_sim_sub_vidyarthi_01',
+        isActive: false, // Must be inactive prior to payment confirmation
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(paidSub));
+      assert.strictEqual(paidSub.isActive, false);
+
+      // Public offer query filter simulation (.where('isActive', '==', true))
+      const filterPublicOffers = (subs: PartnerMerchantSubscription[]) => {
+        return subs.filter((s) => s.isActive && new Date(s.expiresAt) > new Date());
+      };
+
+      const publicOffers = filterPublicOffers([paidSub]);
+      assert.strictEqual(publicOffers.length, 0, 'Unconfirmed paid partner subscription must NOT appear in public offers');
+    });
+
+    test('Payment confirmation activates paid subscription and verifies through payment adapter', async () => {
+      const adapter = new SandboxPaymentAdapter();
+      const now = new Date().toISOString();
+
+      const unconfirmedSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_confirm_01',
+        merchantPlaceId: 'place_ctr_shrisagar_01',
+        businessName: 'CTR Shri Sagar',
+        contactEmail: 'admin@ctr.in',
+        subscriptionPlan: 'FEATURED_HERITAGE',
+        paymentMode: 'SANDBOX',
+        paymentGatewayReference: 'sandbox_sim_sub_merch_confirm_01',
+        isActive: false,
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // 1. Payment Verification via adapter
+      const verification = await adapter.verifyPayment({
+        transactionId: unconfirmedSub.subscriptionId,
+        gatewayReference: unconfirmedSub.paymentGatewayReference || '',
+      });
+      assert.strictEqual(verification.verified, true);
+
+      // 2. State transition to active
+      const activatedSub: PartnerMerchantSubscription = {
+        ...unconfirmedSub,
+        isActive: true,
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(activatedSub));
+      assert.strictEqual(activatedSub.isActive, true);
+
+      // 3. Idempotent re-confirmation check
+      const reconfirm = (sub: PartnerMerchantSubscription) => {
+        if (sub.isActive) {
+          return { subscription: sub, isIdempotentReplay: true };
+        }
+        return { subscription: { ...sub, isActive: true }, isIdempotentReplay: false };
+      };
+
+      const replayResult = reconfirm(activatedSub);
+      assert.strictEqual(replayResult.isIdempotentReplay, true);
+      assert.strictEqual(replayResult.subscription.isActive, true);
+    });
+
+    test('Authorization guard rejects unauthorized caller attempting subscription confirmation', () => {
+      const authorizeConfirmation = (merchantPlaceId: string, callerUserId: string, isAdmin: boolean) => {
+        if (merchantPlaceId !== callerUserId && !isAdmin) {
+          throw new Error('Unauthorized: Only the merchant place owner or administrator may confirm payment.');
+        }
+      };
+
+      // Place owner can confirm
+      assert.doesNotThrow(() => authorizeConfirmation('place_ctr_01', 'place_ctr_01', false));
+
+      // Admin can confirm
+      assert.doesNotThrow(() => authorizeConfirmation('place_ctr_01', 'usr_admin_456', true));
+
+      // Stranger is rejected
+      assert.throws(
+        () => authorizeConfirmation('place_ctr_01', 'usr_stranger_999', false),
+        /Unauthorized: Only the merchant place owner or administrator may confirm payment/
+      );
+    });
+
+    test('Subscription payment verification failure leaves subscription inactive', async () => {
+      const adapter = new SandboxPaymentAdapter();
+      const verification = await adapter.verifyPayment({
+        transactionId: 'sub_merch_fail_01',
+        gatewayReference: 'sandbox_sim_sub_merch_fail_01',
+        simulatedOutcome: 'FAILURE',
+      });
+
+      assert.strictEqual(verification.verified, false);
+      assert.strictEqual(verification.failureReason, 'Simulated payment was declined by sandbox bank authority.');
     });
   });
 

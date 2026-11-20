@@ -14,6 +14,12 @@ import {
   PartnerMerchantSubscriptionSchema,
   MerchantPlanTier,
 } from '../../types/contracts/index.js';
+import {
+  PaymentGatewayAdapter,
+  PaymentIntentResult,
+} from '../adapters/payment-gateway-adapter.js';
+import { defaultPaymentAdapter } from '../adapters/sandbox-payment-adapter.js';
+import { validateSettlementEnvironment } from '../config/payment-environment.js';
 
 export interface CreateSubscriptionInput {
   merchantPlaceId: string;
@@ -25,6 +31,19 @@ export interface CreateSubscriptionInput {
     terms: string;
   };
   durationDays?: number;
+}
+
+export interface RegisterSubscriptionOutput {
+  subscription: PartnerMerchantSubscription;
+  paymentIntent?: PaymentIntentResult;
+  isPendingPayment: boolean;
+}
+
+export interface ConfirmSubscriptionPaymentInput {
+  subscriptionId: string;
+  callerUserId: string;
+  simulatedOutcome?: 'SUCCESS' | 'FAILURE';
+  isAdminOverride?: boolean;
 }
 
 export interface PublicPartnerOffer {
@@ -39,14 +58,37 @@ export interface PublicPartnerOffer {
 }
 
 export class MerchantSubscriptionService {
+  constructor(private readonly paymentAdapter: PaymentGatewayAdapter = defaultPaymentAdapter) {}
+
   /**
-   * Registers or updates a merchant partner subscription.
+   * Registers a merchant partner subscription.
+   * COMMUNITY_FREE activates immediately.
+   * Paid tiers (VERIFIED_PARTNER, FEATURED_HERITAGE) remain INACTIVE (isActive: false)
+   * until confirmed by trusted payment verification.
    */
-  public async registerPartnerSubscription(input: CreateSubscriptionInput): Promise<PartnerMerchantSubscription> {
+  public async registerPartnerSubscription(
+    input: CreateSubscriptionInput
+  ): Promise<RegisterSubscriptionOutput> {
     const subscriptionId = `sub_merch_${input.merchantPlaceId}_${randomUUID().slice(0, 6)}`;
     const now = new Date();
     const durationDays = input.durationDays || 365;
     const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const isFreeTier = input.subscriptionPlan === 'COMMUNITY_FREE';
+    let paymentIntent: PaymentIntentResult | undefined;
+    let paymentGatewayReference: string | undefined;
+
+    if (!isFreeTier) {
+      const priceInr = input.subscriptionPlan === 'FEATURED_HERITAGE' ? 2499 : 999;
+      paymentIntent = await this.paymentAdapter.createPaymentIntent({
+        transactionId: subscriptionId,
+        payerUserId: input.merchantPlaceId,
+        amountInr: priceInr,
+        currency: 'INR',
+        description: `Partner Subscription: ${input.subscriptionPlan} for ${input.businessName}`,
+      });
+      paymentGatewayReference = paymentIntent.gatewayReference;
+    }
 
     const subscription: PartnerMerchantSubscription = {
       subscriptionId,
@@ -55,8 +97,9 @@ export class MerchantSubscriptionService {
       contactEmail: input.contactEmail,
       subscriptionPlan: input.subscriptionPlan,
       activeDiscountOffer: input.activeDiscountOffer,
-      paymentMode: 'SANDBOX',
-      isActive: true,
+      paymentMode: this.paymentAdapter.getMode(),
+      paymentGatewayReference,
+      isActive: isFreeTier, // Strictly false for paid tiers until confirmed
       expiresAt,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -65,7 +108,66 @@ export class MerchantSubscriptionService {
     PartnerMerchantSubscriptionSchema.parse(subscription);
 
     await db.collection('subscriptions').doc(subscriptionId).set(subscription);
-    return subscription;
+    return {
+      subscription,
+      paymentIntent,
+      isPendingPayment: !isFreeTier,
+    };
+  }
+
+  /**
+   * Confirms payment and activates a paid partner subscription.
+   * Enforces server environment checks, adapter verification, and idempotent activation.
+   */
+  public async confirmPartnerSubscriptionPayment(
+    input: ConfirmSubscriptionPaymentInput
+  ): Promise<{ subscription: PartnerMerchantSubscription; isIdempotentReplay: boolean }> {
+    const subRef = db.collection('subscriptions').doc(input.subscriptionId);
+    const snap = await subRef.get();
+
+    if (!snap.exists) {
+      throw new Error(`Subscription ${input.subscriptionId} not found.`);
+    }
+
+    const sub = snap.data() as PartnerMerchantSubscription;
+
+    // Authorization: Caller must be place owner or admin
+    if (sub.merchantPlaceId !== input.callerUserId && !input.isAdminOverride) {
+      throw new Error('Unauthorized: Only the merchant place owner or administrator may confirm payment.');
+    }
+
+    // Fail-Closed Server Environment Configuration Guard
+    validateSettlementEnvironment({
+      transactionPaymentMode: sub.paymentMode,
+      isSimulationRequested: input.simulatedOutcome !== undefined,
+    });
+
+    if (sub.isActive) {
+      return { subscription: sub, isIdempotentReplay: true };
+    }
+
+    // Verify confirmation via payment adapter
+    const verification = await this.paymentAdapter.verifyPayment({
+      transactionId: sub.subscriptionId,
+      gatewayReference: sub.paymentGatewayReference || '',
+      simulatedOutcome: input.simulatedOutcome,
+    });
+
+    if (!verification.verified) {
+      throw new Error(`Payment verification failed: ${verification.failureReason || 'Declined'}`);
+    }
+
+    const now = new Date().toISOString();
+    const activatedSub: PartnerMerchantSubscription = {
+      ...sub,
+      isActive: true,
+      updatedAt: now,
+    };
+
+    PartnerMerchantSubscriptionSchema.parse(activatedSub);
+    await subRef.set(activatedSub);
+
+    return { subscription: activatedSub, isIdempotentReplay: false };
   }
 
   /**
