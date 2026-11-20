@@ -85,111 +85,83 @@ To prevent architectural conflation, execution responsibilities are strictly sep
   }
   ```
 
-### 2.2 Actual Kotlin Implementation Reference (`MainActivity.kt`)
-The following Kotlin implementation demonstrates how `Generation.getClient()` and `checkStatus()` execute and transmit real results across the Flutter MethodChannel:
+### 2.2 Actual Committed Code vs. Design Reference Code
+* **Code Committed in Repository (`android/app/.../MainActivity.kt` in commit `fec0fb1`):**
+  Currently contains Developer D's baseline platform detection: checks `Build.VERSION.SDK_INT >= 34` and `PackageManager.getPackageInfo("com.google.android.aicore", 0)`. The ML Kit GenAI dependencies and `Generation.getClient()` are **NOT** yet committed in `MainActivity.kt`.
+  - **Status:** **`AWAITING D`**.
+  - **Ownership:** Developer D owns adding the Gradle dependencies, calling `Generation.getClient()`, managing model preparation/download, and writing corresponding Android instrumentation tests.
+* **Architectural Reference Code (Provided by B for D's Implementation):**
+  ```kotlin
+  // Reference Kotlin implementation for Developer D to integrate into MainActivity.kt:
+  import android.os.Build
+  import com.google.mlkit.genai.prompt.Generation
+  import com.google.mlkit.genai.prompt.GenerativeModel
+  import com.google.mlkit.genai.prompt.FeatureStatus
+  import io.flutter.plugin.common.MethodChannel
+  import kotlinx.coroutines.CoroutineScope
+  import kotlinx.coroutines.Dispatchers
+  import kotlinx.coroutines.launch
 
-```kotlin
-package com.innovotribe.locallens
+  class NativeAiController(private val channel: MethodChannel) {
+      private var generativeModel: GenerativeModel? = null
 
-import android.os.Build
-import com.google.mlkit.genai.prompt.Generation
-import com.google.mlkit.genai.prompt.GenerativeModel
-import com.google.mlkit.genai.prompt.FeatureStatus
-import io.flutter.plugin.common.MethodChannel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+      private fun getModel(): GenerativeModel {
+          if (generativeModel == null) {
+              generativeModel = Generation.getClient()
+          }
+          return generativeModel!!
+      }
 
-class NativeAiController(private val channel: MethodChannel) {
-    private var generativeModel: GenerativeModel? = null
+      fun handleCheckAICoreAvailability(result: MethodChannel.Result, context: android.content.Context) {
+          val apiLevel = Build.VERSION.SDK_INT
+          if (apiLevel < 26) {
+              result.success(mapOf(
+                  "isAvailable" to false,
+                  "apiLevel" to apiLevel,
+                  "isSupportedDevice" to false,
+                  "aicorePackageInstalled" to false,
+                  "statusMessage" to "UNSUPPORTED_DEVICE: Requires API 26+. Current API: $apiLevel"
+              ))
+              return
+          }
 
-    private fun getModel(): GenerativeModel {
-        if (generativeModel == null) {
-            generativeModel = Generation.getClient()
-        }
-        return generativeModel!!
-    }
+          var isPkgInstalled = false
+          try {
+              context.packageManager.getPackageInfo("com.google.android.aicore", 0)
+              isPkgInstalled = true
+          } catch (_: Exception) {
+              isPkgInstalled = false
+          }
 
-    fun handleCheckAICoreAvailability(result: MethodChannel.Result) {
-        val apiLevel = Build.VERSION.SDK_INT
-        if (apiLevel < 26) {
-            result.success(mapOf(
-                "isAvailable" to false,
-                "apiLevel" to apiLevel,
-                "isSupportedDevice" to false,
-                "aicorePackageInstalled" to false,
-                "statusMessage" to "UNSUPPORTED_DEVICE: Requires API 26+. Current API: $apiLevel"
-            ))
-            return
-        }
+          try {
+              val model = getModel()
+              val status: FeatureStatus = model.checkStatus()
+              val isReady = status == FeatureStatus.AVAILABLE
 
-        try {
-            val model = getModel()
-            val status: FeatureStatus = model.checkStatus()
-            val isReady = status == FeatureStatus.AVAILABLE
-
-            result.success(mapOf(
-                "isAvailable" to isReady,
-                "apiLevel" to apiLevel,
-                "featureStatus" to status.name, // AVAILABLE, DOWNLOADABLE, DOWNLOADING, UNAVAILABLE
-                "aicorePackageInstalled" to true,
-                "statusMessage" to when (status) {
-                    FeatureStatus.AVAILABLE -> "AICORE_AVAILABLE: Gemini Nano is ready"
-                    FeatureStatus.DOWNLOADABLE -> "MODEL_NOT_DOWNLOADED: Gemini Nano supported but not downloaded"
-                    FeatureStatus.DOWNLOADING -> "MODEL_DOWNLOADING: Gemini Nano download in progress"
-                    else -> "UNSUPPORTED_DEVICE: Gemini Nano not available on this device"
-                }
-            ))
-        } catch (e: Exception) {
-            result.success(mapOf(
-                "isAvailable" to false,
-                "apiLevel" to apiLevel,
-                "isSupportedDevice" to false,
-                "aicorePackageInstalled" to false,
-                "statusMessage" to "AICore error: ${e.message}"
-            ))
-        }
-    }
-
-    fun handleExecuteOfflineInference(prompt: String, result: MethodChannel.Result) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val model = getModel()
-                val status = model.checkStatus()
-                if (status != FeatureStatus.AVAILABLE) {
-                    result.success(mapOf(
-                        "success" to false,
-                        "isLocalInference" to false,
-                        "code" to if (status == FeatureStatus.DOWNLOADABLE) "MODEL_NOT_DOWNLOADED" else "UNSUPPORTED_DEVICE",
-                        "engine" to "AICORE",
-                        "message" to "Model not ready ($status). Running in unassisted mode."
-                    ))
-                    return@launch
-                }
-
-                val response = model.generateContent(prompt)
-                val text = response.text ?: ""
-                result.success(mapOf(
-                    "success" to true,
-                    "isLocalInference" to true,
-                    "code" to "OK",
-                    "engine" to "AICORE",
-                    "output" to text,
-                    "modelUsed" to "Gemini Nano (ML Kit GenAI)"
-                ))
-            } catch (e: Exception) {
-                result.success(mapOf(
-                    "success" to false,
-                    "isLocalInference" to false,
-                    "code" to "INFERENCE_ERROR",
-                    "engine" to "AICORE",
-                    "message" to "Inference failed: ${e.message}"
-                ))
-            }
-        }
-    }
-}
-```
+              result.success(mapOf(
+                  "isAvailable" to isReady,
+                  "apiLevel" to apiLevel,
+                  "featureStatus" to status.name,
+                  "aicorePackageInstalled" to isPkgInstalled,
+                  "statusMessage" to when (status) {
+                      FeatureStatus.AVAILABLE -> "AICORE_AVAILABLE: Gemini Nano is ready"
+                      FeatureStatus.DOWNLOADABLE -> "MODEL_NOT_DOWNLOADED: Gemini Nano supported but not downloaded"
+                      FeatureStatus.DOWNLOADING -> "MODEL_DOWNLOADING: Gemini Nano download in progress"
+                      else -> "UNSUPPORTED_DEVICE: Gemini Nano not available on this device"
+                  }
+              ))
+          } catch (e: Exception) {
+              result.success(mapOf(
+                  "isAvailable" to false,
+                  "apiLevel" to apiLevel,
+                  "isSupportedDevice" to false,
+                  "aicorePackageInstalled" to isPkgInstalled,
+                  "statusMessage" to "AICore error: ${e.message}"
+              ))
+          }
+      }
+  }
+  ```
 
 ### 2.3 Dynamic Status Mapping to Internal Readiness States
 
@@ -206,7 +178,7 @@ class NativeAiController(private val channel: MethodChannel) {
 
 ## 3. Gemma 4 E2B / Unsloth GGUF via llama.cpp Path
 
-### 3.1 Pinned Model Artifact Specifications
+### 3.1 Pinned Model Artifact & Licensing Evidence
 * **Documentation Authority:** Unsloth Gemma Deployment ([https://gemma.ai/deployment/unsloth/](https://gemma.ai/deployment/unsloth/))
 * **Hugging Face Repository:** [`unsloth/gemma-4-E2B-it-GGUF`](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)
 * **Pinned Commit SHA:** `90f9618340396838ee7ff5b0ba2da27da62953d3`
@@ -214,15 +186,17 @@ class NativeAiController(private val channel: MethodChannel) {
   - **Quantization:** 4-bit Medium (`Q4_K_M`).
   - **Exact File Size:** `3,344,000,000` bytes (~3.11 GB).
   - **SHA-256 Checksum:** `740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8`.
-  - **Verification Command:** `sha256sum gemma-4-E2B-it-Q4_K_M.gguf` matches `740185b2...`.
-  - **Direct Pinned URL:** `https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/90f9618340396838ee7ff5b0ba2da27da62953d3/gemma-4-E2B-it-Q4_K_M.gguf`
+  - **Direct Pinned URL:** `https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/90f9618340396838ee7ff5b0ba2da27da62953d3/gemma-4-E2B-it-Q4_K_M.gguf`.
 * **High-Fidelity Alternative Artifact:** `gemma-4-E2B-it-Q8_0.gguf`
   - **Quantization:** 8-bit (`Q8_0`).
   - **Exact File Size:** ~5.05 GB (`5,420,000,000` bytes).
 * **Multimodal Projector Verification:**
   - Artifact `mmproj-BF16.gguf` (~987 MB) exists in the repository.
   - **Verification for B6:** Our frozen B6 scope is strictly text-based on-device assistance (offline note summarization, keyword extraction, spot practical Q&A). **The multimodal projector is NOT required for B6 functionality.** We do not claim local camera/audio multimodal support.
-* **Licensing & Terms:** Governed by the **Gemma Open Model Terms of Use**. Non-redistributable inside the closed APK; downloaded on-demand to the app cache upon user selection.
+* **Exact Licensing Evidence:**
+  - **Hugging Face Repository License:** Tagged as **Apache License 2.0** (`apache-2.0`) in the model card metadata.
+  - **Underlying Google Foundation Weights:** Governed by the **Gemma Open Model Terms of Use** (commercial use permitted, attribution required, standard use restrictions).
+  - **Redistribution Terms:** Non-redistributable inside the closed APK; must be downloaded on-demand to the app cache upon user selection.
 
 ### 3.2 Android ARM64 Build Configuration (`llama.cpp`)
 To cross-compile `llama.cpp` for Android ARM64, CMake is configured with the Android NDK r26d+ toolchain:
@@ -251,62 +225,52 @@ cmake --build build-android --config Release -j4
 
 ## 4. Developer D Bridge Contract Reconciliation
 
-### 4.1 Agreed MethodChannel Interface (`com.innovotribe.locallens/native_ai`)
+### 4.1 Status of D5 MethodChannel Methods (`com.innovotribe.locallens/native_ai`)
 
-| Method Name | Arguments | Return Type / Map Keys | Implementation Status |
+| Method Name | Arguments | Return Type / Map Keys | Real Implementation vs. Placeholder in D5 |
 | :--- | :--- | :--- | :--- |
-| `checkAICoreAvailability` | None | `{ isAvailable, apiLevel, isSupportedDevice, aicorePackageInstalled, statusMessage }` | Implemented in `MainActivity.kt` & `native_platform_service.dart` |
-| `getDeviceAICapabilities` | None | `{ hasNpu, ramAvailableMb, aicoreVersion, supportedFeatures, apiLevel, totalRamMb, aicoreInstalled }` | Implemented in `MainActivity.kt` & `native_platform_service.dart` |
-| `getNativeAiStatus` | None | String (`UNSUPPORTED_DEVICE`, `AICORE_NOT_INSTALLED`, `MODEL_NOT_AVAILABLE`, `INFERENCE_ACTIVE`) | Implemented in `MainActivity.kt` & `native_platform_service.dart` |
-| `summarizeOfflineNote` | `{ noteText, spotName, language }` | `{ success, summary, keyHighlights, isLocalInference, modelUsed, code, message }` | Implemented in `MainActivity.kt` & `native_platform_service.dart` |
-| `extractOfflineKeywords` | `{ text }` | `{ success, keywords, isLocalInference, modelUsed, code, message }` | Implemented in `MainActivity.kt` & `native_platform_service.dart` |
-| `executeOfflineInference`| `{ prompt, engine }` | `{ success, isLocalInference, code, engine, output, message }` | Implemented in `MainActivity.kt` & `native_platform_service.dart` |
+| `getAvailableDiskSpaceBytes` | None | `int` (bytes) | **REAL** (Uses Android `StatFs`) |
+| `getNetworkStatus` | None | String (`WIFI`, `CELLULAR`, `ETHERNET`, `OFFLINE`) | **REAL** (Uses Android `ConnectivityManager`) |
+| `checkAICoreAvailability` | None | `{ isAvailable, apiLevel, isSupportedDevice, aicorePackageInstalled, statusMessage }` | **PARTIAL** (Checks API >= 34 and package name; does not call ML Kit) |
+| `getDeviceAICapabilities` | None | `{ hasNpu, ramAvailableMb, aicoreVersion, supportedFeatures, apiLevel, totalRamMb, aicoreInstalled }` | **PARTIAL** (Queries real RAM; returns mock supported features) |
+| `getNativeAiStatus` | None | String (`UNSUPPORTED_DEVICE`, `AICORE_NOT_INSTALLED`, `MODEL_NOT_AVAILABLE`) | **PLACEHOLDER** (Static enum return) |
+| `summarizeOfflineNote` | `{ noteText, spotName, language }` | `{ success: false, summary: "", keyHighlights: [], isLocalInference: false, modelUsed: "NONE", code: "MODEL_NOT_DOWNLOADED" }` | **UNASSISTED FALLBACK** (Does not execute neural model) |
+| `extractOfflineKeywords` | `{ text }` | `{ success: false, keywords: [], isLocalInference: false, modelUsed: "NONE", code: "MODEL_NOT_DOWNLOADED" }` | **UNASSISTED FALLBACK** (Does not execute neural model) |
+| `executeOfflineInference`| `{ prompt, engine }` | `{ success: false, isLocalInference: false, code: "MODEL_NOT_DOWNLOADED", engine }` | **UNASSISTED FALLBACK** (Does not execute neural model) |
 
 * **Agreement Source:** D5 Task Baseline Commit `fec0fb1`, [docs/d5-offline-android-report.md](file:///d:/neighborhoodguideapp/docs/d5-offline-android-report.md), and [MainActivity.kt](file:///d:/neighborhoodguideapp/android/app/src/main/kotlin/com/innovotribe/locallens/MainActivity.kt#L55-L207).
 
 ---
 
-## 5. Execution Provenance & Privacy Guarantees
+## 5. Cloud and Offline Behavior
 
-Every AI response emitted by the system carries an explicit, tamper-evident `ExecutionProvenance` tag:
+### 5.1 Client-to-Backend Cloud Fallback Flow
+1. **Network Interrogation:** Host app calls `NativePlatformService.getNetworkStatus()`.
+2. **If OFFLINE:** Cloud calls are strictly blocked. Host app executes deterministic unassisted heuristics locally.
+3. **If ONLINE:** Client evaluates user consent (`userConsentCloudFallback`).
+   - If user consent is **granted**: Client dispatches callable request to Firebase Cloud Functions (`AssistanceController.generateStreetGuidance`), executing `gemini-3.8-flash`. Response carries `provenance: 'CLOUD_FALLBACK'`, `isLocalInference: false`, `executionEnvironment: 'BACKEND_CLOUD_FUNCTIONS'`.
+   - If user consent is **withheld**: Network call is suppressed; client returns unassisted fallback with `provenance: 'UNAVAILABLE'`.
 
-```typescript
-export type ExecutionProvenance =
-  | 'GEMINI_NANO_LOCAL'  // Android AICore / ML Kit GenAI on-device execution
-  | 'GEMMA_LOCAL'        // Gemma 4 E2B / Unsloth GGUF via llama.cpp native runtime
-  | 'CLOUD_FALLBACK'     // Google Gemini API cloud execution (online only, with consent)
-  | 'UNAVAILABLE';       // Local model unavailable / unassisted heuristic fallback
-```
+### 5.2 Deterministic Heuristics (Unassisted Fallback)
+* When on-device models are unready or offline, the engine executes deterministic sentence extraction and frequency-based keyword scoring.
+* These heuristics are **strictly labeled as unassisted fallbacks**, never as neural or AI inference (`unassistedFallback: true`, `modelUsed: 'NONE (Unassisted Fallback)'`).
 
-### Privacy Invariants Enforced:
-1. **Never Report Cloud as Local:** A cloud-generated response (`gemini-3.8-flash` or `gemini-3.5-flash-lite`) must **never** be labeled `isLocalInference: true` or given a local provenance tag.
-2. **Never Silently Leak Offline User Data:** When a traveler is offline and on-device model inference fails or is not downloaded, the engine **fails closed**. It never queues or leaks traveler notes to the cloud without explicit consent.
-3. **Transparent Unassisted Mode:** When models are unready, the engine produces deterministic heuristic summaries and keywords labeled `unassistedFallback: true` and `provenance: 'UNAVAILABLE'`, ensuring travelers receive helpful assistance without deceptive claims of neural generation.
+### 5.3 Test Evidence Distinction
+* **TypeScript Spy Executor Test (Suite 4):** Validates unit-level fail-closed routing in TypeScript (zero invocations of `executeCloudModel` when `connectivity === 'OFFLINE'`).
+* **Actual Application Network Isolation:** Must be validated on physical Android hardware by toggling Airplane Mode and inspecting Android network sockets.
 
 ---
 
-## 6. Comprehensive Integration Status Breakdown (A–E)
+## 6. Comprehensive Integration Status Matrix
 
-### A. Gemini Nano
-* **Actual Kotlin ML Kit Client:** **AWAITING D** (Reference implementation provided; D to add Gradle dependencies `genai-prompt:1.0.0-beta4` and `kotlinx-coroutines:1.11.0` in `android/app/build.gradle.kts`).
-* **Real Status Check:** **AWAITING D** (Currently returns simulated `AICORE_NOT_INSTALLED` in `MainActivity.kt`).
-* **Real Inference Dispatch:** **NOT TESTED** (Requires physical Pixel 8/9 or Galaxy S24 hardware with downloaded AICore weights).
-
-### B. Gemma 4 E2B
-* **Pinned Artifact:** **IMPLEMENTED** (Pinned at Hugging Face commit `90f9618340396838ee7ff5b0ba2da27da62953d3`, SHA-256 `740185b2...`).
-* **Android ARM64 Runtime Build:** **AWAITING D** (`libllama.so` compilation with NDK 26+ and placement in `jniLibs/arm64-v8a/`).
-* **Model Download & Cache Manager:** **AWAITING D** (Flutter client download manager for 3.11 GB GGUF weight files into app storage).
-* **Inference Dispatch:** **NOT TESTED** (Requires physical ARM64 device with 8GB+ RAM).
-
-### C. Flutter-to-Kotlin Bridge
-* **Actual Methods & Contracts:** **IMPLEMENTED** in Flutter `NativePlatformService` and Kotlin `MainActivity.kt` (D5 base `fec0fb1`).
-* **Mock Bridge Adapter:** **IMPLEMENTED** in `functions/test/test-b6-on-device-ai.ts` (verified with 6/6 contract tests).
-* **Real Device Bridge Execution:** **IMPLEMENTED (by D)** (verified with 26/26 passing Flutter unit tests in `test/native_platform_test.dart`).
-
-### D. Cloud Fallback
-* **Connectivity & Privacy Gating:** **IMPLEMENTED** in `local-ai-service.ts` and `model-orchestrator.ts`.
-* **Execution Provenance:** Strictly sets `provenance: 'CLOUD_FALLBACK'`, `isLocalInference: false`, `executionEnvironment: 'BACKEND_CLOUD_FUNCTIONS'`.
-
-### E. Offline Fallback
-* **Zero Network Transmission:** **IMPLEMENTED** (Verified by spy executor test in Suite 4).
-* **Deterministic Heuristics:** **IMPLEMENTED** (Sentence summarizer & frequency keyword extractor labeled `unassistedFallback: true`, `provenance: 'UNAVAILABLE'`).
+| Component / Capability | Status | Exact Source Files | Evidence & Notes |
+| :--- | :--- | :--- | :--- |
+| **Gemini Nano Readiness API** | **AWAITING D** | `android/app/.../MainActivity.kt` | Reference implementation provided; D to add Gradle dependencies. |
+| **Gemini Nano Inference** | **NOT TESTED** | Physical hardware | Requires physical Pixel 8/9 or Galaxy S24 with AICore weights. |
+| **Gemini Nano Download / Setup** | **AWAITING D** | `android/app/.../MainActivity.kt` | Background Wi-Fi + charging download managed by Android system service. |
+| **Gemma 4 E2B Artifact & License** | **IMPLEMENTED** | [local-ai-service.ts](file:///d:/neighborhoodguideapp/functions/src/ai/services/local-ai-service.ts), [models.ts](file:///d:/neighborhoodguideapp/functions/src/ai/config/models.ts) | Pinned commit `90f96183`, SHA-256 `740185b2...`, Apache 2.0 / Gemma Terms. |
+| **Gemma Android Runtime & JNI** | **AWAITING D** | `android/app/src/main/jniLibs/arm64-v8a/` | Requires Android NDK 26+ CMake compilation of `libllama.so` and JNI wrapper. |
+| **Gemma Download / Cache Manager** | **AWAITING D** | `lib/services/offline_model_manager.dart` | Client-side 3.11 GB resumable downloader with SHA-256 verification. |
+| **Flutter-to-Kotlin Integration** | **IMPLEMENTED (by D)** | `MainActivity.kt` (lines 55–207), `native_platform_service.dart` (lines 91–355) | 6 reconciled methods implemented in D5 (`fec0fb1`); 26/26 Flutter tests pass. |
+| **Cloud Fallback & Consent** | **IMPLEMENTED** | [local-ai-service.ts](file:///d:/neighborhoodguideapp/functions/src/ai/services/local-ai-service.ts), `model-orchestrator.ts` | Dispatches to `gemini-3.8-flash` only when online + consented; provenance tracked. |
+| **Offline Privacy & Fallback** | **IMPLEMENTED** | [local-ai-service.ts](file:///d:/neighborhoodguideapp/functions/src/ai/services/local-ai-service.ts) | Fail-closed offline policy; deterministic unassisted heuristics. |

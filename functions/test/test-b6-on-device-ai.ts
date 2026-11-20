@@ -216,13 +216,18 @@ async function runB6TestSuite() {
 
   // Exact D5 MethodChannel mock implementation matching Developer D's MainActivity.kt
   const mockD5Bridge: NativeBridgeExecutor = {
-    checkAICoreAvailability: async () => ({
-      isAvailable: true,
-      apiLevel: 34,
-      isSupportedDevice: true,
-      aicorePackageInstalled: true,
-      statusMessage: 'AICORE_AVAILABLE: Android AICore system service detected',
-    }),
+    checkAICoreAvailability: async () => {
+      const isPkgInstalled = baseTelemetry.aicoreInstalled;
+      return {
+        isAvailable: isPkgInstalled && baseTelemetry.apiLevel >= 26,
+        apiLevel: baseTelemetry.apiLevel,
+        isSupportedDevice: baseTelemetry.apiLevel >= 26,
+        aicorePackageInstalled: isPkgInstalled,
+        statusMessage: isPkgInstalled
+          ? 'AICORE_AVAILABLE: Android AICore system package detected'
+          : 'AICORE_NOT_INSTALLED: com.google.android.aicore not present',
+      };
+    },
     getDeviceAICapabilities: async () => baseTelemetry,
     getNativeAiStatus: async () => 'INFERENCE_ACTIVE',
     summarizeOfflineNote: async (params) => ({
