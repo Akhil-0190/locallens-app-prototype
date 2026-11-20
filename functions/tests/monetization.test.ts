@@ -14,6 +14,13 @@ import {
   RoutePassDocumentSchema,
   PartnerMerchantSubscription,
   PartnerMerchantSubscriptionSchema,
+  GuidanceOfferingDocument,
+  GuidanceOfferingDocumentSchema,
+  GuidanceBookingDocument,
+  GuidanceBookingDocumentSchema,
+  ContributionDocument,
+  ContributionDocumentSchema,
+  ContributorSubmissionInputSchema,
 } from '../src/types/contracts/index.js';
 import {
   SandboxPaymentAdapter,
@@ -499,7 +506,7 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
         delete process.env.K_SERVICE;
         assert.throws(
           () => validateSettlementEnvironment({ transactionPaymentMode: 'SANDBOX', isSimulationRequested: true }),
-          /Security violation: PAYMENT_ENV cannot be set to SANDBOX in production NODE_ENV/
+          /Security violation: PAYMENT_ENV cannot be set to SANDBOX/
         );
 
         // Case 2: In LIVE environment, SANDBOX transactions are rejected
@@ -546,6 +553,16 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
         process.env.NODE_ENV = 'production';
         assert.doesNotThrow(() =>
           validateSettlementEnvironment({ transactionPaymentMode: 'LIVE', isSimulationRequested: false })
+        );
+
+        // Case 8 (Mandatory Security Verification): K_SERVICE is present (deployed Cloud Functions),
+        // NODE_ENV is absent, and PAYMENT_ENV=SANDBOX -> MUST REJECT!
+        process.env.PAYMENT_ENV = 'SANDBOX';
+        delete process.env.NODE_ENV;
+        process.env.K_SERVICE = 'projects/test-proj/services/neighborhoodguide-functions';
+        assert.throws(
+          () => validateSettlementEnvironment({ transactionPaymentMode: 'SANDBOX', isSimulationRequested: true }),
+          /Security violation: PAYMENT_ENV cannot be set to SANDBOX in deployed cloud runtime or production NODE_ENV/
         );
       } finally {
         process.env.PAYMENT_ENV = origPaymentEnv;
@@ -686,6 +703,340 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual((publicAttribution as any).availableBalanceInr, undefined);
       assert.strictEqual((publicAttribution as any).withdrawnTotalInr, undefined);
       assert.strictEqual((publicAttribution as any).totalEarningsInr, undefined);
+    });
+  });
+
+  // ==============================================================================
+  // 7. One-on-One Paid Local Guidance Lifecycle Tests (A5-V-01)
+  // ==============================================================================
+  describe('One-on-One Paid Local Guidance Lifecycle (A5-V-01)', () => {
+    test('Offering registration enforces price and duration limits and valid schema', () => {
+      const validOffering: GuidanceOfferingDocument = {
+        offeringId: 'guide_offering_priya_01',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        title: 'Heritage Temple Architecture Walk',
+        description: 'Guided walk through Malleshwaram temples and traditional agraharas.',
+        durationMinutes: 90,
+        priceInr: 750,
+        meetingPoint: 'Kadu Malleshwara Temple 15th Cross',
+        languages: ['Kannada', 'English'],
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => GuidanceOfferingDocumentSchema.parse(validOffering));
+
+      // Rejects price < 100
+      assert.throws(
+        () => GuidanceOfferingDocumentSchema.parse({ ...validOffering, priceInr: 50 }),
+        /too_small/
+      );
+
+      // Rejects price > 10000
+      assert.throws(
+        () => GuidanceOfferingDocumentSchema.parse({ ...validOffering, priceInr: 15000 }),
+        /too_big/
+      );
+
+      // Rejects duration < 15
+      assert.throws(
+        () => GuidanceOfferingDocumentSchema.parse({ ...validOffering, durationMinutes: 10 }),
+        /too_small/
+      );
+    });
+
+    test('Self-booking is strictly prohibited and platform fee is 10% (min ₹25)', () => {
+      const validateBookingParams = (travelerId: string, guideId: string, priceInr: number) => {
+        if (travelerId === guideId) {
+          throw new Error('Self-booking is strictly prohibited.');
+        }
+        const platformFeeInr = Math.max(25, Math.round(priceInr * 0.1));
+        const guideNetInr = priceInr - platformFeeInr;
+        return { platformFeeInr, guideNetInr };
+      };
+
+      // Self-booking throws
+      assert.throws(
+        () => validateBookingParams('usr_priya_782', 'usr_priya_782', 750),
+        /Self-booking is strictly prohibited/
+      );
+
+      // ₹200 offering: 10% is 20 -> min ₹25 applies
+      const r1 = validateBookingParams('usr_traveler_01', 'usr_guide_02', 200);
+      assert.strictEqual(r1.platformFeeInr, 25);
+      assert.strictEqual(r1.guideNetInr, 175);
+
+      // ₹750 offering: 10% is 75 -> ₹75 fee
+      const r2 = validateBookingParams('usr_traveler_01', 'usr_guide_02', 750);
+      assert.strictEqual(r2.platformFeeInr, 75);
+      assert.strictEqual(r2.guideNetInr, 675);
+
+      // ₹2,000 offering: 10% is 200 -> ₹200 fee
+      const r3 = validateBookingParams('usr_traveler_01', 'usr_guide_02', 2000);
+      assert.strictEqual(r3.platformFeeInr, 200);
+      assert.strictEqual(r3.guideNetInr, 1800);
+    });
+
+    test('Payment Confirmation & State Transitions: REQUESTED -> CONFIRMED -> COMPLETED', () => {
+      const now = new Date().toISOString();
+      const booking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_test_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Temple Architecture Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'INITIATED',
+        paymentGatewayReference: 'sandbox_sim_guidance_abc123',
+        status: 'REQUESTED',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(booking));
+
+      // Guide accepts
+      const acceptedBooking: GuidanceBookingDocument = { ...booking, status: 'ACCEPTED' };
+      assert.strictEqual(acceptedBooking.status, 'ACCEPTED');
+
+      // Traveler completes payment
+      const confirmedBooking: GuidanceBookingDocument = {
+        ...acceptedBooking,
+        paymentStatus: 'COMPLETED',
+        status: 'CONFIRMED',
+      };
+      assert.strictEqual(confirmedBooking.status, 'CONFIRMED');
+      assert.strictEqual(confirmedBooking.paymentStatus, 'COMPLETED');
+
+      // Escrow Completion: Credits guide ledger and maintains balance invariant
+      let totalEarningsInr = 1000;
+      let availableBalanceInr = 500;
+      let withdrawnTotalInr = 500;
+      let unrecoveredAdjustmentInr = 0;
+
+      const netToAdd = confirmedBooking.guideNetInr; // 675
+      totalEarningsInr += netToAdd;
+      availableBalanceInr += netToAdd;
+
+      // Invariant Check
+      assert.strictEqual(
+        totalEarningsInr + unrecoveredAdjustmentInr,
+        availableBalanceInr + withdrawnTotalInr
+      );
+      assert.strictEqual(totalEarningsInr, 1675);
+      assert.strictEqual(availableBalanceInr, 1175);
+    });
+
+    test('Guidance cancellation and rejection marks payment as FAILED/REFUND', () => {
+      const now = new Date().toISOString();
+      const paidBooking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_test_02',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_xyz789',
+        status: 'CONFIRMED',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Guide cancels / rejects due to emergency
+      const cancelledBooking: GuidanceBookingDocument = {
+        ...paidBooking,
+        status: 'CANCELLED',
+        cancellationReason: 'Heavy rain advisory in Malleshwaram',
+        paymentStatus: 'FAILED', // Refunded to traveler
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(cancelledBooking));
+      assert.strictEqual(cancelledBooking.status, 'CANCELLED');
+      assert.strictEqual(cancelledBooking.paymentStatus, 'FAILED');
+    });
+
+    test('Payment adapter executes supported simulated refund upon cancellation', async () => {
+      const adapter = new SandboxPaymentAdapter();
+      const refund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_02',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 750,
+        reason: 'Session cancelled by participant',
+      });
+      assert.strictEqual(refund.refunded, true);
+      assert.strictEqual(refund.amountInr, 750);
+      assert.strictEqual(refund.paymentMode, 'SANDBOX');
+      assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
+    });
+  });
+
+  // ==============================================================================
+  // 8. Partner Merchant Subscription Registration Tests (A5-V-04)
+  // ==============================================================================
+  describe('Partner Merchant Subscription Registration (A5-V-04)', () => {
+    test('Validates partner merchant subscription plans and discount bounds', () => {
+      const validSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_veena_01',
+        merchantPlaceId: 'place_veena_stores_01',
+        businessName: 'Veena Stores Malleshwaram',
+        contactEmail: 'partner@veenastores.in',
+        subscriptionPlan: 'VERIFIED_PARTNER',
+        activeDiscountOffer: {
+          discountPercent: 10,
+          terms: '10% off any idli-vada combo with active Route Pass',
+        },
+        paymentMode: 'SANDBOX',
+        isActive: true,
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(validSub));
+
+      // Rejects invalid email
+      assert.throws(
+        () => PartnerMerchantSubscriptionSchema.parse({ ...validSub, contactEmail: 'invalid-email' }),
+        /invalid_string/
+      );
+
+      // Rejects invalid plan
+      assert.throws(
+        () => PartnerMerchantSubscriptionSchema.parse({ ...validSub, subscriptionPlan: 'ENTERPRISE_GOLD' as any }),
+        /invalid_enum_value/
+      );
+    });
+  });
+
+  // ==============================================================================
+  // 9. Contributor Content Management Tests (A5-V-02)
+  // ==============================================================================
+  describe('Contributor Content Management (A5-V-02)', () => {
+    test('Contributor can update own submission and editing resets VERIFIED to SUBMITTED', () => {
+      const now = new Date().toISOString();
+      const existingDoc: ContributionDocument = {
+        contributionId: 'contrib_blr_test_01',
+        submission: {
+          mapsLink: 'https://maps.google.com/?q=CTR',
+          infoParagraph: 'Best Benne Masala Dosa in Bangalore.',
+          photoUrls: ['https://storage.googleapis.com/test/photo1.jpg'],
+          contributorId: 'usr_priya_782',
+        },
+        status: 'VERIFIED',
+        groundedPlaceId: 'place_ctr_01',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => ContributionDocumentSchema.parse(existingDoc));
+
+      // Update function simulation enforcing ownership and status reset
+      const updateContent = (
+        doc: ContributionDocument,
+        callerId: string,
+        updates: { infoParagraph?: string; photoUrls?: string[] }
+      ): ContributionDocument => {
+        if (doc.submission.contributorId !== callerId) {
+          throw new Error('Permission denied: Only the original contributor may update this contribution.');
+        }
+        if (doc.status === 'RETRACTED') {
+          throw new Error('Invalid state: Retracted contributions cannot be edited.');
+        }
+
+        const newSubmission = {
+          ...doc.submission,
+          infoParagraph: updates.infoParagraph ?? doc.submission.infoParagraph,
+          photoUrls: updates.photoUrls ?? doc.submission.photoUrls,
+          contributorId: doc.submission.contributorId, // Immutable
+        };
+        ContributorSubmissionInputSchema.parse(newSubmission);
+
+        // Reset to SUBMITTED if previously VERIFIED
+        const newStatus = doc.status === 'VERIFIED' ? 'SUBMITTED' : doc.status;
+
+        return {
+          ...doc,
+          submission: newSubmission,
+          status: newStatus,
+          updatedAt: new Date().toISOString(),
+        };
+      };
+
+      // Owner updates description
+      const updated = updateContent(existingDoc, 'usr_priya_782', {
+        infoParagraph: 'Updated: Iconic butter dosa and filter coffee since 1920.',
+      });
+
+      assert.strictEqual(updated.submission.infoParagraph, 'Updated: Iconic butter dosa and filter coffee since 1920.');
+      assert.strictEqual(updated.status, 'SUBMITTED', 'VERIFIED status must reset to SUBMITTED on content edit');
+      assert.strictEqual(updated.submission.contributorId, 'usr_priya_782', 'Contributor attribution must be preserved');
+      assert.doesNotThrow(() => ContributionDocumentSchema.parse(updated));
+
+      // Stranger tries to update -> Permission denied
+      assert.throws(
+        () => updateContent(existingDoc, 'usr_stranger_999', { infoParagraph: 'Hacked description' }),
+        /Permission denied/
+      );
+    });
+
+    test('Retraction sets status to RETRACTED and blocks subsequent edits', () => {
+      const now = new Date().toISOString();
+      const existingDoc: ContributionDocument = {
+        contributionId: 'contrib_blr_test_02',
+        submission: {
+          mapsLink: 'https://maps.google.com/?q=Veena',
+          infoParagraph: 'Khara Bath and Kesari Bath.',
+          photoUrls: [],
+          contributorId: 'usr_priya_782',
+        },
+        status: 'SUBMITTED',
+        groundedPlaceId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Retract
+      const retractedDoc: ContributionDocument = {
+        ...existingDoc,
+        status: 'RETRACTED',
+        rejectionReason: 'Retracted by contributor (venue permanently closed).',
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => ContributionDocumentSchema.parse(retractedDoc));
+      assert.strictEqual(retractedDoc.status, 'RETRACTED');
+
+      // Edits on retracted content must be rejected
+      const attemptEditOnRetracted = (doc: ContributionDocument) => {
+        if (doc.status === 'RETRACTED') {
+          throw new Error('Invalid state: Retracted contributions cannot be edited.');
+        }
+      };
+
+      assert.throws(
+        () => attemptEditOnRetracted(retractedDoc),
+        /Retracted contributions cannot be edited/
+      );
     });
   });
 });

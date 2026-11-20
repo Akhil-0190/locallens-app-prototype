@@ -45,8 +45,26 @@ export interface PaymentVerificationResult {
   isSimulated: boolean;
 }
 
+export interface RefundPaymentParams {
+  transactionId: string;
+  gatewayReference: string;
+  amountInr: number;
+  reason?: string;
+}
+
+export interface PaymentRefundResult {
+  refunded: boolean;
+  refundReference: string;
+  paymentMode: PaymentMode;
+  amountInr: number;
+  refundedAt?: string;
+  failureReason?: string;
+  isSimulated: boolean;
+}
+
 export interface PaymentGatewayAdapter {
   getMode(): PaymentMode;
   createPaymentIntent(params: CreatePaymentIntentParams): Promise<PaymentIntentResult>;
   verifyPayment(params: VerifyPaymentParams): Promise<PaymentVerificationResult>;
+  refundPayment(params: RefundPaymentParams): Promise<PaymentRefundResult>;
 }

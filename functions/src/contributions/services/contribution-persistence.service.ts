@@ -14,6 +14,7 @@ import {
   ContributionDocument,
   ContributionDocumentSchema,
   ContributorSubmissionInput,
+  ContributorSubmissionInputSchema,
   ContributionStatus,
   UserRole,
 } from '../../types/contracts/index.js';
@@ -137,4 +138,113 @@ export async function updateContributionStatus(
   }
 
   await db.collection(CONTRIBUTIONS_COLLECTION).doc(contributionId).update(updatePayload);
+}
+
+/**
+ * Updates content fields of an eligible contribution.
+ * Enforces ownership and state validity.
+ */
+export async function updateContributionContent(
+  contributionId: string,
+  requestingUserId: string,
+  updates: {
+    mapsLink?: string;
+    infoParagraph?: string;
+    photoUrls?: string[];
+    audioNoteUrl?: string;
+  }
+): Promise<ContributionDocument> {
+  const snap = await db.collection(CONTRIBUTIONS_COLLECTION).doc(contributionId).get();
+  if (!snap.exists) {
+    const err = new Error(`Contribution not found: ${contributionId}`);
+    (err as NodeJS.ErrnoException).code = 'NOT_FOUND';
+    throw err;
+  }
+
+  const doc = snap.data() as ContributionDocument;
+
+  // Ownership check: Only original contributor may edit content
+  if (doc.submission.contributorId !== requestingUserId) {
+    const err = new Error('Permission denied: Only the original contributor may update this contribution.');
+    (err as NodeJS.ErrnoException).code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  // State check: cannot edit retracted contributions
+  if (doc.status === 'RETRACTED') {
+    const err = new Error('Invalid state: Retracted contributions cannot be edited.');
+    (err as NodeJS.ErrnoException).code = 'INVALID_ARGUMENT';
+    throw err;
+  }
+
+  const updatedSubmission: ContributorSubmissionInput = {
+    ...doc.submission,
+    mapsLink: updates.mapsLink ?? doc.submission.mapsLink,
+    infoParagraph: updates.infoParagraph ?? doc.submission.infoParagraph,
+    photoUrls: updates.photoUrls ?? doc.submission.photoUrls,
+    audioNoteUrl: updates.audioNoteUrl ?? doc.submission.audioNoteUrl,
+    contributorId: doc.submission.contributorId, // Immutable
+  };
+  ContributorSubmissionInputSchema.parse(updatedSubmission);
+
+  // If already VERIFIED, AI_ANALYZED, or MAPS_GROUNDED, content edits reset status to SUBMITTED for re-verification
+  let newStatus: ContributionStatus = doc.status;
+  if (doc.status === 'VERIFIED' || doc.status === 'AI_ANALYZED' || doc.status === 'MAPS_GROUNDED') {
+    newStatus = 'SUBMITTED';
+  }
+
+  const updatedDoc: ContributionDocument = {
+    ...doc,
+    submission: updatedSubmission,
+    status: newStatus,
+    updatedAt: nowIso(),
+  };
+
+  ContributionDocumentSchema.parse(updatedDoc);
+  await db.collection(CONTRIBUTIONS_COLLECTION).doc(contributionId).set(updatedDoc);
+  return updatedDoc;
+}
+
+/**
+ * Retracts a contribution.
+ * Allows contributor to retract own contribution, or moderator to retract.
+ */
+export async function retractContributionData(
+  contributionId: string,
+  requestingUserId: string,
+  requestingUserRole: UserRole,
+  reason?: string
+): Promise<ContributionDocument> {
+  const snap = await db.collection(CONTRIBUTIONS_COLLECTION).doc(contributionId).get();
+  if (!snap.exists) {
+    const err = new Error(`Contribution not found: ${contributionId}`);
+    (err as NodeJS.ErrnoException).code = 'NOT_FOUND';
+    throw err;
+  }
+
+  const doc = snap.data() as ContributionDocument;
+  const isOwner = doc.submission.contributorId === requestingUserId;
+  const isModerator = requestingUserRole === 'MODERATOR' || requestingUserRole === 'ADMIN';
+
+  if (!isOwner && !isModerator) {
+    const err = new Error('Permission denied: Only the contributor or a moderator may retract this contribution.');
+    (err as NodeJS.ErrnoException).code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  if (doc.status === 'RETRACTED') {
+    return doc; // Idempotent
+  }
+
+  const now = nowIso();
+  const updatedDoc: ContributionDocument = {
+    ...doc,
+    status: 'RETRACTED',
+    rejectionReason: reason ?? doc.rejectionReason ?? 'Retracted by contributor',
+    updatedAt: now,
+  };
+
+  ContributionDocumentSchema.parse(updatedDoc);
+  await db.collection(CONTRIBUTIONS_COLLECTION).doc(contributionId).set(updatedDoc);
+  return updatedDoc;
 }

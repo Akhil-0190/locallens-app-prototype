@@ -16,17 +16,19 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import { randomUUID } from 'node:crypto';
-import { ApiSuccessResponse, PassTier } from '../types/contracts/index.js';
+import { ApiSuccessResponse, PassTier, MerchantPlanTier } from '../types/contracts/index.js';
 import { TippingService } from './services/tipping-service.js';
 import { PassService } from './services/pass-service.js';
 import { MerchantSubscriptionService } from './services/merchant-subscription-service.js';
 import { ContributorProfileService } from './services/contributor-service.js';
+import { GuidanceService } from './services/guidance-service.js';
 import { defaultPaymentAdapter } from './adapters/sandbox-payment-adapter.js';
 
 const tippingService = new TippingService(defaultPaymentAdapter);
 const passService = new PassService(defaultPaymentAdapter);
 const merchantService = new MerchantSubscriptionService();
 const contributorService = new ContributorProfileService();
+const guidanceService = new GuidanceService(defaultPaymentAdapter);
 
 function requestId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 12);
@@ -327,5 +329,378 @@ export const getContributorAttribution = onCall(async (request) => {
   } catch (err: unknown) {
     logger.error('Error fetching contributor attribution', { error: err });
     throw new HttpsError('internal', (err as Error).message || 'Failed to fetch attribution.');
+  }
+});
+
+/**
+ * Callable: registerPartnerSubscription (A5-V-04)
+ * Registers a merchant partner subscription.
+ */
+export const registerPartnerSubscription = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const {
+    merchantPlaceId,
+    businessName,
+    contactEmail,
+    subscriptionPlan,
+    activeDiscountOffer,
+    durationDays,
+  } = (request.data as Record<string, unknown>) || {};
+
+  if (!merchantPlaceId || typeof merchantPlaceId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid merchantPlaceId is required.');
+  }
+  if (!businessName || typeof businessName !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid businessName is required.');
+  }
+  if (!contactEmail || typeof contactEmail !== 'string' || !contactEmail.includes('@')) {
+    throw new HttpsError('invalid-argument', 'Valid contactEmail is required.');
+  }
+  if (
+    !subscriptionPlan ||
+    !['COMMUNITY_FREE', 'VERIFIED_PARTNER', 'FEATURED_HERITAGE'].includes(subscriptionPlan as string)
+  ) {
+    throw new HttpsError('invalid-argument', 'Valid subscriptionPlan is required.');
+  }
+
+  if (activeDiscountOffer) {
+    const offer = activeDiscountOffer as Record<string, unknown>;
+    if (
+      typeof offer.discountPercent !== 'number' ||
+      offer.discountPercent < 1 ||
+      offer.discountPercent > 100
+    ) {
+      throw new HttpsError('invalid-argument', 'discountPercent must be between 1 and 100.');
+    }
+    if (typeof offer.terms !== 'string' || offer.terms.trim().length === 0) {
+      throw new HttpsError('invalid-argument', 'Valid terms string is required for discount offer.');
+    }
+  }
+
+  try {
+    const subscription = await merchantService.registerPartnerSubscription({
+      merchantPlaceId,
+      businessName,
+      contactEmail,
+      subscriptionPlan: subscriptionPlan as MerchantPlanTier,
+      activeDiscountOffer: activeDiscountOffer as
+        | { discountPercent: number; terms: string }
+        | undefined,
+      durationDays: typeof durationDays === 'number' ? durationDays : 365,
+    });
+
+    logger.info('Partner merchant subscription registered', {
+      subscriptionId: subscription.subscriptionId,
+      merchantPlaceId,
+      plan: subscriptionPlan,
+    });
+
+    return successEnvelope(subscription, startMs);
+  } catch (err: unknown) {
+    logger.error('Error registering partner subscription', { error: err });
+    throw new HttpsError('invalid-argument', (err as Error).message || 'Failed to register subscription.');
+  }
+});
+
+/**
+ * Callable: registerGuidanceOffering (A5-V-01)
+ * Local guide creates a 1-on-1 guidance offering.
+ */
+export const registerGuidanceOffering = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const {
+    neighborhood,
+    title,
+    description,
+    durationMinutes,
+    priceInr,
+    meetingPoint,
+    languages,
+  } = (request.data as Record<string, unknown>) || {};
+
+  if (!neighborhood || typeof neighborhood !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid neighborhood is required.');
+  }
+  if (!title || typeof title !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid title is required.');
+  }
+  if (typeof priceInr !== 'number' || priceInr < 100 || priceInr > 10000) {
+    throw new HttpsError('invalid-argument', 'priceInr must be between ₹100 and ₹10,000.');
+  }
+  if (typeof durationMinutes !== 'number' || durationMinutes < 15 || durationMinutes > 480) {
+    throw new HttpsError('invalid-argument', 'durationMinutes must be between 15 and 480.');
+  }
+  if (!meetingPoint || typeof meetingPoint !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid meetingPoint is required.');
+  }
+
+  try {
+    const offering = await guidanceService.registerOffering({
+      guideUserId: request.auth.uid,
+      neighborhood,
+      title,
+      description: typeof description === 'string' ? description : '',
+      durationMinutes,
+      priceInr,
+      meetingPoint,
+      languages: Array.isArray(languages) ? (languages as string[]) : ['English'],
+    });
+
+    return successEnvelope(offering, startMs);
+  } catch (err: unknown) {
+    logger.error('Error registering guidance offering', { error: err });
+    throw new HttpsError('invalid-argument', (err as Error).message || 'Failed to register offering.');
+  }
+});
+
+/**
+ * Callable: listGuidanceOfferings (A5-V-01)
+ * Browse available local guidance offerings.
+ */
+export const listGuidanceOfferings = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { neighborhood } = (request.data as Record<string, unknown>) || {};
+
+  try {
+    const offerings = await guidanceService.listOfferings(
+      typeof neighborhood === 'string' ? neighborhood : undefined
+    );
+    return successEnvelope(offerings, startMs);
+  } catch (err: unknown) {
+    logger.error('Error listing guidance offerings', { error: err });
+    throw new HttpsError('internal', (err as Error).message || 'Failed to list offerings.');
+  }
+});
+
+/**
+ * Callable: requestLocalGuidance (A5-V-01)
+ * Traveler books a 1-on-1 guidance session.
+ */
+export const requestLocalGuidance = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { offeringId, scheduledDateTime, specialNotes } =
+    (request.data as Record<string, unknown>) || {};
+
+  if (!offeringId || typeof offeringId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid offeringId is required.');
+  }
+  if (!scheduledDateTime || typeof scheduledDateTime !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid scheduledDateTime ISO string is required.');
+  }
+
+  try {
+    const result = await guidanceService.requestLocalGuidance({
+      travelerUserId: request.auth.uid,
+      offeringId,
+      scheduledDateTime,
+      specialNotes: typeof specialNotes === 'string' ? specialNotes : undefined,
+    });
+
+    return successEnvelope(result, startMs);
+  } catch (err: unknown) {
+    logger.error('Error requesting local guidance', { error: err });
+    throw new HttpsError('invalid-argument', (err as Error).message || 'Failed to request guidance.');
+  }
+});
+
+/**
+ * Callable: confirmGuidancePayment (A5-V-01)
+ * Traveler confirms payment for a guidance booking.
+ */
+export const confirmGuidancePayment = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { bookingId, simulatedOutcome } = (request.data as Record<string, unknown>) || {};
+  if (!bookingId || typeof bookingId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
+  }
+
+  try {
+    const result = await guidanceService.confirmGuidancePayment({
+      bookingId,
+      callerUserId: request.auth.uid,
+      simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
+    });
+
+    return successEnvelope(result, startMs);
+  } catch (err: unknown) {
+    logger.error('Error confirming guidance payment', { error: err });
+    throw new HttpsError('failed-precondition', (err as Error).message || 'Failed to confirm guidance payment.');
+  }
+});
+
+/**
+ * Callable: acceptGuidanceRequest (A5-V-01)
+ * Guide accepts a booking request.
+ */
+export const acceptGuidanceRequest = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { bookingId } = (request.data as Record<string, unknown>) || {};
+  if (!bookingId || typeof bookingId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
+  }
+
+  try {
+    const booking = await guidanceService.acceptGuidanceRequest({
+      bookingId,
+      callerUserId: request.auth.uid,
+    });
+    return successEnvelope(booking, startMs);
+  } catch (err: unknown) {
+    logger.error('Error accepting guidance request', { error: err });
+    throw new HttpsError('failed-precondition', (err as Error).message || 'Failed to accept guidance request.');
+  }
+});
+
+/**
+ * Callable: rejectGuidanceRequest (A5-V-01)
+ * Guide rejects a booking request.
+ */
+export const rejectGuidanceRequest = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { bookingId, reason } = (request.data as Record<string, unknown>) || {};
+  if (!bookingId || typeof bookingId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
+  }
+
+  try {
+    const booking = await guidanceService.rejectGuidanceRequest({
+      bookingId,
+      callerUserId: request.auth.uid,
+      reason: typeof reason === 'string' ? reason : undefined,
+    });
+    return successEnvelope(booking, startMs);
+  } catch (err: unknown) {
+    logger.error('Error rejecting guidance request', { error: err });
+    throw new HttpsError('failed-precondition', (err as Error).message || 'Failed to reject guidance request.');
+  }
+});
+
+/**
+ * Callable: cancelGuidanceBooking (A5-V-01)
+ * Traveler or guide cancels a booking.
+ */
+export const cancelGuidanceBooking = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { bookingId, reason } = (request.data as Record<string, unknown>) || {};
+  if (!bookingId || typeof bookingId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
+  }
+
+  try {
+    const booking = await guidanceService.cancelGuidanceBooking({
+      bookingId,
+      callerUserId: request.auth.uid,
+      reason: typeof reason === 'string' ? reason : undefined,
+    });
+    return successEnvelope(booking, startMs);
+  } catch (err: unknown) {
+    logger.error('Error cancelling guidance booking', { error: err });
+    throw new HttpsError('failed-precondition', (err as Error).message || 'Failed to cancel guidance booking.');
+  }
+});
+
+/**
+ * Callable: completeGuidanceBooking (A5-V-01)
+ * Completes session and disburses escrow net to guide reward ledger.
+ */
+export const completeGuidanceBooking = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { bookingId } = (request.data as Record<string, unknown>) || {};
+  if (!bookingId || typeof bookingId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
+  }
+
+  try {
+    const result = await guidanceService.completeGuidanceBooking({
+      bookingId,
+      callerUserId: request.auth.uid,
+    });
+    return successEnvelope(result, startMs);
+  } catch (err: unknown) {
+    logger.error('Error completing guidance booking', { error: err });
+    throw new HttpsError('failed-precondition', (err as Error).message || 'Failed to complete guidance booking.');
+  }
+});
+
+/**
+ * Callable: getGuidanceBooking (A5-V-01)
+ * Fetches guidance booking details.
+ */
+export const getGuidanceBooking = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { bookingId } = (request.data as Record<string, unknown>) || {};
+  if (!bookingId || typeof bookingId !== 'string') {
+    throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
+  }
+
+  try {
+    const role = (request.auth.token?.role as string) || undefined;
+    const booking = await guidanceService.getGuidanceBooking(bookingId, request.auth.uid, role);
+    return successEnvelope(booking, startMs);
+  } catch (err: unknown) {
+    logger.error('Error getting guidance booking', { error: err });
+    throw new HttpsError('permission-denied', (err as Error).message || 'Failed to get guidance booking.');
+  }
+});
+
+/**
+ * Callable: listMyGuidanceBookings (A5-V-01)
+ * Lists guidance bookings for the authenticated user as traveler or guide.
+ */
+export const listMyGuidanceBookings = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { role } = (request.data as Record<string, unknown>) || {};
+  const queryRole = role === 'guide' ? 'guide' : 'traveler';
+
+  try {
+    const bookings = await guidanceService.listMyGuidanceBookings(request.auth.uid, queryRole);
+    return successEnvelope(bookings, startMs);
+  } catch (err: unknown) {
+    logger.error('Error listing user guidance bookings', { error: err });
+    throw new HttpsError('internal', (err as Error).message || 'Failed to list guidance bookings.');
   }
 });

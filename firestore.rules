@@ -193,6 +193,35 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // -----------------------------------------------------------------------
+    // guidance_offerings/{offeringId} (Domain 11/12 One-on-One Local Guidance)
+    // -----------------------------------------------------------------------
+    // - Read: Any authenticated user (to browse guide offerings).
+    // - Write: Admin SDK only via Cloud Functions.
+    // -----------------------------------------------------------------------
+
+    match /guidance_offerings/{offeringId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // guidance_bookings/{bookingId} (Domain 11/12 Guidance Booking Lifecycle)
+    // -----------------------------------------------------------------------
+    // - Read: Traveler, Guide, or Moderator/Admin.
+    // - Write: STRICTLY DENIED for clients. Cloud Functions Admin SDK handles
+    //          booking lifecycle, state machine transitions, and escrow settlement.
+    // -----------------------------------------------------------------------
+
+    match /guidance_bookings/{bookingId} {
+      allow read: if isAuthenticated() && (
+        resource.data.travelerUserId == request.auth.uid ||
+        resource.data.guideUserId == request.auth.uid ||
+        isModerator()
+      );
+      allow create, update, delete: if false;
+    }
+
 
     // -----------------------------------------------------------------------
     // contributions/{contributionId}
