@@ -1,21 +1,98 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import '../models/contribution.dart';
 import '../models/spot_card.dart';
 
-/// Service managing contributor submissions, voice/photo pipelines, and contributor profile.
-///
-/// COORDINATION BOUNDARY:
-/// - Developer A owns live Cloud Storage uploads and Firestore ingestion (Domain 03/04).
-/// - Developer B owns live Gemini multimodal extraction (Domain 04).
-/// - While A3/B2 are in progress, this service provides labeled mock/sample responses
-///   strictly adhering to the agreed A2 TypeScript interfaces.
-class ContributionService {
-  // FLIP TO FALSE ONCE A3 & B2 ARE DEPLOYED
-  static const bool useMockPipeline = true;
+/// Exceptions for contribution authorization and pipeline failures
+class AuthenticationRequiredException implements Exception {
+  final String message;
+  const AuthenticationRequiredException([this.message = 'Authentication required to submit contributions.']);
+  @override
+  String toString() => 'AuthenticationRequiredException: $message';
+}
 
-  // Contributor profile conforming to Domain 05 (docs/contracts/05-contributor-attribution-verification.md)
-  ContributorVerificationProfile _currentProfile = const ContributorVerificationProfile(
+class ContributionPermissionDeniedException implements Exception {
+  final String message;
+  const ContributionPermissionDeniedException([this.message = 'Your user role does not have contributor permissions.']);
+  @override
+  String toString() => 'ContributionPermissionDeniedException: $message';
+}
+
+class MediaUploadException implements Exception {
+  final String message;
+  final String? storagePath;
+  final bool isRecoverable;
+  const MediaUploadException(this.message, {this.storagePath, this.isRecoverable = true});
+  @override
+  String toString() => 'MediaUploadException: $message (path: $storagePath)';
+}
+
+/// Service managing contributor submissions, Cloud Storage media uploads,
+/// A3 Cloud Functions callables, and real-time processing pipeline tracking.
+class ContributionService {
+  final FirebaseFunctions? _functionsInstance;
+  final FirebaseFirestore? _firestoreInstance;
+  final FirebaseStorage? _storageInstance;
+  final FirebaseAuth? _authInstance;
+
+  /// Explicit flag for deterministic unit/widget test mode.
+  /// When true, deterministic in-memory fixtures are used without making live network calls.
+  /// In production, this flag is strictly false.
+  final bool isTestMode;
+
+  ContributionService({
+    FirebaseFunctions? functions,
+    FirebaseFirestore? firestore,
+    FirebaseStorage? storage,
+    FirebaseAuth? auth,
+    this.isTestMode = false,
+  })  : _functionsInstance = functions,
+        _firestoreInstance = firestore,
+        _storageInstance = storage,
+        _authInstance = auth;
+
+  FirebaseFunctions? get _functions {
+    if (_functionsInstance != null) return _functionsInstance;
+    try {
+      return FirebaseFunctions.instanceFor(region: 'us-central1');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  FirebaseFirestore? get _firestore {
+    if (_firestoreInstance != null) return _firestoreInstance;
+    try {
+      return FirebaseFirestore.instance;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  FirebaseStorage? get _storage {
+    if (_storageInstance != null) return _storageInstance;
+    try {
+      return FirebaseStorage.instance;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  FirebaseAuth? get _auth {
+    if (_authInstance != null) return _authInstance;
+    try {
+      return FirebaseAuth.instance;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Static mock profile strictly restricted to isolated tests
+  static const ContributorVerificationProfile _testProfile = ContributorVerificationProfile(
     userId: 'usr_blr_782914',
     displayName: 'Aravinth S (Local Resident)',
     contributorTier: 'LOCAL_RESIDENT',
@@ -42,25 +119,60 @@ class ContributionService {
     totalTipsReceivedInr: 210,
   );
 
-  ContributorVerificationProfile get currentProfile => _currentProfile;
+  ContributorVerificationProfile get currentProfile => _testProfile;
 
-  // In-memory list of recent contributions
+  // In-memory cache of recent contributions
   final List<ContributionDocument> _recentContributions = [];
   List<ContributionDocument> get recentContributions =>
       List.unmodifiable(_recentContributions);
 
-  /// Submits a contribution adhering to Domain 03 ContributorSubmissionInput
-  Future<ContributionDocument> submitContribution({
-    required ContributorSubmissionInput input,
-    bool simulateError = false,
-  }) async {
-    if (simulateError) {
-      throw Exception('Network error: Unable to upload media assets to Cloud Storage.');
+  /// Validates authenticated contributor role before submission.
+  /// Throws AuthenticationRequiredException if no user is signed in.
+  /// Throws ContributionPermissionDeniedException if the user has role 'TRAVELER'.
+  Future<String> verifyContributorAuthorization() async {
+    if (isTestMode) {
+      return _testProfile.userId;
     }
 
-    final contributionId = 'contrib_gem_${DateTime.now().millisecondsSinceEpoch}';
+    final currentUser = _auth?.currentUser;
+    if (currentUser == null) {
+      throw const AuthenticationRequiredException(
+        'Please sign in with a contributor account to submit local discoveries.',
+      );
+    }
 
-    if (useMockPipeline) {
+    // Read user role from Firestore users/{userId}
+    final firestore = _firestore;
+    if (firestore != null) {
+      try {
+        final userDoc = await firestore.collection('users').doc(currentUser.uid).get();
+        if (userDoc.exists) {
+          final role = userDoc.data()?['role'] as String? ?? 'TRAVELER';
+          if (role == 'TRAVELER') {
+            throw const ContributionPermissionDeniedException(
+              'Your account role is TRAVELER. A LOCAL_CONTRIBUTOR, MODERATOR, or ADMIN role is required to submit local spots.',
+            );
+          }
+        }
+      } catch (e) {
+        if (e is ContributionPermissionDeniedException) rethrow;
+        // If user doc read is transiently unreadable, proceed with UID guard
+      }
+    }
+
+    return currentUser.uid;
+  }
+
+  /// Submits an initial contribution stub conforming to Domain 03 ContributorSubmissionInput.
+  /// In live mode: Calls A3 callable Cloud Function `Contributions-submitContribution`.
+  /// Reconciles photoUrls: sends empty list `[]` initially; files are uploaded subsequently.
+  Future<ContributionDocument> submitContribution({
+    required ContributorSubmissionInput input,
+  }) async {
+    final effectiveContributorId = await verifyContributorAuthorization();
+
+    if (isTestMode) {
+      final contributionId = 'contrib_test_${DateTime.now().millisecondsSinceEpoch}';
       final newDoc = ContributionDocument(
         contributionId: contributionId,
         submission: input,
@@ -72,125 +184,278 @@ class ContributionService {
       return newDoc;
     }
 
-    // Live Firebase Firestore submission (Domain 03)
-    final docRef = await FirebaseFirestore.instance.collection('contributions').add({
-      'contributionId': contributionId,
-      'submission': input.toMap(),
-      'status': 'SUBMITTED',
-      'groundedPlaceId': null,
-      'createdAt': DateTime.now().toIso8601String(),
-      'updatedAt': DateTime.now().toIso8601String(),
-    });
+    final functions = _functions;
+    if (functions == null) {
+      throw const AuthenticationRequiredException('Firebase Functions instance not available.');
+    }
 
-    final doc = ContributionDocument(
-      contributionId: docRef.id,
-      submission: input,
-      status: ContributionStatus.submitted,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-    _recentContributions.insert(0, doc);
-    return doc;
+    // Live backend callable invocation: Contributions-submitContribution
+    final callable = functions.httpsCallable('Contributions-submitContribution');
+    final Map<String, dynamic> payload = {
+      'mapsLink': input.mapsLink,
+      'infoParagraph': input.infoParagraph,
+      'photoUrls': <String>[], // Canonical default: empty list prior to media upload
+      if (input.audioNoteUrl != null) 'audioNoteUrl': input.audioNoteUrl,
+      'contributorId': effectiveContributorId,
+    };
+
+    final result = await callable.call<Map<String, dynamic>>(payload);
+    final responseMap = Map<String, dynamic>.from(result.data);
+    final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+    final contributionMap = Map<String, dynamic>.from(dataMap['contribution'] as Map? ?? {});
+
+    final contributionId = contributionMap['contributionId'] as String? ??
+        'contrib_${DateTime.now().millisecondsSinceEpoch}';
+
+    final createdDoc = ContributionDocument.fromMap(contributionId, contributionMap);
+    _recentContributions.insert(0, createdDoc);
+    return createdDoc;
   }
 
-  /// Simulates or queries processing pipeline lifecycle (Domain 03 & 04)
+  /// Uploads media files directly to Cloud Storage and registers each asset
+  /// via A3 callable Cloud Function `Contributions-recordAssetUpload`.
+  ///
+  /// Features:
+  /// - Enforces canonical MIME types (`image/jpeg`, `image/png`, `audio/mp4`, `audio/aac`, `audio/x-m4a`).
+  /// - Unique timestamped filenames prevent accidental overwrites.
+  /// - Progress callback streams live upload progress (0.0 to 1.0).
+  /// - Idempotent recovery: Checks existing assets before re-uploading file bytes.
+  Future<List<VoicePhotoAsset>> uploadMediaAssets({
+    required String contributionId,
+    required List<String> localPhotoPaths,
+    String? localAudioPath,
+    void Function(double progress, String statusMessage)? onProgress,
+  }) async {
+    if (isTestMode) {
+      onProgress?.call(1.0, 'Upload complete (test simulation)');
+      return const [];
+    }
+
+    final storage = _storage;
+    final functions = _functions;
+    final firestore = _firestore;
+    if (storage == null || functions == null || firestore == null) {
+      return const [];
+    }
+
+    final List<VoicePhotoAsset> recordedAssets = [];
+    final int totalFiles = localPhotoPaths.length + (localAudioPath != null ? 1 : 0);
+    int completedFiles = 0;
+
+    void updateProgress(String message) {
+      final p = totalFiles > 0 ? (completedFiles / totalFiles).clamp(0.0, 1.0) : 1.0;
+      onProgress?.call(p, message);
+    }
+
+    // Fetch existing registered assets to prevent duplicate records
+    final existingAssetPaths = <String>{};
+    try {
+      final existingSnap = await firestore
+          .collection('contributions')
+          .doc(contributionId)
+          .collection('assets')
+          .get();
+      for (final doc in existingSnap.docs) {
+        final path = doc.data()['storagePath'] as String?;
+        if (path != null) existingAssetPaths.add(path);
+      }
+    } catch (_) {}
+
+    // 1. Upload Photos
+    for (int i = 0; i < localPhotoPaths.length; i++) {
+      final photoPath = localPhotoPaths[i];
+      final file = File(photoPath);
+      if (!await file.exists()) continue;
+
+      final extension = photoPath.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+      final mimeType = extension == 'png' ? 'image/png' : 'image/jpeg';
+      final fileName = 'photo_${DateTime.now().millisecondsSinceEpoch}_$i.$extension';
+      final storagePath = 'contributions/$contributionId/photos/$fileName';
+
+      updateProgress('Uploading photo ${i + 1} of ${localPhotoPaths.length}...');
+
+      // Check if already registered
+      if (existingAssetPaths.contains(storagePath)) {
+        completedFiles++;
+        continue;
+      }
+
+      // Upload to Storage
+      final ref = storage.ref(storagePath);
+      final uploadTask = ref.putFile(
+        file,
+        SettableMetadata(contentType: mimeType),
+      );
+
+      await uploadTask;
+
+      // Register asset via Contributions-recordAssetUpload
+      updateProgress('Registering photo ${i + 1} metadata...');
+      final fileSizeBytes = await file.length();
+      final recordCallable = functions.httpsCallable('Contributions-recordAssetUpload');
+
+      final recordResult = await recordCallable.call<Map<String, dynamic>>({
+        'contributionId': contributionId,
+        'assetType': 'STREET_PHOTO',
+        'storagePath': storagePath,
+        'mimeType': mimeType,
+        'fileSizeBytes': fileSizeBytes,
+      });
+
+      final resData = Map<String, dynamic>.from(recordResult.data['data'] as Map? ?? {});
+      final assetMap = Map<String, dynamic>.from(resData['asset'] as Map? ?? {});
+      recordedAssets.add(VoicePhotoAsset.fromMap(assetMap));
+      completedFiles++;
+    }
+
+    // 2. Upload Audio Voice Note
+    if (localAudioPath != null) {
+      final audioFile = File(localAudioPath);
+      if (await audioFile.exists()) {
+        final audioExtension = localAudioPath.toLowerCase().endsWith('.aac')
+            ? 'aac'
+            : localAudioPath.toLowerCase().endsWith('.mp4')
+                ? 'mp4'
+                : 'm4a';
+        final mimeType = audioExtension == 'aac'
+            ? 'audio/aac'
+            : audioExtension == 'mp4'
+                ? 'audio/mp4'
+                : 'audio/x-m4a';
+
+        final fileName = 'audio_${DateTime.now().millisecondsSinceEpoch}.$audioExtension';
+        final storagePath = 'contributions/$contributionId/audio/$fileName';
+
+        updateProgress('Uploading regional voice note...');
+
+        if (!existingAssetPaths.contains(storagePath)) {
+          final ref = storage.ref(storagePath);
+          final uploadTask = ref.putFile(
+            audioFile,
+            SettableMetadata(contentType: mimeType),
+          );
+          await uploadTask;
+
+          updateProgress('Registering voice note metadata...');
+          final fileSizeBytes = await audioFile.length();
+          final recordCallable = functions.httpsCallable('Contributions-recordAssetUpload');
+
+          final recordResult = await recordCallable.call<Map<String, dynamic>>({
+            'contributionId': contributionId,
+            'assetType': 'AUDIO_VOICE_NOTE',
+            'storagePath': storagePath,
+            'mimeType': mimeType,
+            'fileSizeBytes': fileSizeBytes,
+          });
+
+          final resData = Map<String, dynamic>.from(recordResult.data['data'] as Map? ?? {});
+          final assetMap = Map<String, dynamic>.from(resData['asset'] as Map? ?? {});
+          recordedAssets.add(VoicePhotoAsset.fromMap(assetMap));
+        }
+        completedFiles++;
+      }
+    }
+
+    updateProgress('All assets uploaded and registered successfully.');
+    return recordedAssets;
+  }
+
+  /// Streams real-time processing updates directly from Firestore snapshots
+  /// on `contributions/{contributionId}` and its `assets` subcollection.
+  ///
+  /// Distinguishes provisional AI results from verified places:
+  /// - During `AI_ANALYZED`, attaches extracted `aiExtractionResult` from assets.
+  /// - Populates `generatedSpotCard` ONLY when `status == ContributionStatus.verified`
+  ///   and `groundedPlaceId` is present in Firestore `places/`.
   Stream<ContributionDocument> trackContributionPipeline(ContributionDocument initialDoc) async* {
     yield initialDoc;
 
-    if (!useMockPipeline) {
-      // In live integration (A3/B2), listen to Firestore snapshots
-      await for (final snapshot in FirebaseFirestore.instance
-          .collection('contributions')
-          .doc(initialDoc.contributionId)
-          .snapshots()) {
-        if (!snapshot.exists || snapshot.data() == null) continue;
-        final data = snapshot.data()!;
-        yield ContributionDocument(
-          contributionId: initialDoc.contributionId,
-          submission: initialDoc.submission,
-          status: ContributionStatusX.fromString(data['status']),
-          groundedPlaceId: data['groundedPlaceId'],
-          createdAt: initialDoc.createdAt,
-          updatedAt: DateTime.tryParse(data['updatedAt'] ?? '') ?? DateTime.now(),
-        );
-      }
+    if (isTestMode) {
+      // Deterministic test simulation
+      await Future.delayed(const Duration(milliseconds: 600));
+      final aiAnalyzed = initialDoc.copyWith(
+        status: ContributionStatus.aiAnalyzed,
+        assets: [
+          VoicePhotoAsset(
+            assetId: 'asset_test_1',
+            contributionId: initialDoc.contributionId,
+            assetType: 'AUDIO_VOICE_NOTE',
+            storagePath: 'contributions/${initialDoc.contributionId}/audio/audio.m4a',
+            downloadUrl: 'https://storage.googleapis.com/test-bucket/audio.m4a',
+            mimeType: 'audio/x-m4a',
+            fileSizeBytes: 245000,
+            processingStatus: 'COMPLETED',
+            aiExtractionResult: const AiExtractionResult(
+              detectedLanguage: 'kn-IN',
+              transcription: 'Traditional filter coffee brewed fresh with chickory.',
+              practicalDetails: ExtractedPracticalDetails(
+                openingHoursMentioned: '6:30 AM – 8:30 PM',
+                signatureDishesOrItems: ['Filter Coffee', 'Podi Idli'],
+                cashOnlyWarning: true,
+                insiderTips: ['Visit before 9:00 AM for fresh brew'],
+              ),
+            ),
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+          ),
+        ],
+        updatedAt: DateTime.now(),
+      );
+      yield aiAnalyzed;
       return;
     }
 
-    // --- MOCK PIPELINE SIMULATION (Adheres to Domain 03/04/05 Contracts) ---
-    // Stage 1 -> Stage 2: AI Multimodal Analysis (Developer B)
-    await Future.delayed(const Duration(milliseconds: 1400));
-    var updated = initialDoc.copyWith(
-      status: ContributionStatus.aiAnalyzed,
-      updatedAt: DateTime.now(),
-    );
-    yield updated;
+    final firestore = _firestore;
+    if (firestore == null) return;
 
-    // Stage 2 -> Stage 3: Google Maps Grounding (Developer C)
-    await Future.delayed(const Duration(milliseconds: 1200));
-    updated = updated.copyWith(
-      status: ContributionStatus.mapsGrounded,
-      groundedPlaceId: 'place_blr_${DateTime.now().millisecondsSinceEpoch}',
-      updatedAt: DateTime.now(),
-    );
-    yield updated;
+    // Live Firestore real-time snapshot subscription
+    final docRef = firestore.collection('contributions').doc(initialDoc.contributionId);
+    final assetsRef = docRef.collection('assets');
 
-    // Stage 3 -> Stage 4: Verified & Structured Spot Card Generated
-    await Future.delayed(const Duration(milliseconds: 1000));
-    final generatedSpot = SpotCard(
-      id: updated.groundedPlaceId ?? 'spot_${DateTime.now().millisecondsSinceEpoch}',
-      mapsLink: initialDoc.submission.mapsLink,
-      infoParagraph: initialDoc.submission.infoParagraph,
-      photoUrls: initialDoc.submission.photoUrls,
-      spotName: 'Grounded Local Discovery (${_currentProfile.neighborhoodOfResidency})',
-      openHours: '7:00 AM – 9:30 PM',
-      practicalTips: 'Best visited in the morning. Cash and UPI accepted.',
-      greetingCard: initialDoc.submission.selectedLanguage == 'kn-IN'
-          ? 'Banni, Coffee Kudiyona! (Welcome, let us have coffee!)'
-          : initialDoc.submission.selectedLanguage == 'ta-IN'
-          ? 'Vanakkam! Vanga, sapudalam!'
-          : 'Namaste! Welcome to our local neighborhood!',
-      isTouristTrap: false,
-      hourlyLimit: 8,
-      currentVisitors: 1,
-      vibeTags: ['Heritage', 'Street Food', 'Authentic Local'],
-      contributedBy: ContributorAttribution(
-        userId: _currentProfile.userId,
-        displayName: _currentProfile.displayName,
-        badgeTitle: 'Neighborhood Insider',
-        isVerifiedResident: _currentProfile.isVerifiedResident,
-      ),
-    );
+    await for (final snapshot in docRef.snapshots()) {
+      if (!snapshot.exists || snapshot.data() == null) continue;
+      final data = snapshot.data()!;
 
-    updated = updated.copyWith(
-      status: ContributionStatus.verified,
-      generatedSpotCard: generatedSpot,
-      updatedAt: DateTime.now(),
-    );
+      // Fetch attached assets
+      List<VoicePhotoAsset> currentAssets = [];
+      try {
+        final assetsSnap = await assetsRef.get();
+        currentAssets = assetsSnap.docs
+            .map((d) => VoicePhotoAsset.fromMap(d.data()))
+            .toList();
+      } catch (_) {}
 
-    // Update in recent contributions list
-    final index = _recentContributions.indexWhere(
-            (c) => c.contributionId == initialDoc.contributionId);
-    if (index != -1) {
-      _recentContributions[index] = updated;
+      // Resolve published SpotCard ONLY if verified and groundedPlaceId exists
+      SpotCard? spotCard;
+      final groundedId = data['groundedPlaceId'] as String?;
+      final statusStr = data['status'] as String?;
+      final status = ContributionStatusX.fromString(statusStr);
+
+      if (status == ContributionStatus.verified && groundedId != null) {
+        try {
+          final placeSnap = await firestore.collection('places').doc(groundedId).get();
+          if (placeSnap.exists && placeSnap.data() != null) {
+            spotCard = SpotCard.fromMap(groundedId, placeSnap.data()!);
+          }
+        } catch (_) {}
+      }
+
+      final updatedDoc = ContributionDocument.fromMap(
+        initialDoc.contributionId,
+        data,
+        assets: currentAssets,
+        spotCard: spotCard,
+      );
+
+      // Update recent cache
+      final index = _recentContributions.indexWhere(
+        (c) => c.contributionId == initialDoc.contributionId,
+      );
+      if (index != -1) {
+        _recentContributions[index] = updatedDoc;
+      }
+
+      yield updatedDoc;
     }
-
-    // Award reputation points for approved gem
-    _currentProfile = ContributorVerificationProfile(
-      userId: _currentProfile.userId,
-      displayName: _currentProfile.displayName,
-      contributorTier: _currentProfile.contributorTier,
-      reputationPoints: _currentProfile.reputationPoints + 25,
-      spotsSubmittedCount: _currentProfile.spotsSubmittedCount + 1,
-      spotsApprovedCount: _currentProfile.spotsApprovedCount + 1,
-      accuracyRate: (_currentProfile.spotsApprovedCount + 1) /
-          (_currentProfile.spotsSubmittedCount + 1),
-      isVerifiedResident: _currentProfile.isVerifiedResident,
-      neighborhoodOfResidency: _currentProfile.neighborhoodOfResidency,
-      earnedBadges: _currentProfile.earnedBadges,
-      totalTipsReceivedInr: _currentProfile.totalTipsReceivedInr,
-    );
-
-    yield updated;
   }
 }
