@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'package:drift/drift.dart' as drift;
+import '../database/app_database.dart';
+
 // Domain 08: Routes & Route Stops and Domain 07: Venue Capacity & Alternatives
 // Reference: docs/contracts/08-routes-and-route-stops.md & docs/contracts/07-venue-capacity-and-alternatives.md
 
@@ -223,6 +227,68 @@ class WalkingRoute {
         'createdAt': createdAt,
         'updatedAt': updatedAt,
       };
+
+  factory WalkingRoute.fromJson(Map<String, dynamic> json) =>
+      WalkingRoute.fromMap(json);
+
+  Map<String, dynamic> toJson() => toMap();
+
+  LocalRoutesCompanion toCompanion() {
+    return LocalRoutesCompanion.insert(
+      routeId: routeId,
+      title: title,
+      neighborhood: neighborhood,
+      theme: theme,
+      originJson: jsonEncode(origin.toMap()),
+      destinationJson: jsonEncode(destination.toMap()),
+      waypointsJson: jsonEncode(waypoints.map((w) => w.toMap()).toList()),
+      waypointPlaceIdsJson: jsonEncode(waypointPlaceIds),
+      optimizedWaypointOrderJson: jsonEncode(optimizedWaypointOrder),
+      totalDistanceMeters: totalDistanceMeters,
+      totalDurationSeconds: totalDurationSeconds,
+      formattedDistance: formattedDistance,
+      formattedDuration: formattedDuration,
+      encodedPolyline: encodedPolyline,
+      legsJson: jsonEncode(legs.map((l) => l.toMap()).toList()),
+      isMockData: drift.Value(isMockData),
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  static WalkingRoute fromLocalRoute(LocalRoute row) {
+    return WalkingRoute(
+      routeId: row.routeId,
+      title: row.title,
+      neighborhood: row.neighborhood,
+      theme: row.theme,
+      origin: NormalizedCoordinate.fromMap(
+          Map<String, dynamic>.from(jsonDecode(row.originJson))),
+      destination: NormalizedCoordinate.fromMap(
+          Map<String, dynamic>.from(jsonDecode(row.destinationJson))),
+      waypoints: (jsonDecode(row.waypointsJson) as List)
+          .map((w) => NormalizedCoordinate.fromMap(Map<String, dynamic>.from(w)))
+          .toList(),
+      waypointPlaceIds: (jsonDecode(row.waypointPlaceIdsJson) as List)
+          .map((p) => p.toString())
+          .toList(),
+      optimizedWaypointOrder:
+          (jsonDecode(row.optimizedWaypointOrderJson) as List)
+              .map((o) => (o as num).toInt())
+              .toList(),
+      totalDistanceMeters: row.totalDistanceMeters,
+      totalDurationSeconds: row.totalDurationSeconds,
+      formattedDistance: row.formattedDistance,
+      formattedDuration: row.formattedDuration,
+      encodedPolyline: row.encodedPolyline,
+      legs: (jsonDecode(row.legsJson) as List)
+          .map((l) => RouteLeg.fromMap(Map<String, dynamic>.from(l)))
+          .toList(),
+      isMockData: row.isMockData,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    );
+  }
 }
 
 /// Domain 07: Disruption and Alternative Options

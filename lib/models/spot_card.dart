@@ -28,6 +28,8 @@ class SpotCard {
   final List<String> categories;
   final bool isVerified;
   final bool isMockData;
+  final double? latitude;
+  final double? longitude;
 
   SpotCard({
     required this.id,
@@ -55,6 +57,8 @@ class SpotCard {
     this.categories = const [],
     this.isVerified = true,
     this.isMockData = true,
+    this.latitude,
+    this.longitude,
   });
 
   factory SpotCard.fromMap(String id, Map<String, dynamic> data) {
@@ -105,6 +109,8 @@ class SpotCard {
       categories: List<String>.from(data['categories'] ?? []),
       isVerified: data['isVerified'] ?? true,
       isMockData: data['isMockData'] ?? true,
+      latitude: (data['location']?['latitude'] ?? data['latitude'] as num?)?.toDouble(),
+      longitude: (data['location']?['longitude'] ?? data['longitude'] as num?)?.toDouble(),
     );
   }
 
