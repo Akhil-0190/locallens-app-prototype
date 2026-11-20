@@ -26,6 +26,7 @@ import {
   GroupBlendAndMatchInput,
   DietaryProvenance,
   PlaceDietaryEvidence,
+  TRUSTED_SERVER_AUTH_SYMBOL,
 } from '../schemas/matching-schemas.js';
 import {
   generateEmbedding,
@@ -545,8 +546,17 @@ export async function matchSoloPreferences(
       dietarySafetyVerified = false; // default to false until proven verified
       let allVerifiedSafe = true;
 
+      // Runtime Security Boundary: External callers cannot influence verification via options or JSON fields.
+      // Verification is strictly granted ONLY when called with unforgeable TRUSTED_SERVER_AUTH_SYMBOL.
+      const isTrustedServer = Boolean(
+        input.internalSecurityContext &&
+        input.internalSecurityContext[TRUSTED_SERVER_AUTH_SYMBOL] === true
+      );
+
       for (const diet of userDiets) {
-        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence, options);
+        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence, {
+          trustedServerVerification: isTrustedServer,
+        });
         if (evalResult.status === 'CONFLICT_DETECTED') {
           dietaryStatus = 'CONFLICT_DETECTED';
           allVerifiedSafe = false;
@@ -748,8 +758,17 @@ export async function matchGroupPreferences(
       dietarySafetyVerified = false;
       let allVerifiedSafe = true;
 
+      // Runtime Security Boundary: External callers cannot influence verification via options or JSON fields.
+      // Verification is strictly granted ONLY when called with unforgeable TRUSTED_SERVER_AUTH_SYMBOL.
+      const isTrustedServer = Boolean(
+        input.internalSecurityContext &&
+        input.internalSecurityContext[TRUSTED_SERVER_AUTH_SYMBOL] === true
+      );
+
       for (const diet of consensus.dietaryConstraintsUnion) {
-        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence, options);
+        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence, {
+          trustedServerVerification: isTrustedServer,
+        });
         if (evalResult.status === 'CONFLICT_DETECTED') {
           dietaryStatus = 'CONFLICT_DETECTED';
           allVerifiedSafe = false;

@@ -136,6 +136,9 @@ Each group recommendation calculates a per-member satisfaction score (`memberSat
   `spotCard.id == matchResult.placeId`.
 - D3's `SpotCardTile` renders the canonical place details (authenticity, capacity, timing) augmented by the match breakdown: `matchScore`, `breakdown`, `topMatchReasons`, `compromiseAlerts`, and suppresses unrecommended items (`isRecommended: false`).
 
+> [!NOTE]
+> **Cross-Developer Coordination Note:** The technical association between `SpotCard.id` and `placeId`, the separate Dart response model (`PlaceMatchResult`), the retirement of `TravelerService.useMockDiscovery`, and the proposed ownership split (B owns Cloud Function endpoint; D owns Dart models, service caller, and UI widgets) have been formally proposed in coordination logs. Direct live acknowledgement from Developer D remains outstanding pending cross-team review.
+
 ```json
 {
   "placeId": "spot_ctr_1924",
@@ -163,7 +166,7 @@ Each group recommendation calculates a per-member satisfaction score (`memberSat
 
 ---
 
-## 6. Verification Scenarios (17 Scenarios / 130 Assertions Passed)
+## 6. Verification Scenarios (17 Scenarios / 139 Assertions Passed)
 
 | # | Scenario | Verification Focus | Result |
 |---|---|---|---|

@@ -145,8 +145,18 @@ export const GroupPlaceMatchResultSchema = z.object({
 export type GroupPlaceMatchResult = z.infer<typeof GroupPlaceMatchResultSchema>;
 
 // ==============================================================================
-// 5. Service Inputs
+// 5. Service Inputs & Internal Security Context
 // ==============================================================================
+
+/**
+ * Unforgeable runtime symbol used exclusively for internal backend trust attestation.
+ * Cannot be constructed, parsed, or forged through JSON payloads or external HTTP calls.
+ */
+export const TRUSTED_SERVER_AUTH_SYMBOL: unique symbol = Symbol.for('@locallens/trusted_server_auth');
+
+export interface InternalSecurityContext {
+  readonly [TRUSTED_SERVER_AUTH_SYMBOL]?: boolean;
+}
 
 export interface SoloMatchInput {
   preferences: z.infer<typeof TravelerPreferencesDocumentSchema>;
@@ -163,9 +173,9 @@ export interface SoloMatchInput {
   options?: {
     forceOffline?: boolean;
     allowTestAdapterFallback?: boolean;
-    /** Server-side trusted verification authority attestation. Inactive for ordinary caller payloads. */
-    trustedServerVerification?: boolean;
   };
+  /** Internal-only security context. Stripped from all external/public APIs. */
+  internalSecurityContext?: InternalSecurityContext;
 }
 
 export interface GroupBlendAndMatchInput {
@@ -185,7 +195,7 @@ export interface GroupBlendAndMatchInput {
   options?: {
     forceOffline?: boolean;
     allowTestAdapterFallback?: boolean;
-    /** Server-side trusted verification authority attestation. Inactive for ordinary caller payloads. */
-    trustedServerVerification?: boolean;
   };
+  /** Internal-only security context. Stripped from all external/public APIs. */
+  internalSecurityContext?: InternalSecurityContext;
 }

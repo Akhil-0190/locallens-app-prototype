@@ -40,6 +40,7 @@ import {
   SoloPlaceMatchResultSchema,
   GroupPlaceMatchResultSchema,
   PlaceDietaryEvidence,
+  TRUSTED_SERVER_AUTH_SYMBOL,
 } from '../src/ai/schemas/matching-schemas.js';
 
 // Verifiable Dietary Evidence Fixtures (Domain 09 Grounding Guardrails)
@@ -279,8 +280,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   const topVegMatch = soloVegResults[0]!;
@@ -506,6 +507,110 @@ async function runB4Tests() {
     'Anti-Manufacture: Caller-supplied certification cannot manufacture isRecommended: true'
   );
 
+  // Security Boundary Bypass Attempt 1: Caller sends options.trustedServerVerification in payload
+  const bypassPayload1 = JSON.parse(
+    JSON.stringify({
+      preferences: soloVegTraveler,
+      places: [sampleHeritageDosaSpot],
+      dietaryEvidenceMap: {
+        [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+      },
+      options: {
+        trustedServerVerification: true,
+      },
+    })
+  );
+  const bypassResults1 = await matchSoloPreferences(bypassPayload1);
+  assert(
+    bypassResults1[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Security Boundary: External payload options.trustedServerVerification is ignored at runtime'
+  );
+  assert(
+    bypassResults1[0]!.dietarySafetyVerified === false,
+    'Security Boundary: External options cannot forge dietarySafetyVerified'
+  );
+  assert(
+    bypassResults1[0]!.isRecommended === false,
+    'Security Boundary: External options cannot forge isRecommended: true'
+  );
+
+  // Security Boundary Bypass Attempt 2: Caller sends top-level trustedServerVerification in payload
+  const bypassPayload2 = JSON.parse(
+    JSON.stringify({
+      preferences: soloVegTraveler,
+      places: [sampleHeritageDosaSpot],
+      dietaryEvidenceMap: {
+        [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+      },
+      trustedServerVerification: true,
+    })
+  );
+  const bypassResults2 = await matchSoloPreferences(bypassPayload2);
+  assert(
+    bypassResults2[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Security Boundary: External top-level trustedServerVerification is ignored'
+  );
+  assert(
+    bypassResults2[0]!.isRecommended === false,
+    'Security Boundary: Top-level forged field cannot recommend venue'
+  );
+
+  // Security Boundary Bypass Attempt 3: Caller sends JSON internalSecurityContext with string key
+  const bypassPayload3 = JSON.parse(
+    JSON.stringify({
+      preferences: soloVegTraveler,
+      places: [sampleHeritageDosaSpot],
+      dietaryEvidenceMap: {
+        [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+      },
+      internalSecurityContext: {
+        trustedServerVerification: true,
+      },
+    })
+  );
+  const bypassResults3 = await matchSoloPreferences(bypassPayload3);
+  assert(
+    bypassResults3[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Security Boundary: JSON string key internalSecurityContext cannot forge Symbol key'
+  );
+  assert(
+    bypassResults3[0]!.isRecommended === false,
+    'Security Boundary: String-keyed JSON context cannot recommend venue'
+  );
+
+  // Security Boundary Bypass Attempt 4: Group matching external caller bypass attempt
+  const bypassGroupPayload = JSON.parse(
+    JSON.stringify({
+      neighborhood: 'Malleshwaram',
+      members: [
+        {
+          userId: 'usr_veg_bypass',
+          displayName: 'Bypass Tester',
+          vibes: ['heritage'],
+          dietaryRestrictions: ['pure_veg'],
+          maxBudgetAmount: 250,
+          weighting: 1.0,
+        },
+      ],
+      places: [sampleHeritageDosaSpot],
+      dietaryEvidenceMap: {
+        [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
+      },
+      options: {
+        trustedServerVerification: true,
+      },
+    })
+  );
+  const bypassGroupResults = await matchGroupPreferences(bypassGroupPayload);
+  assert(
+    bypassGroupResults[0]!.dietaryStatus === 'UNVERIFIED_DATA',
+    'Security Boundary: Group external options.trustedServerVerification is ignored'
+  );
+  assert(
+    bypassGroupResults[0]!.isRecommended === false,
+    'Security Boundary: Group external options cannot recommend venue'
+  );
+
   // Anti-Manufacture Case: FSSAI general food business license rejected as dietary certification
   const caseFssaiResults = await matchSoloPreferences({
     preferences: soloVegTraveler,
@@ -513,8 +618,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: fssaiLicenseEvidence,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -537,8 +642,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: expiredCertEvidence,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -556,8 +661,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: revokedCertEvidence,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -598,8 +703,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -622,8 +727,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedCommunityAuditVeg,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -646,8 +751,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification, // scope is pure_veg only, not vegan!
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -669,8 +774,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification, // scope is pure_veg only, not jain!
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -877,8 +982,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
   });
   assert(
@@ -929,8 +1034,8 @@ async function runB4Tests() {
     dietaryEvidenceMap: {
       [sampleHeritageDosaSpot.id]: verifiedPureVegCertification,
     },
-    options: {
-      trustedServerVerification: true,
+    internalSecurityContext: {
+      [TRUSTED_SERVER_AUTH_SYMBOL]: true,
     },
     routeContext: {
       totalWalkingDurationMinutes: 20,
