@@ -260,7 +260,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'NOT A CLOUD API MODEL ID. Edge open-weights instruction-tuned artifact: unsloth/gemma-4-E2B-it-GGUF pinned at commit SHA 90f9618340396838ee7ff5b0ba2da27da62953d3 (canonical artifact gemma-4-E2B-it-Q4_K_M.gguf, ~3.11GB, SHA-256: 740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8; alternative gemma-4-E2B-it-Q8_0.gguf, ~5.05GB) executed via llama.cpp native runtime (libllama.so on arm64-v8a). Provisional dynamic available RAM requirement >= 3,500 MB (device total RAM >= 8,192 MB recommended; static totalRamMb >= 3000 is insufficient). Governed by Gemma Open Model Terms of Use. Untested on physical ARM64 hardware; client platform bridge owned by Developer D.',
+    notes: 'NOT A CLOUD API MODEL ID. Edge open-weights instruction-tuned artifact: unsloth/gemma-4-E2B-it-GGUF pinned at commit SHA 90f9618340396838ee7ff5b0ba2da27da62953d3 (canonical artifact gemma-4-E2B-it-Q4_K_M.gguf, ~3.11GB, SHA-256: 740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8; alternative gemma-4-E2B-it-Q8_0.gguf, ~5.05GB) executed via llama.cpp native runtime (libllama.so on arm64-v8a). Provisional dynamic available RAM requirement >= 3,500 MB (device total RAM >= 8,192 MB recommended; static totalRamMb >= 3000 is insufficient). Licensed under Apache License 2.0 as declared in repository metadata and model card at pinned revision 90f96183. Untested on physical ARM64 hardware; client platform bridge owned by Developer D.',
   },
 };
 

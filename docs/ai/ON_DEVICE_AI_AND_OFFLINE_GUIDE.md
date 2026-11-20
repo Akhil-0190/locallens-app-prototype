@@ -194,9 +194,9 @@ To prevent architectural conflation, execution responsibilities are strictly sep
   - Artifact `mmproj-BF16.gguf` (~987 MB) exists in the repository.
   - **Verification for B6:** Our frozen B6 scope is strictly text-based on-device assistance (offline note summarization, keyword extraction, spot practical Q&A). **The multimodal projector is NOT required for B6 functionality.** We do not claim local camera/audio multimodal support.
 * **Exact Licensing Evidence:**
-  - **Hugging Face Repository License:** Tagged as **Apache License 2.0** (`apache-2.0`) in the model card metadata.
-  - **Underlying Google Foundation Weights:** Governed by the **Gemma Open Model Terms of Use** (commercial use permitted, attribution required, standard use restrictions).
-  - **Redistribution Terms:** Non-redistributable inside the closed APK; must be downloaded on-demand to the app cache upon user selection.
+  - **Model Card & Repository License:** Tagged as **Apache License 2.0** (`apache-2.0`) in the model card metadata and pinned revision `90f9618340396838ee7ff5b0ba2da27da62953d3`.
+  - **Applicable Terms:** Governed by the Apache License 2.0 terms, permitting commercial use, modification, distribution, and private deployment, subject to standard Apache 2.0 attribution and notice terms.
+  - **Distribution:** Downloaded on-demand to the app cache upon user selection to avoid bundling ~3.11 GB into the base APK.
 
 ### 3.2 Android ARM64 Build Configuration (`llama.cpp`)
 To cross-compile `llama.cpp` for Android ARM64, CMake is configured with the Android NDK r26d+ toolchain:
@@ -268,7 +268,7 @@ cmake --build build-android --config Release -j4
 | **Gemini Nano Readiness API** | **AWAITING D** | `android/app/.../MainActivity.kt` | Reference implementation provided; D to add Gradle dependencies. |
 | **Gemini Nano Inference** | **NOT TESTED** | Physical hardware | Requires physical Pixel 8/9 or Galaxy S24 with AICore weights. |
 | **Gemini Nano Download / Setup** | **AWAITING D** | `android/app/.../MainActivity.kt` | Background Wi-Fi + charging download managed by Android system service. |
-| **Gemma 4 E2B Artifact & License** | **IMPLEMENTED** | [local-ai-service.ts](file:///d:/neighborhoodguideapp/functions/src/ai/services/local-ai-service.ts), [models.ts](file:///d:/neighborhoodguideapp/functions/src/ai/config/models.ts) | Pinned commit `90f96183`, SHA-256 `740185b2...`, Apache 2.0 / Gemma Terms. |
+| **Gemma 4 E2B Artifact & License** | **IMPLEMENTED** | [local-ai-service.ts](file:///d:/neighborhoodguideapp/functions/src/ai/services/local-ai-service.ts), [models.ts](file:///d:/neighborhoodguideapp/functions/src/ai/config/models.ts) | Pinned commit `90f96183`, SHA-256 `740185b2...`, Apache License 2.0. |
 | **Gemma Android Runtime & JNI** | **AWAITING D** | `android/app/src/main/jniLibs/arm64-v8a/` | Requires Android NDK 26+ CMake compilation of `libllama.so` and JNI wrapper. |
 | **Gemma Download / Cache Manager** | **AWAITING D** | `lib/services/offline_model_manager.dart` | Client-side 3.11 GB resumable downloader with SHA-256 verification. |
 | **Flutter-to-Kotlin Integration** | **IMPLEMENTED (by D)** | `MainActivity.kt` (lines 55–207), `native_platform_service.dart` (lines 91–355) | 6 reconciled methods implemented in D5 (`fec0fb1`); 26/26 Flutter tests pass. |

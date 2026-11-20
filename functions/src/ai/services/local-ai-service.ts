@@ -53,7 +53,7 @@ export const GEMMA_4_E2B_UNSLOTH_GGUF_SPEC = {
   multimodalProjectorFileName: 'mmproj-BF16.gguf',
   fileSizeBytesProjector: 1034944512, // ~987 MB
   isMultimodalProjectorRequiredForB6: false, // B6 scope is text note summarization & keywords; mmproj is not required
-  license: 'Apache License 2.0 (Hugging Face Repository License; base model governed by Google Gemma Open Model Terms of Use)',
+  license: 'Apache License 2.0 (Declared in repository metadata and model card at pinned revision 90f96183)',
   runtimeLibrary: 'libllama.so (llama.cpp compiled for arm64-v8a with Android NDK 26+)',
   targetArch: 'arm64-v8a', // 64-bit ARM architecture requirement
   // Provisional estimates pending physical hardware profiling:
