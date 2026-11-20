@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "952229212408",
+    "project_id": "neighborhoodguideapp",
+    "storage_bucket": "neighborhoodguideapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:952229212408:android:128399402de3cbe7dfcb0d",
+        "android_client_info": {
+          "package_name": "com.innovotribe.locallens"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyACiGFCMvW2NdojtoGTtHOEIrmJdsojrBQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
