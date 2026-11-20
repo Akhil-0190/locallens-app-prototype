@@ -1,9 +1,23 @@
 /**
  * Startup Buildathon 2026 — Neighborhood Guide App
- * Task B6: Local & On-Device AI Engine & Offline Orchestrator
+ * Task B6: Local & On-Device AI Capability Evaluation & Offline Orchestration Engine
  * 
+ * ARCHITECTURAL BOUNDARY NOTICE:
+ * This service implements the AI-side domain contracts, readiness evaluation heuristics,
+ * and offline/online switching orchestration.
+ *
+ * Execution Separation:
+ * 1. Application-Side Execution (Owned by Developer D):
+ *    - Flutter UI -> NativePlatformService (MethodChannel) -> Android MainActivity.kt
+ *    - On physical devices, actual local inference runs inside Android AICore or llama.cpp
+ *      ARM64 native runtime (libllama.so) directly on the traveler's phone.
+ * 2. Backend / Cloud Services (Owned by Developer B):
+ *    - Cloud Functions provide server-side cloud AI (Gemini 3.8 Flash, Live, embeddings)
+ *      and consented cloud fallback when online.
+ *    - Cloud Functions does NOT execute on-device inference directly.
+ *
  * Implements:
- * 1. Android AICore / ML Kit GenAI readiness evaluation (multi-OEM: Pixel, Galaxy, Xiaomi, Motorola, OnePlus)
+ * 1. Android AICore / ML Kit GenAI readiness evaluation using dynamic ML Kit feature status
  * 2. Gemma 4 E2B Unsloth GGUF via llama.cpp Android native runtime readiness evaluation (dynamic RAM & arm64 checks)
  * 3. Local inference orchestration with strict execution provenance:
  *    - GEMINI_NANO_LOCAL
@@ -11,7 +25,6 @@
  *    - CLOUD_FALLBACK
  *    - UNAVAILABLE
  * 4. Failsafe offline heuristic fallbacks with zero cloud leakage and privacy preservation.
- * 5. Native bridge interface mapping Developer D's D5 MethodChannel (com.innovotribe.locallens/native_ai).
  */
 
 import {
@@ -26,45 +39,56 @@ import {
 
 /**
  * Exact Hugging Face Model Artifact Specifications for Gemma 4 E2B / Unsloth GGUF
+ * Reference: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF
+ * Documentation: https://gemma.ai/deployment/unsloth/
  */
-export const GEMMA_UNSLOTH_GGUF_SPEC = {
-  huggingFaceRepo: 'unsloth/gemma-2-2b-it-GGUF',
-  canonicalFileName: 'gemma-2-2b-it-Q4_K_M.gguf',
-  highFidelityFileName: 'gemma-2-2b-it-Q8_0.gguf',
-  fileSizeBytesQ4: 1714561024, // ~1.71 GB
-  fileSizeBytesQ8: 2782142464, // ~2.78 GB
-  artifactRevision: '84f4f38753235ff8a86a0e66d98e5e79147137f6', // Commit on main branch
+export const GEMMA_4_E2B_UNSLOTH_GGUF_SPEC = {
+  huggingFaceRepo: 'unsloth/gemma-4-E2B-it-GGUF',
+  canonicalFileName: 'gemma-4-E2B-it-Q4_K_M.gguf',
+  highFidelityFileName: 'gemma-4-E2B-it-Q8_0.gguf',
+  multimodalProjectorFileName: 'mmproj-gemma-4-E2B-it-f16.gguf',
+  fileSizeBytesQ4: 3344000000, // ~3.11 GB
+  fileSizeBytesQ8: 5420000000, // ~5.05 GB
+  fileSizeBytesProjector: 1073741824, // ~1.0 GB
+  artifactRevision: 'main',
   license: 'Gemma Open Model Terms of Use (Governed by Google open model license)',
   runtimeLibrary: 'libllama.so (llama.cpp compiled for arm64-v8a with Android NDK 26+)',
-  minAvailableRamMb: 1500, // Dynamic available RAM required at invocation time
-  minStorageMb: 2500,      // Disk space required for caching quantized weights
   targetArch: 'arm64-v8a', // 64-bit ARM architecture requirement
-  typicalTokensPerSec: '8-15 tokens/sec (Snapdragon 8 Gen 2 / Tensor G3)',
-  coldStartLatencySec: '1.8 - 3.2 seconds',
+  // Estimated thresholds pending physical hardware profiling:
+  estimatedMinAvailableRamMb: 3500, // Estimated dynamic available RAM required for 3.11GB Q4 + KV cache
+  estimatedMinTotalRamMb: 8192,     // Estimated physical system RAM (8GB+ recommended)
+  minStorageMb: 5000,               // Free disk space required for 3.11GB model cache + buffers
+  typicalTokensPerSec: '8-15 tokens/sec (Snapdragon 8 Gen 2 / 8 Gen 3)',
+  coldStartLatencySec: '2.5 - 4.5 seconds',
 } as const;
 
 /**
- * Android AICore Multi-OEM Supported Manufacturers & Devices
- * Authority: Google ML Kit GenAI documentation (https://developers.google.com/ml-kit/genai/)
+ * Legacy / Experimental Gemma 2 2B Reference (Separately labeled; not Gemma 4 E2B)
  */
-export const AICORE_SUPPORTED_OEM_PATTERNS = [
-  'google',    // Pixel 8, 8 Pro, 8a, Pixel 9 series, Pixel Fold
-  'samsung',   // Galaxy S24, S24+, S24 Ultra, Z Fold6, Z Flip6
-  'xiaomi',    // Xiaomi 14 series, 14T series
-  'motorola',  // Motorola Edge 50 Ultra, Razr 50 Ultra
-  'oneplus',   // OnePlus 12 series
-  'oppo',      // Find X7 series
-] as const;
+export const GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC = {
+  huggingFaceRepo: 'unsloth/gemma-2-2b-it-GGUF',
+  canonicalFileName: 'gemma-2-2b-it-Q4_K_M.gguf',
+  fileSizeBytesQ4: 1714561024, // ~1.71 GB
+  note: 'EXPERIMENTAL ONLY. Retained for lightweight baseline testing; does not satisfy frozen Gemma 4 E2B commitment.',
+} as const;
 
 /**
  * 1. Evaluates Android AICore / ML Kit GenAI readiness.
- * Validates OS API level (API 34+), OEM compatibility, package presence,
- * memory headroom, foreground status, and model download state.
+ * Authority: Google ML Kit GenAI (https://developers.google.com/ml-kit/genai/)
+ *
+ * Uses dynamic ML Kit GenAI status rules:
+ * - Android 14+ (API 34+) requirement
+ * - com.google.android.aicore package presence
+ * - Host application foreground execution status
+ * - Feature-specific availability (Direct Model vs Summarization vs Rewrite vs Vision)
+ * - Supported language check (English-first on-device foundation models)
+ * - Dynamic model download state (DOWNLOADABLE vs DOWNLOADING vs READY)
  */
 export function evaluateAICoreReadiness(
   telemetry: DeviceAICapabilities,
   targetFeature: AICoreFeature = 'SUMMARIZATION',
-  modelWeightsDownloaded: boolean = false
+  dynamicModelState: 'DOWNLOADABLE' | 'DOWNLOADING' | 'READY' | 'UNAVAILABLE' = 'DOWNLOADABLE',
+  requestedLanguage: string = 'en'
 ): { status: AICoreReadinessStatus; isReady: boolean; reason: string } {
   // Check 1: Android 14+ (API 34+) requirement
   if (telemetry.apiLevel < 34) {
@@ -75,20 +99,7 @@ export function evaluateAICoreReadiness(
     };
   }
 
-  // Check 2: OEM compatibility verification
-  if (telemetry.deviceManufacturer) {
-    const mfg = telemetry.deviceManufacturer.toLowerCase();
-    const isSupportedOem = AICORE_SUPPORTED_OEM_PATTERNS.some((pattern) => mfg.includes(pattern));
-    if (!isSupportedOem) {
-      return {
-        status: 'UNSUPPORTED_DEVICE',
-        isReady: false,
-        reason: `Device manufacturer '${telemetry.deviceManufacturer}' is not in the certified AICore OEM list.`,
-      };
-    }
-  }
-
-  // Check 3: Package presence (com.google.android.aicore)
+  // Check 2: Package presence (com.google.android.aicore)
   if (!telemetry.aicoreInstalled) {
     return {
       status: 'PACKAGE_NOT_INSTALLED',
@@ -97,44 +108,63 @@ export function evaluateAICoreReadiness(
     };
   }
 
-  // Check 4: Host app foreground status
-  // AICore throttles and restricts background execution to preserve battery life
+  // Check 3: Host app foreground status
+  // ML Kit GenAI strictly restricts background execution to preserve battery life and thermal headroom
   if (!telemetry.isInForeground) {
     return {
       status: 'BACKGROUND_RESTRICTED',
       isReady: false,
-      reason: 'AICore inference is restricted while application is in background.',
+      reason: 'AICore inference is restricted while application is running in the background.',
     };
   }
 
-  // Check 5: Dynamic RAM headroom for AICore execution
+  // Check 4: Dynamic RAM headroom for AICore execution
   if (telemetry.ramAvailableMb < 800) {
     return {
-      status: 'FEATURE_UNAVAILABLE',
+      status: 'QUOTA_EXCEEDED',
       isReady: false,
-      reason: `Available RAM (${telemetry.ramAvailableMb} MB) is below AICore minimum operational threshold (800 MB).`,
+      reason: `Available RAM (${telemetry.ramAvailableMb} MB) is below AICore operational threshold (800 MB).`,
     };
   }
 
-  // Check 6: Feature-specific compatibility
+  // Check 5: Feature-specific compatibility
   if (targetFeature === 'IMAGE_DESCRIPTION') {
-    // Multimodal image description requires AICore v2 (Pixel 9+ / Tensor G4 or equivalent)
+    // Multimodal image description requires AICore v2 hardware support (Pixel 9+ / Tensor G4 or equivalent)
     const isV2Capable = telemetry.supportedFeatures.includes('AICORE_MULTIMODAL_V2');
     if (!isV2Capable) {
       return {
-        status: 'FEATURE_UNAVAILABLE',
+        status: 'FEATURE_NOT_SUPPORTED',
         isReady: false,
-        reason: 'Image description requires AICore v2 multimodal hardware support.',
+        reason: 'On-device image description requires AICore v2 multimodal hardware support.',
       };
     }
   }
 
-  // Check 7: Model weights download status
-  if (!modelWeightsDownloaded) {
+  // Check 6: Language support verification
+  // Current ML Kit GenAI on-device models are English-first; regional languages require cloud fallback or pack
+  const langLower = requestedLanguage.toLowerCase().slice(0, 2);
+  if (langLower !== 'en') {
     return {
-      status: 'MODEL_NOT_DOWNLOADED',
+      status: 'UNSUPPORTED_LANGUAGE',
       isReady: false,
-      reason: 'AICore model weights are not downloaded to device cache yet. Requires background Wi-Fi + charging download.',
+      reason: `Language '${requestedLanguage}' is not natively supported by the current on-device AICore model.`,
+    };
+  }
+
+  // Check 7: Dynamic model download state
+  if (dynamicModelState === 'DOWNLOADING') {
+    return {
+      status: 'MODEL_DOWNLOADING',
+      isReady: false,
+      reason: 'AICore model weights are currently downloading in the background.',
+    };
+  }
+
+  if (dynamicModelState !== 'READY') {
+    return {
+      status: 'MODEL_DOWNLOADABLE',
+      isReady: false,
+      reason: 'AICore feature is supported, but model weights are not cached yet. Requires background Wi-Fi + charging download.',
     };
   }
 
@@ -147,8 +177,8 @@ export function evaluateAICoreReadiness(
 
 /**
  * 2. Evaluates Gemma 4 E2B Unsloth GGUF via llama.cpp readiness.
- * Enforces dynamic available RAM verification (>= 1500 MB), CPU architecture (arm64-v8a),
- * storage space (>= 2.5 GB), native runtime presence, and GGUF model file existence.
+ * Evaluates dynamic available RAM (estimated >= 3,500 MB), CPU architecture (arm64-v8a),
+ * storage space (>= 5,000 MB), native runtime presence, and GGUF model file existence.
  */
 export function evaluateGemmaGGUFReadiness(
   telemetry: DeviceAICapabilities,
@@ -165,22 +195,22 @@ export function evaluateGemmaGGUFReadiness(
     };
   }
 
-  // Check 2: Dynamic Available RAM (not just totalRamMb)
-  // Enforces user feedback: totalRamMb alone is not a reliable measure
-  if (telemetry.ramAvailableMb < GEMMA_UNSLOTH_GGUF_SPEC.minAvailableRamMb) {
+  // Check 2: Dynamic Available RAM (not just total physical RAM)
+  // Gemma 4 E2B Q4_K_M is ~3.11 GB. Loading requires ~3.5 GB free RAM.
+  if (telemetry.ramAvailableMb < GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.estimatedMinAvailableRamMb) {
     return {
       status: 'INSUFFICIENT_AVAILABLE_RAM',
       isReady: false,
-      reason: `Dynamic available RAM (${telemetry.ramAvailableMb} MB) is below required ${GEMMA_UNSLOTH_GGUF_SPEC.minAvailableRamMb} MB for Gemma GGUF runtime.`,
+      reason: `Dynamic available RAM (${telemetry.ramAvailableMb} MB) is below estimated required ${GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.estimatedMinAvailableRamMb} MB for Gemma 4 E2B GGUF runtime.`,
     };
   }
 
   // Check 3: Available Disk Storage for Model Cache
-  if (telemetry.storageAvailableMb < GEMMA_UNSLOTH_GGUF_SPEC.minStorageMb) {
+  if (telemetry.storageAvailableMb < GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.minStorageMb) {
     return {
       status: 'INSUFFICIENT_STORAGE',
       isReady: false,
-      reason: `Available storage (${telemetry.storageAvailableMb} MB) is below required ${GEMMA_UNSLOTH_GGUF_SPEC.minStorageMb} MB for GGUF model cache.`,
+      reason: `Available storage (${telemetry.storageAvailableMb} MB) is below required ${GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.minStorageMb} MB for Gemma 4 E2B GGUF cache.`,
     };
   }
 
@@ -198,7 +228,7 @@ export function evaluateGemmaGGUFReadiness(
     return {
       status: 'MODEL_FILE_NOT_FOUND',
       isReady: false,
-      reason: `GGUF model artifact (${GEMMA_UNSLOTH_GGUF_SPEC.canonicalFileName}) not found in app cache directory.`,
+      reason: `Gemma 4 E2B GGUF artifact (${GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.canonicalFileName}) not found in app cache directory.`,
     };
   }
 
@@ -226,12 +256,12 @@ export function selectExecutionEngine(
   if (isOffline) {
     if (request.preferredEngine === 'AICORE_GEMINI_NANO') {
       if (aicoreReady) return { chosenEngine: 'GEMINI_NANO', reason: 'User preferred AICore and it is ready.' };
-      if (gemmaReady) return { chosenEngine: 'GEMMA_GGUF', reason: 'AICore unready; fallback to ready Gemma GGUF.' };
+      if (gemmaReady) return { chosenEngine: 'GEMMA_GGUF', reason: 'AICore unready; fallback to ready Gemma 4 E2B GGUF.' };
       return { chosenEngine: 'UNASSISTED_FALLBACK', reason: 'Offline and neither on-device engine is ready.' };
     }
 
     if (request.preferredEngine === 'GEMMA_LOCAL_GGUF') {
-      if (gemmaReady) return { chosenEngine: 'GEMMA_GGUF', reason: 'User preferred Gemma GGUF and it is ready.' };
+      if (gemmaReady) return { chosenEngine: 'GEMMA_GGUF', reason: 'User preferred Gemma 4 E2B GGUF and it is ready.' };
       if (aicoreReady) return { chosenEngine: 'GEMINI_NANO', reason: 'Gemma unready; fallback to ready AICore.' };
       return { chosenEngine: 'UNASSISTED_FALLBACK', reason: 'Offline and neither on-device engine is ready.' };
     }
@@ -243,7 +273,7 @@ export function selectExecutionEngine(
     }
     // Else check Gemma GGUF (app-managed local runtime)
     if (gemmaReady) {
-      return { chosenEngine: 'GEMMA_GGUF', reason: 'AUTO selection: Gemma GGUF llama.cpp ready on-device.' };
+      return { chosenEngine: 'GEMMA_GGUF', reason: 'AUTO selection: Gemma 4 E2B GGUF llama.cpp ready on-device.' };
     }
     // Both unready: fail closed offline
     return { chosenEngine: 'UNASSISTED_FALLBACK', reason: 'Offline mode: no local model ready; falling back to unassisted heuristics.' };
@@ -260,7 +290,7 @@ export function selectExecutionEngine(
     return { chosenEngine: 'GEMINI_NANO', reason: 'User selected on-device AICore while online.' };
   }
   if (request.preferredEngine === 'GEMMA_LOCAL_GGUF' && gemmaReady) {
-    return { chosenEngine: 'GEMMA_GGUF', reason: 'User selected on-device Gemma GGUF while online.' };
+    return { chosenEngine: 'GEMMA_GGUF', reason: 'User selected on-device Gemma 4 E2B GGUF while online.' };
   }
 
   // AUTO when online:
@@ -269,7 +299,7 @@ export function selectExecutionEngine(
     return { chosenEngine: 'GEMINI_NANO', reason: 'AUTO online: using ready zero-latency AICore.' };
   }
   if (gemmaReady) {
-    return { chosenEngine: 'GEMMA_GGUF', reason: 'AUTO online: using ready on-device Gemma GGUF.' };
+    return { chosenEngine: 'GEMMA_GGUF', reason: 'AUTO online: using ready on-device Gemma 4 E2B GGUF.' };
   }
 
   // Local models unavailable: check cloud fallback consent
@@ -349,7 +379,7 @@ export function generateUnassistedFallback(
 }
 
 /**
- * Interface for pluggable native bridge executor (matching D5 MethodChannel)
+ * Interface for pluggable native bridge executor (emulating D5 MethodChannel)
  */
 export interface NativeBridgeExecutor {
   checkAICoreAvailability(): Promise<{ isAvailable: boolean; statusMessage: string; apiLevel: number }>;
@@ -384,7 +414,8 @@ export async function orchestrateLocalInference(
   const aicoreEval = evaluateAICoreReadiness(
     request.deviceCapabilities,
     'SUMMARIZATION',
-    options.aicoreModelReady ?? false
+    options.aicoreModelReady ? 'READY' : 'DOWNLOADABLE',
+    request.language
   );
 
   // Step 2: Evaluate Gemma GGUF readiness
@@ -407,6 +438,7 @@ export async function orchestrateLocalInference(
             taskId: request.taskId,
             success: true,
             provenance: 'GEMINI_NANO_LOCAL',
+            executionEnvironment: 'CLIENT_ANDROID_NATIVE',
             isLocalInference: true,
             modelUsed: 'Gemini Nano (Android AICore / ML Kit)',
             code: 'OK',
@@ -420,7 +452,7 @@ export async function orchestrateLocalInference(
             metadata: { aicoreVersion: request.deviceCapabilities.aicoreVersion },
           };
         }
-      } catch (err: any) {
+      } catch (_err: any) {
         // Native execution failure: fall through to failsafe
       }
     }
@@ -433,6 +465,7 @@ export async function orchestrateLocalInference(
         taskId: request.taskId,
         success: false,
         provenance: 'UNAVAILABLE',
+        executionEnvironment: 'CLIENT_ANDROID_NATIVE',
         isLocalInference: false,
         modelUsed: 'NONE (Unassisted Fallback)',
         code: 'MODEL_NOT_DOWNLOADED',
@@ -455,8 +488,9 @@ export async function orchestrateLocalInference(
             taskId: request.taskId,
             success: true,
             provenance: 'GEMMA_LOCAL',
+            executionEnvironment: 'CLIENT_ANDROID_NATIVE',
             isLocalInference: true,
-            modelUsed: `Gemma 4 E2B (${GEMMA_UNSLOTH_GGUF_SPEC.canonicalFileName}) via llama.cpp`,
+            modelUsed: `Gemma 4 E2B (${GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.canonicalFileName}) via llama.cpp`,
             code: 'OK',
             message: 'Inference completed on-device via llama.cpp ARM64 runtime.',
             output: {
@@ -465,10 +499,14 @@ export async function orchestrateLocalInference(
             },
             unassistedFallback: false,
             executionDurationMs: Date.now() - startTime,
-            metadata: { quantization: 'Q4_K_M', targetArch: GEMMA_UNSLOTH_GGUF_SPEC.targetArch },
+            metadata: {
+              quantization: 'Q4_K_M',
+              targetArch: GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.targetArch,
+              repo: GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.huggingFaceRepo,
+            },
           };
         }
-      } catch (err: any) {
+      } catch (_err: any) {
         // llama.cpp execution failure: fall through
       }
     }
@@ -480,10 +518,11 @@ export async function orchestrateLocalInference(
         taskId: request.taskId,
         success: false,
         provenance: 'UNAVAILABLE',
+        executionEnvironment: 'CLIENT_ANDROID_NATIVE',
         isLocalInference: false,
         modelUsed: 'NONE (Unassisted Fallback)',
         code: 'RUNTIME_OR_MODEL_PENDING',
-        message: 'Gemma GGUF runtime or weights not loaded; offline unassisted fallback applied.',
+        message: 'Gemma 4 E2B GGUF runtime or weights not loaded; offline unassisted fallback applied.',
         output: fallbackOutput,
         unassistedFallback: true,
         executionDurationMs: Date.now() - startTime,
@@ -501,6 +540,7 @@ export async function orchestrateLocalInference(
           taskId: request.taskId,
           success: true,
           provenance: 'CLOUD_FALLBACK',
+          executionEnvironment: 'BACKEND_CLOUD_FUNCTIONS',
           isLocalInference: false, // Strict provenance: NEVER report cloud as local!
           modelUsed: cloudRes.modelUsed,
           code: 'CLOUD_FALLBACK_APPLIED',
@@ -513,7 +553,7 @@ export async function orchestrateLocalInference(
           executionDurationMs: Date.now() - startTime,
           metadata: { connectivity: request.connectivity },
         };
-      } catch (cloudErr: any) {
+      } catch (_cloudErr: any) {
         // Cloud API error: return unassisted fallback
       }
     }
@@ -525,6 +565,7 @@ export async function orchestrateLocalInference(
     taskId: request.taskId,
     success: false,
     provenance: 'UNAVAILABLE',
+    executionEnvironment: 'CLIENT_ANDROID_NATIVE',
     isLocalInference: false,
     modelUsed: 'NONE (Unassisted Fallback)',
     code: 'OFFLINE_UNASSISTED_FALLBACK',

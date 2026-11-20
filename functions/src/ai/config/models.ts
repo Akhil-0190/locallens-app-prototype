@@ -230,7 +230,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client on Android 14+ (API 34+). Supports certified OEM devices from multiple manufacturers (Google Pixel, Samsung Galaxy, Xiaomi, Motorola, OnePlus) per official ML Kit GenAI docs. Requires feature-specific readiness checks (Direct model, Summarization, Rewrite, Vision). Developer B defines AI schemas and capability evaluation; Android Kotlin bridge owned by Developer D.',
+    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client on Android 14+ (API 34+). Support is evaluated via ML Kit GenAI dynamic feature status checks (AICoreAvailabilityStatus: AVAILABLE, DOWNLOADABLE, DOWNLOADING, NOT_AVAILABLE) rather than hard-coded OEM lists. Requires feature-specific readiness checks (Direct model, Summarization, Rewrite, Vision), foreground execution, and supported language (English-first). Developer B defines AI schemas and capability contracts; Android Kotlin bridge owned by Developer D.',
   },
 
   // Corrected: Gemma 4 E2B edge runtime artifact via llama.cpp
@@ -242,12 +242,12 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
     availability: 'LOCAL_RUNTIME',
     testStatus: 'DOCUMENTED_EDGE_SPEC',
     contextWindow: {
-      inputTokens: 2048,
+      inputTokens: 4096,
       outputTokens: 1024,
     },
     capabilities: {
       structuredOutput: true,
-      multimodalInput: false,
+      multimodalInput: false, // Multimodal requires mmproj-gemma-4-E2B-it-f16.gguf (~1.0GB)
       audioOutput: false,
       embeddings: false,
       localOnDevice: true,
@@ -260,7 +260,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'NOT A CLOUD API MODEL ID. Edge open-weights instruction-tuned artifact: unsloth/gemma-2-2b-it-GGUF (canonical artifact gemma-2-2b-it-Q4_K_M.gguf, ~1.71GB, SHA revision main:84f4f38; alternative gemma-2-2b-it-Q8_0.gguf, ~2.78GB) executed via llama.cpp native runtime (libllama.so on arm64-v8a). Dynamic available RAM must be >= 1,500 MB (total system RAM >= 3000 MB alone is not sufficient). Governed by Gemma Open Model Terms of Use. Untested on physical ARM64 hardware; client platform bridge owned by Developer D.',
+    notes: 'NOT A CLOUD API MODEL ID. Edge open-weights instruction-tuned artifact: unsloth/gemma-4-E2B-it-GGUF (canonical artifact gemma-4-E2B-it-Q4_K_M.gguf, ~3.11GB; alternative gemma-4-E2B-it-Q8_0.gguf, ~5.05GB; optional vision/audio mmproj-gemma-4-E2B-it-f16.gguf, ~1.0GB) executed via llama.cpp native runtime (libllama.so on arm64-v8a). Estimated dynamic available RAM requirement >= 3,500 MB (device total RAM >= 8,192 MB recommended; static totalRamMb >= 3000 is insufficient). Governed by Gemma Open Model Terms of Use. Untested on physical ARM64 hardware; client platform bridge owned by Developer D.',
   },
 };
 

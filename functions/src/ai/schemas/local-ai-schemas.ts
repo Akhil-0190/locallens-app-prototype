@@ -7,14 +7,28 @@
  * 2. AICore and Gemma runtime readiness lifecycle states
  * 3. Local inference requests and structured responses
  * 4. Strict execution provenance tracking (GEMINI_NANO_LOCAL, GEMMA_LOCAL, CLOUD_FALLBACK, UNAVAILABLE)
+ * 5. Architectural separation between Client-Side Native Execution and Backend Cloud Services
  */
 
 import { z } from 'zod';
 
 /**
+ * Execution Environment:
+ * Explicitly separates where execution occurs.
+ * - CLIENT_ANDROID_NATIVE: Runs on the traveler's physical Android device (Flutter -> MethodChannel -> Kotlin / llama.cpp / AICore).
+ * - BACKEND_CLOUD_FUNCTIONS: Runs on Firebase Cloud Functions server (Node.js/TypeScript backend).
+ */
+export const ExecutionEnvironmentSchema = z.enum([
+  'CLIENT_ANDROID_NATIVE',
+  'BACKEND_CLOUD_FUNCTIONS',
+]);
+
+export type ExecutionEnvironment = z.infer<typeof ExecutionEnvironmentSchema>;
+
+/**
  * Execution Provenance:
  * Explicit, auditable tag identifying the exact execution origin.
- * Strict architectural rule:
+ * Strict architectural rules:
  * - Never report CLOUD_FALLBACK as local inference.
  * - Never silently upload offline user data to the cloud when local inference fails.
  */
@@ -22,7 +36,7 @@ export const ExecutionProvenanceSchema = z.enum([
   'GEMINI_NANO_LOCAL', // Android AICore / ML Kit GenAI on-device execution
   'GEMMA_LOCAL',       // Gemma 4 E2B / Unsloth GGUF via llama.cpp Android native runtime
   'CLOUD_FALLBACK',    // Google Gemini API cloud execution (online only, with consent)
-  'UNAVAILABLE',       // Local model unavailable/unassisted fallback, or offline fail-closed
+  'UNAVAILABLE',       // Local model unavailable / unassisted fallback, or offline fail-closed
 ]);
 
 export type ExecutionProvenance = z.infer<typeof ExecutionProvenanceSchema>;
@@ -42,17 +56,19 @@ export type AICoreFeature = z.infer<typeof AICoreFeatureSchema>;
 
 /**
  * Discrete lifecycle readiness states for Android AICore / ML Kit GenAI.
- * Accounts for API version, OEM support, package presence, model downloading, and foreground state.
+ * Reflects Google ML Kit GenAI feature-specific readiness lifecycle:
+ * https://developers.google.com/ml-kit/genai/
  */
 export const AICoreReadinessStatusSchema = z.enum([
   'UNSUPPORTED_OS_VERSION', // Requires Android 14+ (API 34+)
-  'UNSUPPORTED_DEVICE',     // Device SoC/manufacturer not in supported OEM matrix
   'PACKAGE_NOT_INSTALLED',  // com.google.android.aicore package not present
-  'MODEL_NOT_DOWNLOADED',   // System package present, but feature model weights not yet cached
+  'FEATURE_NOT_SUPPORTED',  // Specific feature API unsupported on device SoC
+  'MODEL_DOWNLOADABLE',     // Feature supported; model weights can be downloaded
   'MODEL_DOWNLOADING',      // Weights currently downloading in background (charging + Wi-Fi)
   'MODEL_READY',            // Model downloaded and ready for local inference
-  'BACKGROUND_RESTRICTED',  // AICore restricts heavy inference when app is in background
-  'FEATURE_UNAVAILABLE',    // Requested specific feature (e.g. image description) unsupported on this hardware
+  'BACKGROUND_RESTRICTED',  // Host app is in background; AICore limits inference
+  'UNSUPPORTED_LANGUAGE',   // Requested language not supported by on-device model (English-first)
+  'QUOTA_EXCEEDED',         // Per-minute token limit or thermal throttling triggered
 ]);
 
 export type AICoreReadinessStatus = z.infer<typeof AICoreReadinessStatusSchema>;
@@ -63,8 +79,8 @@ export type AICoreReadinessStatus = z.infer<typeof AICoreReadinessStatusSchema>;
  */
 export const GemmaGGUFReadinessStatusSchema = z.enum([
   'UNSUPPORTED_ARCHITECTURE',    // Non-64-bit ARM (e.g. armeabi-v7a or unaccelerated x86)
-  'INSUFFICIENT_AVAILABLE_RAM',  // Dynamic available RAM < 1,500 MB (regardless of total RAM)
-  'INSUFFICIENT_STORAGE',        // Free device storage < 2.5 GB for model weight caching
+  'INSUFFICIENT_AVAILABLE_RAM',  // Dynamic available RAM < estimated threshold (~3,500 MB)
+  'INSUFFICIENT_STORAGE',        // Free device storage < required (~5,000 MB) for GGUF model cache
   'RUNTIME_BINARY_MISSING',      // Native libllama.so shared library not located
   'MODEL_FILE_NOT_FOUND',        // GGUF model artifact not present in local storage
   'READY',                       // Native runtime loaded and model mapped into memory
@@ -85,10 +101,11 @@ export const DeviceAICapabilitiesSchema = z.object({
   hasNpu: z.boolean().describe('Whether an active NPU is detected and accessible via standard HAL'),
   supportedFeatures: z.array(z.string()).describe('Architectural feature tags (e.g. AICORE_GEMINI_NANO, LLAMA_CPP_GEMMA4_GGUF)'),
   hardwareArchitecture: z.string().default('arm64-v8a').describe('CPU ABI (e.g. arm64-v8a, armeabi-v7a, x86_64)'),
-  storageAvailableMb: z.number().int().min(0).default(5000).describe('Available disk space on device in megabytes'),
+  storageAvailableMb: z.number().int().min(0).default(8000).describe('Available disk space on device in megabytes'),
   deviceManufacturer: z.string().optional().describe('OEM manufacturer (e.g. Google, Samsung, Xiaomi, Motorola, OnePlus)'),
   deviceModel: z.string().optional().describe('Hardware model identifier'),
   isInForeground: z.boolean().default(true).describe('Whether host application is in foreground'),
+  language: z.string().default('en').describe('Current application / system language code'),
 });
 
 export type DeviceAICapabilities = z.infer<typeof DeviceAICapabilitiesSchema>;
@@ -149,6 +166,7 @@ export const LocalInferenceResponseSchema = z.object({
   taskId: z.string(),
   success: z.boolean(),
   provenance: ExecutionProvenanceSchema,
+  executionEnvironment: ExecutionEnvironmentSchema.default('CLIENT_ANDROID_NATIVE'),
   isLocalInference: z.boolean().describe('True ONLY if model executed entirely on-device without cloud network hops'),
   modelUsed: z.string().describe('Model identifier or unassisted fallback description'),
   code: z.string().describe('Structured status code: OK, MODEL_NOT_DOWNLOADED, INSUFFICIENT_AVAILABLE_RAM, UNSUPPORTED_DEVICE, CLOUD_FALLBACK_APPLIED, OFFLINE_FAIL_CLOSED'),

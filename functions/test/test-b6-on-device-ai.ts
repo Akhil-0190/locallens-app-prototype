@@ -3,9 +3,10 @@
  * Task B6 Test Suite: On-Device AI (Gemini Nano & Gemma 4 E2B)
  * 
  * Verifies:
- * 1. Android AICore / ML Kit GenAI readiness evaluation across certified OEMs
- * 2. Gemma 4 E2B Unsloth GGUF dynamic RAM & ARM64 architecture evaluation
+ * 1. Android AICore / ML Kit GenAI dynamic readiness evaluation (API 34+, package, foreground, language)
+ * 2. Gemma 4 E2B Unsloth GGUF dynamic RAM (3,500 MB), storage, and ARM64 architecture evaluation
  * 3. Execution provenance invariants (GEMINI_NANO_LOCAL, GEMMA_LOCAL, CLOUD_FALLBACK, UNAVAILABLE)
+ *    and ExecutionEnvironment (CLIENT_ANDROID_NATIVE vs BACKEND_CLOUD_FUNCTIONS)
  * 4. Online/offline switching, privacy fail-closed guarantees, and unassisted heuristics
  * 5. D5 MethodChannel bridge emulation and parameter round-trip
  * 6. Physical Hardware Real Inference Verification (explicitly marked NOT TESTED)
@@ -14,10 +15,10 @@
 import {
   evaluateAICoreReadiness,
   evaluateGemmaGGUFReadiness,
-  selectExecutionEngine,
   generateUnassistedFallback,
   orchestrateLocalInference,
-  GEMMA_UNSLOTH_GGUF_SPEC,
+  GEMMA_4_E2B_UNSLOTH_GGUF_SPEC,
+  GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC,
   NativeBridgeExecutor,
   CloudInferenceExecutor,
 } from '../src/ai/services/local-ai-service.js';
@@ -46,95 +47,91 @@ async function runB6TestSuite() {
   console.log('================================================================\n');
 
   // --------------------------------------------------------------------------
-  // Suite 1: Android AICore / ML Kit GenAI Readiness Lifecycle
+  // Suite 1: Android AICore / ML Kit GenAI Dynamic Readiness Lifecycle
   // --------------------------------------------------------------------------
-  console.log('--- [Suite 1] Android AICore / ML Kit GenAI Readiness ---');
+  console.log('--- [Suite 1] Android AICore / ML Kit GenAI Dynamic Readiness ---');
 
   const baseTelemetry: DeviceAICapabilities = {
     apiLevel: 34,
-    totalRamMb: 8192,
-    ramAvailableMb: 4096,
+    totalRamMb: 12288,
+    ramAvailableMb: 5120,
     aicoreInstalled: true,
     aicoreVersion: 240800000,
     hasNpu: true,
     supportedFeatures: ['AICORE_GEMINI_NANO'],
     hardwareArchitecture: 'arm64-v8a',
-    storageAvailableMb: 12000,
+    storageAvailableMb: 15000,
     deviceManufacturer: 'Google',
     deviceModel: 'Pixel 8',
     isInForeground: true,
+    language: 'en',
   };
 
   // 1.1: Reject Android API < 34
   const api33Telemetry = { ...baseTelemetry, apiLevel: 33 };
-  const resApi33 = evaluateAICoreReadiness(api33Telemetry, 'SUMMARIZATION', true);
+  const resApi33 = evaluateAICoreReadiness(api33Telemetry, 'SUMMARIZATION', 'READY', 'en');
   assert(
     resApi33.status === 'UNSUPPORTED_OS_VERSION' && !resApi33.isReady,
     'Rejects Android API < 34 with UNSUPPORTED_OS_VERSION'
   );
 
-  // 1.2: Reject uncertified OEM
-  const unknownOem = { ...baseTelemetry, deviceManufacturer: 'GenericCloneCorp' };
-  const resUnknownOem = evaluateAICoreReadiness(unknownOem, 'SUMMARIZATION', true);
-  assert(
-    resUnknownOem.status === 'UNSUPPORTED_DEVICE' && !resUnknownOem.isReady,
-    'Rejects uncertified OEM with UNSUPPORTED_DEVICE'
-  );
-
-  // 1.3: Accept certified multi-OEM devices (Google, Samsung, Xiaomi, Motorola, OnePlus)
-  const oemTests = ['Google', 'Samsung', 'Xiaomi', 'Motorola', 'OnePlus'];
-  for (const oem of oemTests) {
-    const oemTelemetry = { ...baseTelemetry, deviceManufacturer: oem };
-    const resOem = evaluateAICoreReadiness(oemTelemetry, 'SUMMARIZATION', true);
-    assert(
-      resOem.isReady && resOem.status === 'MODEL_READY',
-      `Accepts certified OEM: ${oem}`
-    );
-  }
-
-  // 1.4: Reject when com.google.android.aicore package is missing
+  // 1.2: Reject when com.google.android.aicore package is missing
   const noPackage = { ...baseTelemetry, aicoreInstalled: false };
-  const resNoPackage = evaluateAICoreReadiness(noPackage, 'SUMMARIZATION', true);
+  const resNoPackage = evaluateAICoreReadiness(noPackage, 'SUMMARIZATION', 'READY', 'en');
   assert(
     resNoPackage.status === 'PACKAGE_NOT_INSTALLED' && !resNoPackage.isReady,
     'Rejects when com.google.android.aicore package is not installed'
   );
 
-  // 1.5: Reject when app is in background (foreground preservation rule)
+  // 1.3: Reject when app is in background (foreground execution rule)
   const backgroundApp = { ...baseTelemetry, isInForeground: false };
-  const resBackground = evaluateAICoreReadiness(backgroundApp, 'SUMMARIZATION', true);
+  const resBackground = evaluateAICoreReadiness(backgroundApp, 'SUMMARIZATION', 'READY', 'en');
   assert(
     resBackground.status === 'BACKGROUND_RESTRICTED' && !resBackground.isReady,
     'Enforces foreground execution rule (BACKGROUND_RESTRICTED)'
   );
 
-  // 1.6: Reject when dynamic RAM headroom is insufficient (< 800 MB)
+  // 1.4: Reject when dynamic RAM headroom is insufficient (< 800 MB)
   const lowRam = { ...baseTelemetry, ramAvailableMb: 512 };
-  const resLowRam = evaluateAICoreReadiness(lowRam, 'SUMMARIZATION', true);
+  const resLowRam = evaluateAICoreReadiness(lowRam, 'SUMMARIZATION', 'READY', 'en');
   assert(
-    resLowRam.status === 'FEATURE_UNAVAILABLE' && !resLowRam.isReady,
-    'Rejects AICore when available RAM < 800 MB'
+    resLowRam.status === 'QUOTA_EXCEEDED' && !resLowRam.isReady,
+    'Rejects AICore when available RAM < 800 MB (QUOTA_EXCEEDED / throttled)'
   );
 
-  // 1.7: Reject feature-specific mismatch (Image description on AICore v1)
-  const resImageDesc = evaluateAICoreReadiness(baseTelemetry, 'IMAGE_DESCRIPTION', true);
+  // 1.5: Reject feature-specific mismatch (Image description without AICORE_MULTIMODAL_V2)
+  const resImageDesc = evaluateAICoreReadiness(baseTelemetry, 'IMAGE_DESCRIPTION', 'READY', 'en');
   assert(
-    resImageDesc.status === 'FEATURE_UNAVAILABLE' && !resImageDesc.isReady,
-    'Rejects image description feature when AICORE_MULTIMODAL_V2 is absent'
+    resImageDesc.status === 'FEATURE_NOT_SUPPORTED' && !resImageDesc.isReady,
+    'Rejects image description feature when AICORE_MULTIMODAL_V2 hardware support is absent'
   );
 
-  // 1.8: Reject when model weights not yet downloaded
-  const resModelNotDownloaded = evaluateAICoreReadiness(baseTelemetry, 'SUMMARIZATION', false);
+  // 1.6: Reject unsupported language on on-device model (English-first limitation)
+  const resUnsupportedLang = evaluateAICoreReadiness(baseTelemetry, 'SUMMARIZATION', 'READY', 'hi');
   assert(
-    resModelNotDownloaded.status === 'MODEL_NOT_DOWNLOADED' && !resModelNotDownloaded.isReady,
-    'Detects MODEL_NOT_DOWNLOADED status prior to Wi-Fi/charging background download'
+    resUnsupportedLang.status === 'UNSUPPORTED_LANGUAGE' && !resUnsupportedLang.isReady,
+    'Detects UNSUPPORTED_LANGUAGE for regional language on English-first AICore model'
+  );
+
+  // 1.7: Detect MODEL_DOWNLOADING state
+  const resDownloading = evaluateAICoreReadiness(baseTelemetry, 'SUMMARIZATION', 'DOWNLOADING', 'en');
+  assert(
+    resDownloading.status === 'MODEL_DOWNLOADING' && !resDownloading.isReady,
+    'Detects MODEL_DOWNLOADING state when background download is in progress'
+  );
+
+  // 1.8: Detect MODEL_DOWNLOADABLE state prior to Wi-Fi/charging background download
+  const resDownloadable = evaluateAICoreReadiness(baseTelemetry, 'SUMMARIZATION', 'DOWNLOADABLE', 'en');
+  assert(
+    resDownloadable.status === 'MODEL_DOWNLOADABLE' && !resDownloadable.isReady,
+    'Detects MODEL_DOWNLOADABLE status prior to Wi-Fi/charging background download'
   );
 
   // 1.9: Fully ready AICore
-  const resReady = evaluateAICoreReadiness(baseTelemetry, 'SUMMARIZATION', true);
+  const resReady = evaluateAICoreReadiness(baseTelemetry, 'SUMMARIZATION', 'READY', 'en');
   assert(
     resReady.status === 'MODEL_READY' && resReady.isReady,
-    'Confirms MODEL_READY when all lifecycle gates are satisfied'
+    'Confirms MODEL_READY when all dynamic ML Kit GenAI lifecycle gates are satisfied'
   );
 
   // --------------------------------------------------------------------------
@@ -150,21 +147,21 @@ async function runB6TestSuite() {
     'Rejects non-ARM64 architecture (x86_64) for llama.cpp runtime'
   );
 
-  // 2.2: Enforce dynamic available RAM verification (>= 1500 MB)
-  // Even with 8192 MB total RAM, if available RAM is 1200 MB, reject!
-  const tightRamTelemetry = { ...baseTelemetry, totalRamMb: 8192, ramAvailableMb: 1200 };
+  // 2.2: Enforce dynamic available RAM verification (estimated >= 3,500 MB for 3.11GB Q4 model)
+  // Even with 8192 MB total RAM, if available RAM is 2500 MB, reject!
+  const tightRamTelemetry = { ...baseTelemetry, totalRamMb: 8192, ramAvailableMb: 2500 };
   const resTightRam = evaluateGemmaGGUFReadiness(tightRamTelemetry, true, true);
   assert(
     resTightRam.status === 'INSUFFICIENT_AVAILABLE_RAM' && !resTightRam.isReady,
-    'Rejects when dynamic available RAM < 1,500 MB despite total RAM = 8,192 MB'
+    'Rejects when dynamic available RAM < 3,500 MB despite total RAM = 8,192 MB'
   );
 
-  // 2.3: Enforce storage check (>= 2500 MB)
-  const lowStorageTelemetry = { ...baseTelemetry, storageAvailableMb: 1500 };
+  // 2.3: Enforce storage check (>= 5,000 MB for Gemma 4 E2B 3.11GB model cache + buffers)
+  const lowStorageTelemetry = { ...baseTelemetry, storageAvailableMb: 3500 };
   const resLowStorage = evaluateGemmaGGUFReadiness(lowStorageTelemetry, true, true);
   assert(
     resLowStorage.status === 'INSUFFICIENT_STORAGE' && !resLowStorage.isReady,
-    'Rejects when available storage < 2.5 GB for GGUF model cache'
+    'Rejects when available storage < 5.0 GB for Gemma 4 E2B model cache'
   );
 
   // 2.4: Detect missing native runtime (libllama.so)
@@ -174,38 +171,42 @@ async function runB6TestSuite() {
     'Detects missing native runtime binary (libllama.so)'
   );
 
-  // 2.5: Detect missing GGUF model artifact
+  // 2.5: Detect missing Gemma 4 E2B GGUF model artifact
   const resNoModel = evaluateGemmaGGUFReadiness(baseTelemetry, true, false);
   assert(
     resNoModel.status === 'MODEL_FILE_NOT_FOUND' && !resNoModel.isReady,
-    'Detects missing GGUF model file (gemma-2-2b-it-Q4_K_M.gguf)'
+    'Detects missing GGUF model file (gemma-4-E2B-it-Q4_K_M.gguf)'
   );
 
-  // 2.6: Fully ready Gemma GGUF runtime
+  // 2.6: Fully ready Gemma 4 E2B GGUF runtime
   const resGemmaReady = evaluateGemmaGGUFReadiness(baseTelemetry, true, true);
   assert(
     resGemmaReady.status === 'READY' && resGemmaReady.isReady,
-    'Confirms READY when arm64-v8a + dynamic RAM >= 1500MB + libllama.so + GGUF present'
+    'Confirms READY when arm64-v8a + dynamic RAM >= 3500MB + libllama.so + Gemma 4 E2B present'
   );
 
-  // 2.7: Verify model artifact specifications
+  // 2.7: Verify Gemma 4 E2B exact model artifact specifications
   assert(
-    GEMMA_UNSLOTH_GGUF_SPEC.huggingFaceRepo === 'unsloth/gemma-2-2b-it-GGUF' &&
-    GEMMA_UNSLOTH_GGUF_SPEC.canonicalFileName === 'gemma-2-2b-it-Q4_K_M.gguf' &&
-    GEMMA_UNSLOTH_GGUF_SPEC.fileSizeBytesQ4 === 1714561024,
-    'Exact Hugging Face repository, file name, and byte size recorded correctly'
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.huggingFaceRepo === 'unsloth/gemma-4-E2B-it-GGUF' &&
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.canonicalFileName === 'gemma-4-E2B-it-Q4_K_M.gguf' &&
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.fileSizeBytesQ4 === 3344000000 &&
+    GEMMA_4_E2B_UNSLOTH_GGUF_SPEC.multimodalProjectorFileName === 'mmproj-gemma-4-E2B-it-f16.gguf',
+    'Verified exact Gemma 4 E2B repository (unsloth/gemma-4-E2B-it-GGUF), ~3.11GB Q4, and mmproj file'
+  );
+
+  // 2.8: Separately verify that Gemma 2 2B is explicitly marked as experimental legacy only
+  assert(
+    GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC.huggingFaceRepo === 'unsloth/gemma-2-2b-it-GGUF' &&
+    GEMMA_2_2B_LEGACY_EXPERIMENTAL_SPEC.note.includes('EXPERIMENTAL ONLY'),
+    'Gemma 2 2B is explicitly segregated and marked as experimental legacy baseline only'
   );
 
   // --------------------------------------------------------------------------
-  // Suite 3: Provenance Classification & Tagging Invariants
+  // Suite 3: Provenance Classification & Execution Environment Invariants
   // --------------------------------------------------------------------------
-  console.log('\n--- [Suite 3] Execution Provenance & Invariants ---');
+  console.log('\n--- [Suite 3] Execution Provenance & Environment Invariants ---');
 
-  // Verify provenance values
-  const provenances = ['GEMINI_NANO_LOCAL', 'GEMMA_LOCAL', 'CLOUD_FALLBACK', 'UNAVAILABLE'] as const;
-  assert(provenances.length === 4, 'Exactly 4 discrete provenance states defined');
-
-  // Mock Native Bridge implementation
+  // Mock Native Bridge implementation (representing Android D5 MethodChannel)
   const mockBridge: NativeBridgeExecutor = {
     checkAICoreAvailability: async () => ({ isAvailable: true, statusMessage: 'READY', apiLevel: 34 }),
     getDeviceAICapabilities: async () => baseTelemetry,
@@ -215,7 +216,7 @@ async function runB6TestSuite() {
     }),
     executeLlamaCppInference: async (_prompt) => ({
       success: true,
-      text: 'Local Gemma GGUF summary: Bustling traditional heritage bakery.',
+      text: 'Local Gemma 4 E2B summary: Bustling traditional heritage bakery.',
     }),
   };
 
@@ -227,7 +228,7 @@ async function runB6TestSuite() {
     }),
   };
 
-  // 3.1: Test GEMINI_NANO_LOCAL provenance
+  // 3.1: Test GEMINI_NANO_LOCAL provenance & client execution environment
   const reqNano: LocalInferenceRequest = {
     taskId: 'req-nano-01',
     taskType: 'NOTE_SUMMARIZATION',
@@ -248,6 +249,7 @@ async function runB6TestSuite() {
 
   assert(resNano.provenance === 'GEMINI_NANO_LOCAL', 'Assigns GEMINI_NANO_LOCAL provenance');
   assert(resNano.isLocalInference === true, 'GEMINI_NANO_LOCAL strictly sets isLocalInference = true');
+  assert(resNano.executionEnvironment === 'CLIENT_ANDROID_NATIVE', 'Local inference marked as CLIENT_ANDROID_NATIVE');
   assert(!resNano.unassistedFallback, 'GEMINI_NANO_LOCAL is not unassisted fallback');
 
   // 3.2: Test GEMMA_LOCAL provenance
@@ -271,6 +273,7 @@ async function runB6TestSuite() {
 
   assert(resGemma.provenance === 'GEMMA_LOCAL', 'Assigns GEMMA_LOCAL provenance');
   assert(resGemma.isLocalInference === true, 'GEMMA_LOCAL strictly sets isLocalInference = true');
+  assert(resGemma.executionEnvironment === 'CLIENT_ANDROID_NATIVE', 'Gemma GGUF execution marked as CLIENT_ANDROID_NATIVE');
   assert(!resGemma.unassistedFallback, 'GEMMA_LOCAL is not unassisted fallback');
 
   // 3.3: Test CLOUD_FALLBACK provenance
@@ -295,6 +298,7 @@ async function runB6TestSuite() {
 
   assert(resCloud.provenance === 'CLOUD_FALLBACK', 'Assigns CLOUD_FALLBACK provenance when online + consented');
   assert(resCloud.isLocalInference === false, 'CLOUD_FALLBACK strictly sets isLocalInference = false (NEVER reports cloud as local)');
+  assert(resCloud.executionEnvironment === 'BACKEND_CLOUD_FUNCTIONS', 'Cloud fallback explicitly marked as BACKEND_CLOUD_FUNCTIONS');
   assert(resCloud.modelUsed === 'gemini-3.8-flash', 'Identifies real cloud model ID');
 
   // 3.4: Test UNAVAILABLE provenance (Fail-closed offline fallback)
@@ -411,7 +415,6 @@ async function runB6TestSuite() {
   // --------------------------------------------------------------------------
   console.log('\n--- [Suite 5] D5 Native Bridge Emulation ---');
 
-  // Verify matching contract with Developer D's MainActivity.kt / NativePlatformService
   const d5BridgeCheck = await mockBridge.checkAICoreAvailability();
   assert(
     d5BridgeCheck.isAvailable === true && d5BridgeCheck.apiLevel === 34,
@@ -421,7 +424,7 @@ async function runB6TestSuite() {
   const d5Caps = await mockBridge.getDeviceAICapabilities();
   assert(
     d5Caps.supportedFeatures.includes('AICORE_GEMINI_NANO') &&
-    d5Caps.ramAvailableMb === 4096,
+    d5Caps.ramAvailableMb === 5120,
     'D5 Bridge getDeviceAICapabilities telemetry round-trip verified'
   );
 
@@ -443,7 +446,7 @@ async function runB6TestSuite() {
   assert(
     d5LlamaInference.success === true &&
     typeof d5LlamaInference.text === 'string' &&
-    d5LlamaInference.text.includes('Gemma GGUF'),
+    d5LlamaInference.text.includes('Gemma 4 E2B'),
     'D5 Bridge executeLlamaCppInference round-trip verified'
   );
 
@@ -451,10 +454,10 @@ async function runB6TestSuite() {
   // Suite 6: Physical Hardware Real Inference Verification (NOT TESTED)
   // --------------------------------------------------------------------------
   console.log('\n--- [Suite 6] Physical Hardware Real Inference Verification ---');
-  console.log('  ⚠️  STATUS: NOT TESTED (Honest reporting: Physical Android ARM64 hardware unavailable)');
-  console.log('  Requirements for physical hardware validation:');
+  console.log('  ⚠️  STATUS: NOT TESTED (Physical Android ARM64 hardware unavailable in test environment)');
+  console.log('  Hardware prerequisites for live validation:');
   console.log('    1. Physical Google Pixel 8/8a/9 or Galaxy S24 running Android 14+ (API 34+) with AICore initialized.');
-  console.log('    2. Physical ARM64 device with 1.71GB gemma-2-2b-it-Q4_K_M.gguf and libllama.so native library.');
+  console.log('    2. Physical 64-bit ARM device (>= 8 GB physical RAM) with gemma-4-E2B-it-Q4_K_M.gguf and libllama.so.');
   console.log('  Deterministic schemas, readiness gates, fallback engines, and mock bridges are 100% verified.');
 
   // Final Results

@@ -3,99 +3,82 @@
 
 **Repository:** `goddy04/neighborhoodguideapp`  
 **Domain:** Domain 09 — On-Device AI Inference & Edge Execution  
-**Lead Owner:** Developer B (AI & Model Integration Lead)  
-**Platform Integration Partner:** Developer D (Flutter Client & Android Native Bridge)  
+**Lead AI Owner:** Developer B (AI & Model Integration Lead)
+**Platform Integration Partner:** Developer D (Flutter Client & Android Native Platform Bridge)
 **Status:** Implementation Complete & Ready for Review  
 **Date:** November 2026  
 
 ---
 
-## 1. Executive Summary & Architectural Overview
+## 1. Architectural Separation: Application-Side vs. Backend
 
-The Neighborhood Guide App delivers zero-latency, private, and fully offline AI capabilities committed in our frozen architecture and pitch deck. The design provides two distinct on-device local execution paths:
+To prevent architectural conflation, execution responsibilities are strictly separated between the client device and the cloud backend:
 
 ```
-                                  [LocalInferenceRequest]
-                                             │
-                                    ┌────────┴────────┐
-                             (Device Connectivity Check)
-                                    │                 │
-                             [OFFLINE / LOCAL]     [ONLINE]
-                                    │                 │
-                   ┌────────────────┴────────────────┐│
-                   │ (Dynamic Hardware Telemetry)    ││
-                   │  - CPU ABI: arm64-v8a           ││
-                   │  - ramAvailableMb >= 1500MB     ││
-                   │  - storageAvailableMb >= 2500MB ││
-                   │  - API >= 34 & AICore package   ││
-                   └────────────────┬────────────────┘│
-                                    │                 │
-              ┌─────────────────────┴───────┐         │
-              ▼                             ▼         ▼
-     [Path 1: Gemini Nano]         [Path 2: Gemma GGUF] [Path 3: Cloud Gemini]
-      Android AICore / ML Kit       llama.cpp ARM64 Native  (Consented Fallback)
-    (com.google.android.aicore)    (unsloth/gemma-2-2b)   (gemini-3.8-flash)
-              │                             │                 │
-              ▼                             ▼                 ▼
-     [GEMINI_NANO_LOCAL]              [GEMMA_LOCAL]     [CLOUD_FALLBACK]
-              │                             │                 │
-              └──────────────┬──────────────┘                 │
-                             │ (If Unready / Model Missing)   │
-                             ▼                                │
-                 [Fail-Closed Offline Fallback]               │
-                    - Zero cloud data leakage                 │
-                    - Deterministic heuristics                │
-                             │                                │
-                             ▼                                │
-                       [UNAVAILABLE]                          │
-                             │                                │
-                             └────────────────┬───────────────┘
-                                              ▼
-                                   [Audit-Ready Response]
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                           CLIENT-SIDE (ANDROID DEVICE)                           │
+│                                                                                  │
+│  [Flutter Application UI] (Owned by Developer D)                                 │
+│         │                                                                        │
+│         ▼                                                                        │
+│  [NativePlatformService] (lib/services/native_platform_service.dart)             │
+│         │                                                                        │
+│         ▼ MethodChannel: "com.innovotribe.locallens/native_ai"                   │
+│  [Android MainActivity.kt] (android/app/src/main/kotlin/...)                     │
+│         │                                                                        │
+│         ├── Offline Path A ──► Android AICore / ML Kit GenAI (Gemini Nano)       │
+│         │                      (com.google.android.aicore - OS shared weights)   │
+│         │                                                                        │
+│         ├── Offline Path B ──► llama.cpp Native Runtime (libllama.so)            │
+│         │                      (Gemma 4 E2B Unsloth GGUF in App Storage)         │
+│         │                                                                        │
+│         └── Offline Fallback ─► Deterministic Heuristics (Unassisted Mode)       │
+└──────────────────────────────────────┬───────────────────────────────────────────┘
+                                       │
+                      (If Online + User Privacy Consent)
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                       BACKEND / CLOUD (FIREBASE FUNCTIONS)                       │
+│                                                                                  │
+│  [Cloud Functions AI Module] (Owned by Developer B)                              │
+│         │                                                                        │
+│         ├── Cloud Inference ──► Google Gemini API (gemini-3.8-flash)             │
+│         │                      - Provenance: CLOUD_FALLBACK                      │
+│         │                      - isLocalInference: false                         │
+│         │                                                                        │
+│         └── Contracts & Schemas (functions/src/ai/)                              │
+│             - Defines canonical request/response Zod contracts                   │
+│             - Evaluates telemetry & readiness rules                              │
+│             - Tests fallback behavior and provenance tagging                     │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Architectural Separation
-1. **Gemini Nano:** System-managed on-device foundation model via Android AICore / Google ML Kit GenAI.
-2. **Gemma 4 E2B:** App-managed open-weights instruction-tuned GGUF model executed via `llama.cpp` Android native runtime (`libllama.so` on `arm64-v8a`).
-
-These two model paths are fundamentally distinct and never conflated:
-- Gemma is **never** treated as an AICore model.
-- Gemini Nano is **never** treated as a GGUF model.
+### Responsibility Matrix:
+* **Developer D (Client & Android Integration):** Owns Flutter UI, Flutter state management, `NativePlatformService`, Android `MainActivity.kt`, permissions, Android NDK build of `libllama.so`, and on-device model file management.
+* **Developer B (AI Integration & Contracts):** Owns AI model definitions, prompt templates, Zod schemas, readiness evaluation logic, cloud Gemini API integration, and provenance verification.
 
 ---
 
 ## 2. Gemini Nano / Android AICore Path
 
-### 2.1 Authoritative Standard & Multi-OEM Support
+### 2.1 Authoritative Standard & Dynamic Status Checks
 * **Documentation Authority:** Google ML Kit GenAI ([https://developers.google.com/ml-kit/genai/](https://developers.google.com/ml-kit/genai/))
-* **Multi-OEM Support Matrix:** Gemini Nano is not restricted to Pixel or Galaxy devices. Google's ML Kit GenAI documentation encompasses devices from multiple OEMs:
-  - **Google:** Pixel 8, Pixel 8 Pro, Pixel 8a, Pixel 9, Pixel 9 Pro, Pixel 9 Pro Fold, Pixel Fold.
-  - **Samsung:** Galaxy S24, S24+, S24 Ultra, Galaxy Z Fold6, Galaxy Z Flip6.
-  - **Xiaomi:** Xiaomi 14, Xiaomi 14 Pro, Xiaomi 14T Pro.
-  - **Motorola:** Motorola Edge 50 Ultra, Razr 50 Ultra.
-  - **OnePlus:** OnePlus 12 series.
-  - **OPPO:** Find X7 series.
-
-### 2.2 Deep Readiness Lifecycle Evaluation
-A device having `Build.VERSION.SDK_INT >= 34` and `com.google.android.aicore` installed is **necessary but not sufficient** to establish readiness. The B6 engine evaluates the complete status pipeline:
-
-| Status Code | Description | Action Taken |
-| :--- | :--- | :--- |
-| `UNSUPPORTED_OS_VERSION` | Android SDK < 34 (Android 13 or older). | Reject AICore; evaluate Gemma or unassisted. |
-| `UNSUPPORTED_DEVICE` | OEM SoC does not meet NPU/DSP requirements. | Reject AICore; evaluate Gemma or unassisted. |
-| `PACKAGE_NOT_INSTALLED` | `com.google.android.aicore` not present. | Reject AICore; evaluate Gemma or unassisted. |
-| `MODEL_NOT_DOWNLOADED` | System service present, but model weights not yet cached. | Fall back to unassisted offline (MODEL_NOT_DOWNLOADED). |
-| `MODEL_DOWNLOADING` | Model weights downloading via unmetered Wi-Fi + charging. | Display download progress badge in UI. |
-| `BACKGROUND_RESTRICTED` | Host app is in background; AICore limits inference. | Suppress execution to protect battery/thermals. |
-| `FEATURE_UNAVAILABLE` | Specific requested API (e.g. Vision/Multimodal) unsupported. | Reject feature; fall back to text summarizer. |
-| `MODEL_READY` | Initialized, model weights loaded, ready for inference. | Route request to `GEMINI_NANO_LOCAL`. |
-
-### 2.3 Feature-Specific Capabilities
-ML Kit GenAI exposes separate APIs with distinct hardware readiness:
-- **Direct Model Prompting:** Raw prompt/response via foundation LLM.
-- **Summarization API:** Highly optimized summarization pipeline for notes, reviews, and highlights.
-- **Rewrite API:** Tone adjustment, phrasing improvements, and structural polish.
-- **Image Description:** Multimodal on-device vision (restricted to AICore v2 hardware).
+* **Evaluation Standard:** Dynamic readiness is evaluated via ML Kit GenAI status callbacks rather than hard-coded OEM lists:
+  - `Build.VERSION.SDK_INT >= 34` (Android 14+).
+  - Package presence of `com.google.android.aicore`.
+  - Feature-specific readiness check:
+    - `DIRECT_MODEL`: Foundation model prompt/response.
+    - `SUMMARIZATION`: Specialized on-device summarization API.
+    - `REWRITE`: Specialized text rewriting / style adaptation API.
+    - `IMAGE_DESCRIPTION`: Multimodal vision (requires AICore v2 hardware).
+  - Lifecycle state checks:
+    - `MODEL_DOWNLOADABLE`: Feature supported by hardware, but model weights not yet cached.
+    - `MODEL_DOWNLOADING`: Model weights actively downloading in background.
+    - `MODEL_READY`: Model loaded and available for local inference.
+    - `BACKGROUND_RESTRICTED`: AICore suppresses heavy background inference to protect battery and thermal limits.
+    - `UNSUPPORTED_LANGUAGE`: ML Kit GenAI on-device models are currently English-first (`en`). Regional languages fall back to cloud when online or unassisted heuristics when offline.
+    - `QUOTA_EXCEEDED`: Per-minute token limit or thermal throttling triggered.
 
 ---
 
@@ -103,53 +86,76 @@ ML Kit GenAI exposes separate APIs with distinct hardware readiness:
 
 ### 3.1 Model Artifact Specifications
 * **Documentation Authority:** Unsloth Gemma Deployment ([https://gemma.ai/deployment/unsloth/](https://gemma.ai/deployment/unsloth/))
-* **Hugging Face Repository:** `unsloth/gemma-2-2b-it-GGUF`
-* **Canonical Recommended Artifact:** `gemma-2-2b-it-Q4_K_M.gguf`
-  - **Quantization:** 4-bit medium (`Q4_K_M`), optimal balance between perplexity and RAM footprint.
-  - **Exact File Size:** 1,714,561,024 bytes (~1.71 GB).
-  - **Artifact Revision:** `main` (commit SHA `84f4f38753235ff8a86a0e66d98e5e79147137f6`).
-* **High-Fidelity Alternative Artifact:** `gemma-2-2b-it-Q8_0.gguf`
-  - **Quantization:** 8-bit quantization (`Q8_0`).
-  - **Exact File Size:** 2,782,142,464 bytes (~2.78 GB).
-  - **Hardware Profile:** Devices with >= 6,144 MB total RAM.
-* **License & Redistribution:** Governed by the **Gemma Open Model Terms of Use**. The model binary is not bundled into the closed APK; it is downloaded on-demand to the app cache upon user selection or packaged as an optional offline neighborhood language pack.
+* **Hugging Face Repository:** `unsloth/gemma-4-E2B-it-GGUF` ([https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF))
+* **Canonical Recommended Artifact:** `gemma-4-E2B-it-Q4_K_M.gguf`
+  - **Quantization:** 4-bit Medium (`Q4_K_M`).
+  - **Exact File Size:** ~3.11 GB (`3,344,000,000` bytes).
+  - **Artifact Revision:** `main`.
+* **High-Fidelity Alternative Artifact:** `gemma-4-E2B-it-Q8_0.gguf`
+  - **Quantization:** 8-bit (`Q8_0`).
+  - **Exact File Size:** ~5.05 GB (`5,420,000,000` bytes).
+* **Optional Multimodal Projector (Vision/Audio):** `mmproj-gemma-4-E2B-it-f16.gguf`
+  - **File Size:** ~1.0 GB (`1,073,741,824` bytes).
+  - Required only if multimodal image/audio understanding is invoked locally.
+* **License & Redistribution:** Governed by the **Gemma Open Model Terms of Use**. Non-redistributable inside the closed APK; downloaded on-demand to the app cache upon user selection or packaged as an optional offline language pack.
 
-### 3.2 Native Runtime Architecture (`llama.cpp` Android ARM64)
-- **Shared Library:** `libllama.so` compiled for `arm64-v8a` using Android NDK r26d+ with OpenMP and ARM NEON SIMD vectorization.
-- **JNI Bridge:** Android JNI interface exposing model initialization, token generation, context caching, and memory release.
-- **Context Buffer & KV Cache:** 2048 token context window consumes ~350 MB KV cache + ~200 MB execution buffers.
-- **Memory Footprint:**
-  - mmap model weights: ~1.71 GB.
-  - Active runtime resident set size (RSS): ~1.9 GB.
-  - Dynamic Free RAM requirement (`ramAvailableMb`): **>= 1,500 MB**.
+> [!NOTE]
+> Previous experimental tests utilizing Gemma 2 2B (`unsloth/gemma-2-2b-it-GGUF`) are retained only as a lightweight baseline test. Gemma 2 does **not** satisfy the frozen Gemma 4 E2B commitment.
 
-### 3.3 Dynamic RAM vs Total RAM Rule
-> [!IMPORTANT]
-> A static check of `totalRamMb >= 3000` is **insufficient** and rejected by our architecture. Android system services, surface flinger, and background apps consume substantial RAM. The runtime must verify dynamic available RAM (`ramAvailableMb >= 1500`) at invocation time to prevent Android LMK (Low Memory Killer) from killing the application.
+### 3.2 Realistic Hardware Requirements (Estimates Pending Hardware Benchmarking)
+Because `gemma-4-E2B-it-Q4_K_M.gguf` is ~3.11 GB in size, memory and storage requirements are substantially higher than 2B models:
+
+| Resource | Minimum Requirement | Recommended Target | Verification Status |
+| :--- | :--- | :--- | :--- |
+| **CPU Architecture** | `arm64-v8a` (64-bit ARM) | `arm64-v8a` with NEON / OpenMP | Required / Validated |
+| **Dynamic Available RAM** | **`>= 3,500 MB`** | **`>= 4,500 MB`** | **Estimated** (Pending physical profiling) |
+| **Total Physical RAM** | **`>= 8,192 MB` (8 GB)** | **`>= 12,288 MB` (12 GB)** | **Estimated** (Devices with <= 6GB risk LMK kill) |
+| **Free Disk Storage** | **`>= 5,000 MB` (5 GB)** | **`>= 8,000 MB`** | Required for weight cache + buffers |
+| **Inference Throughput** | ~8–15 tokens/sec | ~15–25 tokens/sec | Estimated (Snapdragon 8 Gen 2/3, Tensor G3) |
+
+> [!WARNING]
+> A static check of `totalRamMb >= 3000` is **rejected**. Android system overhead and host app heaps consume 2.5–3.5 GB of RAM. Loading a 3.11 GB model on a device with only 4 GB or 6 GB total RAM will trigger Android's Low Memory Killer (LMK). Dynamic available RAM must be verified at invocation time.
 
 ---
 
-## 4. D5 Native Platform Bridge Interface
+## 4. Complete End-to-End Request / Response Flow
 
-Developer D provides the native Android MethodChannel bridge in `MainActivity.kt` and `NativePlatformService`. Developer B defines the AI data schemas, readiness evaluator, prompt structuring, and provenance engine.
-
-### 4.1 MethodChannel Contract (`com.innovotribe.locallens/native_ai`)
-
-| Bridge Method | Arguments | Native Implementation | AI Engine Mapping |
-| :--- | :--- | :--- | :--- |
-| `checkAICoreAvailability` | None | Inspects `SDK_INT >= 34` and `com.google.android.aicore`. | Feeds `evaluateAICoreReadiness()`. |
-| `getDeviceAICapabilities` | None | Queries `ActivityManager.MemoryInfo`, ABI, and versions. | Populates `DeviceAICapabilities`. |
-| `getNativeAiStatus` | None | Returns discrete lifecycle state string. | Mapped to `AICoreReadinessStatus`. |
-| `summarizeOfflineNote` | `noteText`, `spotName`, `language` | Dispatches to AICore or unassisted fallback. | Populates `LocalInferenceOutput.summary`. |
-| `extractOfflineKeywords` | `text` | Dispatches to keyword extraction pipeline. | Populates `LocalInferenceOutput.keywords`. |
-| `executeOfflineInference`| `prompt`, `engine` | Dispatches to local engine (`AICORE` or `LLAMA_CPP`). | Routes to `orchestrateLocalInference()`. |
-
-### 4.2 Four-Level State Distinction
-Our architecture strictly differentiates:
-1. **Bridge method existing:** The Kotlin `MethodChannel` handler is registered.
-2. **Bridge method returning mock/fallback:** The bridge returns `success: false, code: "MODEL_NOT_DOWNLOADED"`.
-3. **Model being available:** The model weights exist in AICore system storage or app GGUF cache.
-4. **Actual local inference succeeding:** The local engine executes tokens on device hardware and returns non-empty generated text.
+```
+1. Traveler initiates action (e.g. "Summarize Offline Note")
+   │
+   ▼
+2. Flutter Client (NativePlatformService)
+   │ Queries connectivity & device telemetry
+   │
+   ├── [Case 1: OFFLINE]
+   │     │
+   │     ▼ Invokes MethodChannel: summarizeOfflineNote / executeOfflineInference
+   │   Android Kotlin (MainActivity.kt)
+   │     │
+   │     ├── If AICore model is ready ─────────► Executes Gemini Nano locally
+   │     │                                       Returns: isLocalInference: true,
+   │     │                                                provenance: 'GEMINI_NANO_LOCAL'
+   │     │
+   │     ├── Else if Gemma GGUF is ready ──────► Executes libllama.so locally
+   │     │                                       Returns: isLocalInference: true,
+   │     │                                                provenance: 'GEMMA_LOCAL'
+   │     │
+   │     └── Else (neither model ready) ───────► Executes unassisted deterministic heuristic
+   │                                             Fails closed (Zero network calls)
+   │                                             Returns: isLocalInference: false,
+   │                                                      provenance: 'UNAVAILABLE'
+   │
+   └── [Case 2: ONLINE]
+         │
+         ├── If traveler requests on-device ───► Follows Case 1 local execution
+         │
+         └── If cloud fallback consented ──────► Calls Firebase Cloud Function
+               │
+               ▼ Cloud Function AI Service
+             Executes Google Gemini API (gemini-3.8-flash)
+             Returns: isLocalInference: false,
+                      provenance: 'CLOUD_FALLBACK'
+```
 
 ---
 
@@ -165,26 +171,26 @@ export type ExecutionProvenance =
   | 'UNAVAILABLE';       // Local model unavailable / unassisted heuristic fallback
 ```
 
-### Strict Architectural Invariants:
+### Privacy Invariants Enforced:
 1. **Never Report Cloud as Local:** A cloud-generated response (`gemini-3.8-flash` or `gemini-3.5-flash-lite`) must **never** be labeled `isLocalInference: true` or given a local provenance tag.
-2. **Never Silently Leak Offline Data:** When a traveler is offline and on-device model inference fails or is not downloaded, the engine **fails closed**. It never queues or leaks traveler notes to the cloud without explicit consent.
+2. **Never Silently Leak Offline User Data:** When a traveler is offline and on-device model inference fails or is not downloaded, the engine **fails closed**. It never queues or leaks traveler notes to the cloud without explicit consent.
 3. **Transparent Unassisted Mode:** When models are unready, the engine produces deterministic heuristic summaries and keywords labeled `unassistedFallback: true` and `provenance: 'UNAVAILABLE'`, ensuring travelers receive helpful assistance without deceptive claims of neural generation.
 
 ---
 
-## 6. Verification Evidence & Physical Hardware Boundaries
+## 6. Verification Evidence & Classification
 
 ### 6.1 Test Classification Matrix
 
-| Test Category | Execution Tool | Status | Scope Verified |
+| Component / Layer | Implementation Location | Execution Mode | Verification Status |
 | :--- | :--- | :--- | :--- |
-| **Deterministic Unit Tests** | `npm run test:b6` (tsx) | **PASSED** (100%) | AICore readiness rules, Gemma GGUF checks, dynamic RAM evaluation, engine selection logic, unassisted heuristics. |
-| **Mock Bridge Tests** | `npm run test:b6` (tsx) | **PASSED** (100%) | D5 MethodChannel contract emulation, response schema conformance, parameter round-tripping. |
-| **Online / Offline Switching** | `npm run test:b6` (tsx) | **PASSED** (100%) | Provenance tagging, privacy fail-closed guarantees, consented cloud fallback. |
-| **Full Regression Suite** | `npm test` | **PASSED** (100%) | Upstream domains A1–A5, B1–B5, and C1–C5 unaffected. |
-| **Real Device AICore Inference**| Physical Pixel 8/9 / Galaxy S24 | **NOT TESTED** | Requires physical Android 14+ ARM64 hardware with pre-provisioned AICore models. |
-| **Real Device Gemma GGUF Inference** | Physical ARM64 device | **NOT TESTED** | Requires physical ARM64 device with 1.71GB GGUF artifact and compiled `libllama.so`. |
+| **Client-Side Platform Bridge** | `android/app/.../MainActivity.kt`, `lib/services/native_platform_service.dart` | Flutter / Kotlin Android Runtime (Owned by D) | Implemented & verified via `flutter test` (26/26 passed) |
+| **Backend Schemas & Orchestration** | `functions/src/ai/schemas/`, `functions/src/ai/services/` | Node.js / TypeScript (Owned by B) | Implemented & compiled with 0 errors |
+| **Deterministic Contract Tests** | `functions/test/test-b6-on-device-ai.ts` | Unit / Mock Bridge Execution (`tsx`) | **PASSED (42/42 assertions)** |
+| **Full Regression Suite** | `functions/package.json` | Node.js Test Runner (`npm test`) | **PASSED (271/271 tests)** |
+| **Physical Gemini Nano Inference** | Physical Pixel 8/9 / Galaxy S24 | Physical Android Hardware Execution | **NOT TESTED** (Requires physical AICore hardware) |
+| **Physical Gemma 4 E2B Inference** | Physical ARM64 device (8GB+ RAM) | Physical Android Hardware Execution | **NOT TESTED** (Requires physical ARM64 device) |
 
-### 6.2 Hardware Required for Post-Merge Physical Validation
-- **Device 1 (Gemini Nano):** Google Pixel 8 / 8a / 9 running Android 14 (API 34) or Android 15 (API 35) with Google Play Services and AICore initialized.
-- **Device 2 (Gemma GGUF):** Any 64-bit ARM device (`arm64-v8a`) with >= 8 GB total RAM and Snapdragon 8 Gen 2 / Gen 3 or Tensor G3 SoC, running Android NDK r26d runtime with `gemma-2-2b-it-Q4_K_M.gguf`.
+### 6.2 Hardware Required for Physical Validation
+- **Device 1 (Gemini Nano):** Google Pixel 8 / 8a / 9 or Galaxy S24 running Android 14 (API 34+) with Google Play Services and AICore initialized.
+- **Device 2 (Gemma 4 E2B):** 64-bit ARM device (`arm64-v8a`) with >= 8 GB total physical RAM (Snapdragon 8 Gen 2 / Gen 3 or Tensor G3), running Android NDK 26+ runtime with `gemma-4-E2B-it-Q4_K_M.gguf`.
