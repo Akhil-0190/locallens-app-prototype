@@ -63,6 +63,11 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
         title: const Text('Street Pocket Guide'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.offline_pin_outlined),
+            onPressed: () => context.push('/offline-packs'),
+            tooltip: 'Offline Neighborhood Packs',
+          ),
+          IconButton(
             icon: const Icon(Icons.alt_route),
             onPressed: () => context.push('/route'),
             tooltip: 'Walking Route Tour',

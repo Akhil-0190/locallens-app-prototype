@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../models/contribution.dart';
@@ -14,13 +15,17 @@ final isTestModeProvider = StateProvider<bool>((ref) {
 
 /// Database provider for offline SQLite/Drift storage.
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
-  final db = AppDatabase();
+  final isTest = ref.watch(isTestModeProvider);
+  final db = isTest ? AppDatabase(NativeDatabase.memory()) : AppDatabase();
   ref.onDispose(() => db.close());
   return db;
 });
 
-/// Service provider for spot queries (mock or live Firestore).
-final spotServiceProvider = Provider<SpotService>((ref) => SpotService());
+/// Service provider for spot queries (mock, live Firestore, or local SQLite Drift).
+final spotServiceProvider = Provider<SpotService>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return SpotService(db: db);
+});
 
 /// Asynchronously provides verified spots from SpotService.
 final verifiedSpotsProvider = FutureProvider<List<SpotCard>>((ref) async {

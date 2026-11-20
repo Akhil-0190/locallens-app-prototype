@@ -1,0 +1,75 @@
+{
+  "packId": "pack_malleshwaram_v1",
+  "neighborhood": "Malleshwaram",
+  "city": "Bengaluru",
+  "version": 1,
+  "totalSpotsCount": 1,
+  "totalRoutesCount": 1,
+  "downloadSizeBytes": 142850,
+  "downloadUrl": "https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/offline_packs/pack_malleshwaram_v1.json",
+  "sha256Checksum": "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0",
+  "spots": [
+    {
+      "id": "place_ctr_malleshwaram_01",
+      "spotName": "Central Tiffin Room (Shri Sagar)",
+      "mapsLink": "https://maps.google.com/?cid=1234567890123456789",
+      "infoParagraph": "Iconic 1920s heritage breakfast institution celebrated for its crisp butter benne masala dose and slow-dripped chicory filter coffee.",
+      "photoUrlsJson": "[\"https://storage.googleapis.com/neighborhoodguideapp-35856.firebasestorage.app/spots/ctr_benne_dose.jpg\"]",
+      "openHours": "07:30 AM - 12:30 PM, 04:00 PM - 09:00 PM",
+      "practicalTips": "Cash or UPI only. Ask for 'benne dose' with extra white butter on the side.",
+      "greetingCard": "Welcome to Shri Sagar CTR! Savor the legendary crisp golden dose that has fueled Bengaluru mornings for over 70 years.",
+      "isTouristTrap": false,
+      "hourlyLimit": 12,
+      "currentVisitors": 4,
+      "vibeTagsJson": "[\"heritage\",\"vintage_filter_coffee\",\"pocket_friendly\",\"generational\"]",
+      "latitude": 12.998242,
+      "longitude": 77.570953
+    }
+  ],
+  "routes": [
+    {
+      "routeId": "route_malleshwaram_heritage_01",
+      "title": "Malleshwaram Heritage & Coffee Trail",
+      "neighborhood": "Malleshwaram",
+      "theme": "Heritage / Culinary Walking Trail",
+      "origin": {
+        "latitude": 12.998242,
+        "longitude": 77.570953,
+        "precision": 6,
+        "formatted": "12.998242, 77.570953",
+        "isValid": true
+      },
+      "destination": {
+        "latitude": 13.003125,
+        "longitude": 77.571012,
+        "precision": 6,
+        "formatted": "13.003125, 77.571012",
+        "isValid": true
+      },
+      "waypoints": [
+        {
+          "latitude": 13.000851,
+          "longitude": 77.569421,
+          "precision": 6,
+          "formatted": "13.000851, 77.569421",
+          "isValid": true
+        }
+      ],
+      "waypointPlaceIds": [
+        "place_ctr_malleshwaram_01",
+        "place_kadu_temple_02"
+      ],
+      "optimizedWaypointOrder": [0],
+      "totalDistanceMeters": 1150,
+      "totalDurationSeconds": 870,
+      "formattedDistance": "1.1 km",
+      "formattedDuration": "15 mins",
+      "encodedPolyline": "_{znAw`~xMg@g@eAo@m@e@u@o@_Am@wA}@y@w@u@aAk@q@k@_Am@g@",
+      "legs": [],
+      "isMockData": false,
+      "createdAt": "2026-11-20T08:30:00.000Z",
+      "updatedAt": "2026-11-20T08:30:00.000Z"
+    }
+  ],
+  "publishedAt": "2026-11-20T12:00:00.000Z"
+}
