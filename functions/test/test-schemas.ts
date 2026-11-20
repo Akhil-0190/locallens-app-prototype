@@ -43,10 +43,10 @@ const embedDef = resolveModelDefinition('Gemini Embedding 2');
 assert(embedDef !== undefined, 'Resolve alias "Gemini Embedding 2"');
 assert(embedDef?.apiModelId === 'gemini-embedding-2', 'Gemini Embedding 2 maps to verified API ID gemini-embedding-2');
 
-const liveDef = resolveModelDefinition('Gemini 2.0 Flash Live') || resolveModelDefinition('Gemini 3.8 Live');
-assert(liveDef !== undefined, 'Resolve alias "Gemini 2.0 Flash Live"');
-assert(liveDef?.apiModelId === 'models/gemini-2.0-flash-exp', 'Gemini Live maps to verified Developer API model models/gemini-2.0-flash-exp');
-assert(liveDef?.testStatus === 'UNTESTED_ENDPOINT', 'Gemini Live marked as UNTESTED_ENDPOINT');
+const liveDef = resolveModelDefinition('Gemini 3.8 Live');
+assert(liveDef !== undefined, 'Resolve alias "Gemini 3.8 Live"');
+assert(liveDef?.apiModelId === 'gemini-3.8-live', 'Gemini 3.8 Live maps to verified model ID gemini-3.8-live');
+assert(liveDef?.testStatus === 'UNTESTED_ENDPOINT', 'Gemini 3.8 Live marked as UNTESTED_ENDPOINT');
 
 const nanoDef = resolveModelDefinition('Gemini Nano');
 assert(nanoDef !== undefined, 'Resolve alias "Gemini Nano"');

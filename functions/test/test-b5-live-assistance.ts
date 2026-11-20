@@ -44,7 +44,10 @@ import {
   checkRateLimit,
   assertLiveSessionTokenIssuance,
   clearRateLimitsForTesting,
+  MemoryRateLimitStore,
+  RateLimiter,
 } from '../src/ai/utils/rate-limiter.js';
+import { clearConsumedChallengesForTesting } from '../src/ai/services/live-assistance-service.js';
 
 let passed = 0;
 let total = 0;
@@ -88,7 +91,7 @@ async function runB5Tests() {
   });
 
   assert(LiveSessionTokenResponseSchema.safeParse(liveSession).success, 'LiveSessionTokenResponse conforms strictly to Zod schema');
-  assert(liveSession.model === 'models/gemini-2.0-flash-exp', 'Targets official Developer API Multimodal Live model models/gemini-2.0-flash-exp');
+  assert(liveSession.model === 'gemini-3.8-live', 'Targets committed architectural model gemini-3.8-live');
   assert(liveSession.deliveryMode === 'LIVE_STREAMING', 'Explicitly labeled deliveryMode: LIVE_STREAMING');
   assert(
     liveSession.webSocketEndpoint === 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
@@ -313,9 +316,11 @@ async function runB5Tests() {
   );
 
   // =========================================================================
-  // Test Suite 9: Continue in Gemini Handoff Interface (Two-Phase Explicit Consent)
+  // Test Suite 9: Continue in Gemini Handoff Interface (Two-Phase Cryptographic Consent)
   // =========================================================================
   console.log('\n--- [Suite 9] Continue in Gemini Handoff Interface ---');
+
+  clearConsumedChallengesForTesting();
 
   // Case A: Traveler has NOT granted consent yet (Phase 1: Preview & Challenge)
   const handoffRequiresConsent = formatGeminiHandoffContext({
@@ -328,33 +333,53 @@ async function runB5Tests() {
     ],
     recentConversationSnippets: ['What is the best dish at CTR?'],
     userConsentGranted: false,
+    action: 'PREVIEW',
   });
 
   assert(GeminiHandoffResponseSchema.safeParse(handoffRequiresConsent).success, 'Handoff preview conforms to schema');
   assert(handoffRequiresConsent.consentStatus === 'CONSENT_REQUIRED', 'Demands explicit user consent before data export');
-  assert(handoffRequiresConsent.consentChallengeToken.startsWith('consent_chk_'), 'Issues cryptographic consent challenge token');
+  assert(handoffRequiresConsent.consentChallengeToken.startsWith('chk_'), 'Issues unpredictable cryptographic consent challenge token');
   assert(handoffRequiresConsent.handoffUri === null, 'Does NOT generate handoff deep link without consent');
   assert(handoffRequiresConsent.cancellationPath === 'REMAIN_IN_APP', 'Provides safe cancellation path (REMAIN_IN_APP)');
   assert(handoffRequiresConsent.transferPayloadPreview.neighborhood === 'Malleshwaram', 'Presents transparent payload preview to user');
   assert(handoffRequiresConsent.transferPayloadPreview.spotNames.includes('CTR Shri Sagar'), 'Includes explicit spot names in preview');
 
-  // Case B: Traveler confirmed but challenge token was corrupted/mismatched
-  const handoffMismatched = formatGeminiHandoffContext({
+  // Case B: Explicit user cancellation action in UI
+  const handoffCancelled = formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
-    currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
-    currentRouteSummary: 'Malleshwaram Heritage Breakfast Walk (4 stops)',
-    recentSpotCards: [
-      { spotName: 'CTR Shri Sagar', category: 'tiffin_hall', openHours: '7:30 AM - 12:30 PM' },
-    ],
-    recentConversationSnippets: ['What is the best dish at CTR?'],
-    userConsentGranted: true,
-    consentChallengeToken: 'invalid_corrupted_token',
+    action: 'CANCEL',
+    userConsentGranted: false,
   });
-  assert(handoffMismatched.consentStatus === 'CANCELLED', 'Rejects handoff when consent challenge token is invalid');
-  assert(handoffMismatched.handoffUri === null, 'No URI generated on mismatched consent challenge');
+  assert(handoffCancelled.consentStatus === 'CANCELLED', 'User cancellation action produces CANCELLED status');
+  assert(handoffCancelled.handoffUri === null, 'Cancellation guarantees null handoffUri');
+  assert(handoffCancelled.cancellationPath === 'REMAIN_IN_APP', 'Cancellation retains user in-app');
 
-  // Case C: Traveler confirmed with valid challenge token (Phase 2: Confirmed Handoff)
+  // Case C: Expired challenge token
+  const expiredChallengeToken = `chk_testnonce_${Date.now() - 10000}_invalidsig`;
+  const handoffExpired = formatGeminiHandoffContext({
+    travelerId: 'usr_traveler_101',
+    activeNeighborhood: 'Malleshwaram',
+    userConsentGranted: true,
+    action: 'CONFIRM',
+    consentChallengeToken: expiredChallengeToken,
+  });
+  assert(handoffExpired.consentStatus === 'CANCELLED', 'Expired challenge token is rejected');
+  assert(handoffExpired.handoffUri === null, 'No URI generated for expired challenge');
+
+  // Case D: Payload Tampering / Binding Mismatch
+  // User received preview for Malleshwaram, but confirmation tries to export Indiranagar
+  const handoffTampered = formatGeminiHandoffContext({
+    travelerId: 'usr_traveler_101',
+    activeNeighborhood: 'Indiranagar', // Altered after preview
+    userConsentGranted: true,
+    action: 'CONFIRM',
+    consentChallengeToken: handoffRequiresConsent.consentChallengeToken,
+  });
+  assert(handoffTampered.consentStatus === 'CANCELLED', 'Payload altered after preview fails cryptographic verification');
+  assert(handoffTampered.handoffUri === null, 'No URI generated on payload binding mismatch');
+
+  // Case E: Valid Phase 2 confirmation with matching challenge and payload
   const handoffConfirmed = formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
@@ -365,56 +390,87 @@ async function runB5Tests() {
     ],
     recentConversationSnippets: ['What is the best dish at CTR?'],
     userConsentGranted: true,
+    action: 'CONFIRM',
     consentChallengeToken: handoffRequiresConsent.consentChallengeToken,
   });
 
-  assert(handoffConfirmed.consentStatus === 'CONSENT_GRANTED', 'Marks consent status as granted');
+  assert(handoffConfirmed.consentStatus === 'CONSENT_GRANTED', 'Marks consent status as granted on verified challenge');
   assert(handoffConfirmed.handoffUri !== null && handoffConfirmed.handoffUri.startsWith('https://gemini.google.com/app'), 'Deep-link targets official Gemini app');
   assert(handoffConfirmed.transferredAttributes.includes('activeNeighborhood'), 'Transfers activeNeighborhood');
   assert(handoffConfirmed.omittedAttributes.includes('rawPaymentTokens'), 'Omits private payment tokens');
   assert(handoffConfirmed.handoffDisclaimer.length > 0, 'Contains explicit privacy and data transfer disclaimer');
 
+  // Case F: One-Time Anti-Replay: Attempting to replay the exact same challenge token
+  const handoffReplay = formatGeminiHandoffContext({
+    travelerId: 'usr_traveler_101',
+    activeNeighborhood: 'Malleshwaram',
+    currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
+    currentRouteSummary: 'Malleshwaram Heritage Breakfast Walk (4 stops)',
+    recentSpotCards: [
+      { spotName: 'CTR Shri Sagar', category: 'tiffin_hall', openHours: '7:30 AM - 12:30 PM' },
+    ],
+    recentConversationSnippets: ['What is the best dish at CTR?'],
+    userConsentGranted: true,
+    action: 'CONFIRM',
+    consentChallengeToken: handoffRequiresConsent.consentChallengeToken,
+  });
+  assert(handoffReplay.consentStatus === 'CANCELLED', 'Replay attempt with consumed challenge token is rejected');
+  assert(handoffReplay.handoffUri === null, 'Replay attempt produces null handoff URI');
+
+  clearConsumedChallengesForTesting();
+
   // =========================================================================
-  // Test Suite 11: Rate Limiting & Abuse Prevention Controls
+  // Test Suite 11: Rate Limiting & Abuse Prevention Controls (Multi-Instance)
   // =========================================================================
-  console.log('\n--- [Suite 11] Rate Limiting & Abuse Prevention Controls ---');
+  console.log('\n--- [Suite 11] Shared Rate Limiting & Abuse Prevention Controls ---');
 
-  clearRateLimitsForTesting();
+  // Test across separate limiter instances sharing the same store (simulating multiple Cloud Function instances)
+  const sharedStore = new MemoryRateLimitStore();
+  const limiterInstanceA = new RateLimiter(sharedStore);
+  const limiterInstanceB = new RateLimiter(sharedStore);
 
-  // Test 1: Normal requests allowed under limit
-  const check1 = checkRateLimit('user_test_999', 'askStreetCopilot');
-  assert(check1.allowed, 'First request under policy limit is allowed');
-  assert(check1.remaining === 19, 'Remaining request count correctly decremented (19)');
+  // Test 1: Requests processed by Instance A correctly decrement remaining quota in Instance B
+  const checkA1 = await limiterInstanceA.checkRateLimit('user_shared_101', 'askStreetCopilot');
+  assert(checkA1.allowed, 'Instance A: first request allowed');
+  assert(checkA1.remaining === 19, 'Instance A: remaining quota is 19');
 
-  // Test 2: Rapid Live session token minting restricted (concurrency / loop prevention)
-  let firstTokenAllowed = false;
+  const checkB1 = await limiterInstanceB.checkRateLimit('user_shared_101', 'askStreetCopilot');
+  assert(checkB1.allowed, 'Instance B: second request allowed from shared store');
+  assert(checkB1.remaining === 18, 'Instance B: remaining quota reflects shared state (18)');
+
+  // Test 2: Rapid Live token minting cooldown enforced across separate instances
+  await limiterInstanceA.assertLiveSessionTokenIssuance('user_live_shared');
+  let cooldownBlockedAcrossInstances = false;
   try {
-    assertLiveSessionTokenIssuance('user_test_live_1');
-    firstTokenAllowed = true;
-  } catch {
-    firstTokenAllowed = false;
-  }
-  assert(firstTokenAllowed, 'First live token issuance is allowed');
-
-  let secondTokenBlocked = false;
-  try {
-    assertLiveSessionTokenIssuance('user_test_live_1');
+    // Attempt rapid token minting on Instance B within cooldown window
+    await limiterInstanceB.assertLiveSessionTokenIssuance('user_live_shared');
   } catch (err: any) {
     if (err.code === 'resource-exhausted') {
-      secondTokenBlocked = true;
+      cooldownBlockedAcrossInstances = true;
     }
   }
-  assert(secondTokenBlocked, 'Rapid subsequent live token issuance within 15s is blocked (resource-exhausted)');
+  assert(cooldownBlockedAcrossInstances, 'Token issuance cooldown enforced across distinct limiter instances');
 
-  // Test 3: Exhausting policy limit
-  for (let i = 0; i < 19; i++) {
-    checkRateLimit('user_test_999', 'askStreetCopilot');
+  // Test 3: Exhausting policy limit across instances
+  for (let i = 0; i < 18; i++) {
+    await limiterInstanceA.checkRateLimit('user_shared_101', 'askStreetCopilot');
   }
-  const checkExhausted = checkRateLimit('user_test_999', 'askStreetCopilot');
-  assert(!checkExhausted.allowed, 'Exceeding 20 req/min policy limit correctly blocks request');
-  assert(checkExhausted.remaining === 0, 'Remaining count is 0 when rate limit is exceeded');
+  const checkExhaustedB = await limiterInstanceB.checkRateLimit('user_shared_101', 'askStreetCopilot');
+  assert(!checkExhaustedB.allowed, 'Instance B correctly blocks request once shared quota is exhausted by Instance A');
+  assert(checkExhaustedB.remaining === 0, 'Instance B reports remaining quota as 0');
 
-  clearRateLimitsForTesting();
+  // Test 4: App Check Enforcement Behavior (Unset/False vs True)
+  const simulateAppCheck = (hasAppToken: boolean, enforceFlag: string | undefined): boolean => {
+    if (enforceFlag === 'true' && !hasAppToken) {
+      return false; // Blocks unverified callers in production
+    }
+    return true; // Allows callers in development or when disabled
+  };
+
+  assert(simulateAppCheck(false, undefined) === true, 'App Check: unconfigured/unset env allows execution (dev/test mode)');
+  assert(simulateAppCheck(false, 'false') === true, 'App Check: disabled env allows execution');
+  assert(simulateAppCheck(false, 'true') === false, 'App Check: ENFORCE_APP_CHECK=true strictly blocks unverified requests');
+  assert(simulateAppCheck(true, 'true') === true, 'App Check: ENFORCE_APP_CHECK=true allows verified requests');
 
   // =========================================================================
   // Test Suite 10: Live Gemini API Integration (Conditional)

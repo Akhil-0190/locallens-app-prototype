@@ -79,7 +79,7 @@ export const initializeLiveSession = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to start a Live session.');
   }
-  assertLiveSessionTokenIssuance(request.auth.uid);
+  await assertLiveSessionTokenIssuance(request.auth.uid);
 
   const parseResult = LiveSessionTokenRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -105,7 +105,7 @@ export const askStreetCopilot = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to use Street Copilot.');
   }
-  assertRateLimit(request.auth.uid, 'askStreetCopilot');
+  await assertRateLimit(request.auth.uid, 'askStreetCopilot');
 
   const parseResult = StreetCopilotRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -131,7 +131,7 @@ export const translateText = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to translate text.');
   }
-  assertRateLimit(request.auth.uid, 'translateText');
+  await assertRateLimit(request.auth.uid, 'translateText');
 
   const parseResult = TranslationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -207,7 +207,7 @@ export const translateCameraSignage = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to use visual translation.');
   }
-  assertRateLimit(request.auth.uid, 'translateCameraSignage');
+  await assertRateLimit(request.auth.uid, 'translateCameraSignage');
 
   const parseResult = CameraVisualTranslationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -234,7 +234,7 @@ export const generateAudioGuidance = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to generate audio guidance.');
   }
-  assertRateLimit(request.auth.uid, 'generateAudioGuidance');
+  await assertRateLimit(request.auth.uid, 'generateAudioGuidance');
 
   const parseResult = AudioGuidanceContentRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -260,7 +260,7 @@ export const explainPlanBReroute = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to explain Plan-B reroutes.');
   }
-  assertRateLimit(request.auth.uid, 'explainPlanBReroute');
+  await assertRateLimit(request.auth.uid, 'explainPlanBReroute');
 
   const parseResult = PlanBExplanationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -285,7 +285,7 @@ export const formatGeminiHandoff = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to initiate Gemini handoff.');
   }
-  assertRateLimit(request.auth.uid, 'formatGeminiHandoff');
+  await assertRateLimit(request.auth.uid, 'formatGeminiHandoff');
 
   const parseResult = GeminiHandoffContextSchema.safeParse(request.data);
   if (!parseResult.success) {

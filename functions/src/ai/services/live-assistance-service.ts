@@ -21,7 +21,7 @@
  * - Missing menu items or unreadable signage are strictly reported as unreadable or undefined.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
 import { getAIConfig } from '../config/env.js';
 import { executeWithRetry } from '../client/gemini-client.js';
@@ -77,7 +77,7 @@ export async function initializeLiveSession(
   const sessionId = `live_sess_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   // Constrained WebSocket endpoint for ephemeral token access
   const webSocketEndpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained`;
-  const targetModel = 'models/gemini-2.0-flash-exp';
+  const targetModel = 'gemini-3.8-live';
 
   const neighborhood = request.neighborhoodHint || 'Bengaluru Neighborhoods';
   const systemInstructionsApplied = `You are the Neighborhood Guide Street Assistant for ${neighborhood}.
@@ -106,7 +106,7 @@ Support regional languages (${request.preferredLanguage}) and English interchang
           expireTime: new Date(Date.now() + 900 * 1000).toISOString(),
           newSessionExpireTime: new Date(Date.now() + 300 * 1000).toISOString(),
           liveConnectConstraints: {
-            model: targetModel,
+            model: `models/${targetModel}`,
           },
         },
       });
@@ -128,7 +128,7 @@ Support regional languages (${request.preferredLanguage}) and English interchang
       ttlSeconds = 0;
       isLiveSessionSupported = false;
       status = 'UNAVAILABLE';
-      notes = `Google Live API ephemeral token creation unavailable: ${err?.message || 'Outbound network or API access restricted'}. Live session cannot be established.`;
+      notes = `Google Live API ephemeral token creation unavailable for ${targetModel}: ${err?.message || 'Outbound network or API access restricted'}. Live session cannot be established.`;
     }
   } else {
     ephemeralToken = null;
@@ -835,6 +835,30 @@ export async function explainPlanBReroute(
 // 9. Continue in Gemini Handoff Interface
 // ==============================================================================
 
+const CONSENT_SECRET = process.env.HANDOFF_CONSENT_SECRET || 'neighborhood_guide_consent_hmac_secret_2026';
+const consumedChallengeNonces = new Set<string>();
+
+export function clearConsumedChallengesForTesting(): void {
+  consumedChallengeNonces.clear();
+}
+
+function computePayloadFingerprint(context: GeminiHandoffContext): string {
+  const spots = (context.recentSpotCards ?? []).map((s) => s.spotName).sort();
+  const dialogue = (context.recentConversationSnippets ?? []).slice(-4);
+  const normalized = {
+    travelerId: context.travelerId,
+    neighborhood: context.activeNeighborhood,
+    coordinates: context.currentCoordinates ? {
+      lat: context.currentCoordinates.latitude.toFixed(4),
+      lng: context.currentCoordinates.longitude.toFixed(4),
+    } : null,
+    route: context.currentRouteSummary || '',
+    spots,
+    dialogue,
+  };
+  return createHash('sha256').update(JSON.stringify(normalized)).digest('hex').slice(0, 16);
+}
+
 /**
  * Formulates the structured context payload and deep link for the optional
  * "Continue in Gemini" handoff feature.
@@ -845,26 +869,24 @@ export function formatGeminiHandoffContext(
   context: GeminiHandoffContext
 ): GeminiHandoffResponse {
   const generatedAt = new Date().toISOString();
-
-  // Compute deterministic challenge token for the preview
-  const challengeHash = createHash('sha256')
-    .update(`${context.travelerId}:${context.activeNeighborhood}:${context.recentSpotCards.length}`)
-    .digest('hex')
-    .slice(0, 16);
-  const consentChallengeToken = `consent_chk_${challengeHash}`;
+  const now = Date.now();
+  const payloadFingerprint = computePayloadFingerprint(context);
 
   const coordsApprox = context.currentCoordinates
     ? `${context.currentCoordinates.latitude.toFixed(3)}° N, ${context.currentCoordinates.longitude.toFixed(3)}° E`
     : undefined;
+
+  const recentSpots = context.recentSpotCards ?? [];
+  const recentDialogues = context.recentConversationSnippets ?? [];
 
   const transferPayloadPreview = {
     neighborhood: context.activeNeighborhood,
     coordinatesShared: Boolean(context.currentCoordinates),
     coordinatesApproximate: coordsApprox,
     routeSummary: context.currentRouteSummary,
-    spotsCount: context.recentSpotCards.length,
-    spotNames: context.recentSpotCards.map((s) => s.spotName),
-    conversationSnippetsCount: context.recentConversationSnippets.length,
+    spotsCount: recentSpots.length,
+    spotNames: recentSpots.map((s) => s.spotName),
+    conversationSnippetsCount: recentDialogues.length,
   };
 
   const transferredAttributes = [
@@ -883,8 +905,30 @@ export function formatGeminiHandoffContext(
 
   const handoffDisclaimer = 'Continuing in Gemini exports public location, route, and dialogue context to Google Gemini web assistant. Private authentication credentials remain protected.';
 
+  // If explicit cancellation action is requested
+  if (context.action === 'CANCEL') {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CANCELLED',
+      consentChallengeToken: context.consentChallengeToken || 'none',
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: 'Handoff cancelled by traveler. No data was exported.',
+      generatedAt,
+    });
+  }
+
   // Phase 1: Traveler has NOT confirmed consent in UI yet
-  if (!context.userConsentGranted) {
+  if (!context.userConsentGranted || context.action === 'PREVIEW') {
+    const nonce = randomBytes(16).toString('hex');
+    const expiresAt = now + 5 * 60 * 1000; // 5 minute validity
+    const sigPayload = `${nonce}:${context.travelerId}:${payloadFingerprint}:${expiresAt}`;
+    const sig = createHmac('sha256', CONSENT_SECRET).update(sigPayload).digest('hex').slice(0, 16);
+    const consentChallengeToken = `chk_${nonce}_${expiresAt}_${sig}`;
+
     return GeminiHandoffResponseSchema.parse({
       consentStatus: 'CONSENT_REQUIRED',
       consentChallengeToken,
@@ -899,23 +943,96 @@ export function formatGeminiHandoffContext(
     });
   }
 
-  // Phase 2: Traveler confirmed consent in UI, verify consentChallengeToken matches
-  if (!context.consentChallengeToken || context.consentChallengeToken !== consentChallengeToken) {
+  // Phase 2: Traveler confirmed consent in UI, verify consentChallengeToken
+  const token = context.consentChallengeToken;
+  if (!token || !token.startsWith('chk_')) {
     return GeminiHandoffResponseSchema.parse({
       consentStatus: 'CANCELLED',
-      consentChallengeToken,
+      consentChallengeToken: token || 'missing',
       handoffUri: null,
       transferPayloadPreview,
       transferPayloadJson: null,
       transferredAttributes,
       omittedAttributes,
       cancellationPath: 'REMAIN_IN_APP',
-      handoffDisclaimer: 'Consent verification failed or expired. Please review the export preview again.',
+      handoffDisclaimer: 'Consent verification failed: missing or malformed challenge token.',
       generatedAt,
     });
   }
 
-  // Traveler explicitly confirmed consent with matching challenge: formulate transfer payload and deep link
+  const parts = token.split('_');
+  if (parts.length !== 4) {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CANCELLED',
+      consentChallengeToken: token,
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: 'Consent verification failed: malformed challenge token format.',
+      generatedAt,
+    });
+  }
+
+  const [, nonce, expiresStr, sig] = parts;
+  const expiresAt = Number(expiresStr);
+
+  // Check 1: Expiry
+  if (now > expiresAt) {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CANCELLED',
+      consentChallengeToken: token,
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: 'Consent challenge expired. Please review and confirm the export preview again.',
+      generatedAt,
+    });
+  }
+
+  // Check 2: Signature verification & payload binding
+  const expectedSigPayload = `${nonce}:${context.travelerId}:${payloadFingerprint}:${expiresAt}`;
+  const expectedSig = createHmac('sha256', CONSENT_SECRET).update(expectedSigPayload).digest('hex').slice(0, 16);
+  if (sig !== expectedSig) {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CANCELLED',
+      consentChallengeToken: token,
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: 'Consent challenge signature mismatch or payload altered after preview.',
+      generatedAt,
+    });
+  }
+
+  // Check 3: One-time anti-replay
+  if (consumedChallengeNonces.has(nonce)) {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CANCELLED',
+      consentChallengeToken: token,
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: 'Consent challenge has already been consumed. Replay rejected.',
+      generatedAt,
+    });
+  }
+
+  // Mark nonce as consumed
+  consumedChallengeNonces.add(nonce);
+
+  // Formulate transfer payload and deep link
   const payloadData = {
     app: 'NeighborhoodGuide',
     travelerId: context.travelerId,
@@ -933,7 +1050,7 @@ export function formatGeminiHandoffContext(
 
   return GeminiHandoffResponseSchema.parse({
     consentStatus: 'CONSENT_GRANTED',
-    consentChallengeToken,
+    consentChallengeToken: token,
     handoffUri,
     transferPayloadPreview,
     transferPayloadJson,

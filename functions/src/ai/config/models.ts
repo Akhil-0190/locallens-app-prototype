@@ -173,11 +173,11 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
     notes: 'LIVE TESTED & VERIFIED. Produces normalized 3,072-dim multimodal vectors for cosine similarity operations.',
   },
 
-  // Gemini Live Multimodal endpoint on Gemini Developer API
+  // Frozen Architecture Commitment: Gemini 3.8 Live (Bidirectional Streaming)
   GEMINI_LIVE_MULTIMODAL: {
-    apiModelId: 'models/gemini-2.0-flash-exp',
-    displayName: 'Gemini 2.0 Flash Live (Bidirectional Streaming)',
-    alias: 'Gemini 2.0 Flash Live',
+    apiModelId: 'gemini-3.8-live',
+    displayName: 'Gemini 3.8 Live (Bidirectional Streaming)',
+    alias: 'Gemini 3.8 Live',
     primaryUse: 'Low-latency bidirectional voice translation, live audio guidance, and conversational assistant via WebSocket BidiGenerateContentConstrained',
     availability: 'PUBLIC_PREVIEW',
     testStatus: 'UNTESTED_ENDPOINT',
@@ -200,7 +200,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 500,
       },
     },
-    notes: 'Configured for Gemini Developer API (Google AI Studio) v1alpha BidiGenerateContentConstrained WebSocket. In this product, models/gemini-2.0-flash-exp is the supported Multimodal Live model. The hypothetical model "gemini-3.8-live" is not available through the Gemini Developer API product; the registry explicitly configures the real supported model models/gemini-2.0-flash-exp to ensure 100% agreement with token creation constraints.',
+    notes: 'Frozen architectural model for real-time spoken translation and conversational assistance. Access through Google Gemini Enterprise Agent Platform or Developer API endpoints is unverified; marked explicitly as UNTESTED_ENDPOINT pending live provider verification.',
   },
 
   // Clarified: Gemini Nano on-device via Android AICore / ML Kit

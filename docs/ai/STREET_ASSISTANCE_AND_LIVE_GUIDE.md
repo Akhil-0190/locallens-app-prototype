@@ -28,11 +28,13 @@ Task B5 introduces three operational delivery tiers:
 
 ## 2. Gemini Live Security, Token Lifecycle & Model Verification
 
-### A. Gemini Developer API Product & Model Alignment
-- **Target Platform:** Google Gemini Developer API (Google AI Studio via `@google/genai` v1alpha SDK).
-- **Supported Live Model:** `models/gemini-2.0-flash-exp` (the official model supporting bidirectional multimodal streaming in the Developer API v1alpha).
-- **Product Mismatch Resolution:** The hypothetical model ID `gemini-3.8-live` does not exist in the Gemini Developer API catalog. The central registry, backend token constraints, and service return objects now agree 100% on `models/gemini-2.0-flash-exp`.
-- **Live Model Verification Status:** `models/gemini-2.0-flash-exp` is categorized as `UNTESTED_ENDPOINT` in the registry and marked as unverified until live WebSocket bidirectional streaming succeeds against Google's servers.
+### A. Frozen Architecture Commitment: Gemini 3.8 Live
+- **Committed Model:** `gemini-3.8-live` (the frozen architectural commitment in the pitch deck).
+- **Current Model Status:** Marked as `UNTESTED_ENDPOINT` in the central model registry pending real provider live session verification.
+- **Provider Investigation (Developer API vs. Enterprise Agent Platform):**
+  - **Gemini Developer API (Google AI Studio via `@google/genai` v1alpha):** Exposes ephemeral token creation via `client.authTokens.create`. In the Developer API v1alpha catalog, bidirectional streaming targets experimental live endpoints. Attempting to create tokens for unverified model IDs fails closed.
+  - **Google Gemini Enterprise Agent Platform (Vertex AI):** Uses Google Cloud IAM, service accounts, and OAuth2/STS downscoped tokens. The `@google/genai` SDK explicitly restricts `authTokens.create` to the Developer API (`isVertexAI()` throws an error).
+  - **Honest Provider Fallback:** In offline sandboxes or when API credentials/network/endpoints are unavailable, the backend reports `isLiveSessionSupported: false` and `ephemeralToken: null`. It **never** manufactures a synthetic local UUID as a fake credential or silently substitutes an unapproved model.
 
 ### B. Correct Ephemeral-Token WebSocket Protocol
 When using Google Developer API ephemeral tokens, connections must use the constrained endpoint and query parameter authentication:
@@ -42,9 +44,8 @@ When using Google Developer API ephemeral tokens, connections must use the const
   `?access_token=<ephemeral_token>` (passed as a URL query parameter; NOT bearer headers or session params).
 - **Full Client Connection URL:**
   `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${ephemeralToken}`
-- **Constrained Locking:** The session is cryptographically locked by Google to the exact model (`models/gemini-2.0-flash-exp`) and system instructions configured during token minting. The client cannot modify locked fields.
+- **Constrained Locking:** The session is cryptographically locked by Google to the committed model (`gemini-3.8-live`) and system instructions configured during token minting. The client cannot modify locked fields.
 - **Expiry Enforcement:** Single-use session token with a 15-minute (`ttlSeconds: 900`) message rejection boundary and 5-minute session initialization window.
-- **Honest Offline Reporting:** In offline sandboxes or when API credentials/network are unavailable, the service returns `isLiveSessionSupported: false` and `ephemeralToken: null`. Zero fake tokens or local UUIDs are ever returned.
 
 ---
 
@@ -58,9 +59,16 @@ Developer B provides callable Firebase Cloud Functions under the `Assistance` na
 
 ### Callable Abuse Controls, Quotas & App Check
 
-To protect externally billed Google AI operations and prevent quota exhaustion:
+To protect externally billed Google AI operations and prevent quota exhaustion across multiple Cloud Function instances:
 
-| Cloud Function Callable | Authentication (`request.auth`) | App Check Required | Sliding-Window Rate Limit | Abuse & Cost Controls |
+1. **Shared Rate Limiting Engine:**
+   - Backed by Firestore collection `ai_usage_quotas` (coordinated with Developer A's architecture) using atomic operations, surviving instance restarts and cold starts.
+   - Includes in-memory safeguards for local execution and rapid rejection.
+   - Tested across independent limiter instances to prove shared state enforcement.
+
+2. **Per-User Quotas:**
+
+| Cloud Function Callable | Authentication (`request.auth`) | App Check Required | Shared Rate Limit | Abuse & Cost Controls |
 | :--- | :--- | :--- | :--- | :--- |
 | `Assistance-initializeLiveSession` | **Required** | **Yes** (Production) | Max 5 calls / 15 min | Single active token per user; 15s cooldown |
 | `Assistance-askStreetCopilot` | **Required** | **Yes** (Production) | Max 20 calls / min | Query capped at 1,000 chars; history max 10 |
@@ -71,6 +79,10 @@ To protect externally billed Google AI operations and prevent quota exhaustion:
 | `Assistance-formatGeminiHandoff` | **Required** | Optional | Max 5 calls / min | Cryptographic two-phase consent challenge |
 | `Assistance-getOrderingPhrases` | Optional | Optional | Payload < 4KB | In-memory zero-cost curated phrase deck |
 | `Assistance-getEtiquetteGuidance` | Optional | Optional | Payload < 4KB | In-memory zero-cost curated etiquette deck |
+
+3. **Firebase App Check Deployment Status:**
+   - **Deployment Truth:** In the current repository and environment, `ENFORCE_APP_CHECK` is **not yet set in production deployment secrets** (`.env.example` has no App Check keys).
+   - **Enforcement Logic:** `checkAppCheckIfEnforced(request)` is a readiness safeguard. When `ENFORCE_APP_CHECK` is unset or false (local/test/emulator), requests pass without an App Check token. When set to `'true'`, it strictly blocks callers lacking a valid App Check token (`failed-precondition`). Active production enforcement will be enabled once Play Integrity / DeviceCheck is registered in Firebase Console.
 
 ### Example Request & Response: Camera Signage Translation
 **Request Payload:**
@@ -139,25 +151,30 @@ To keep spoken walking guidance clear and safe on busy streets:
 
 Prepares the structured context payload for the optional "Continue in Gemini" capability with end-to-end user consent verification:
 
-### Two-Phase Confirmation Flow:
+### Two-Phase Cryptographic Confirmation Flow:
 1. **Phase 1 (Inspection & Preview):**
-   - Flutter client calls `Assistance-formatGeminiHandoff` with `{ userConsentGranted: false }`.
-   - Backend returns `consentStatus: 'CONSENT_REQUIRED'`, `consentChallengeToken`, and `transferPayloadPreview`.
+   - Flutter client calls `Assistance-formatGeminiHandoff` with `{ action: 'PREVIEW', userConsentGranted: false }`.
+   - Backend computes payload fingerprint, generates an unpredictable 16-byte random nonce, sets 5-minute expiry, and creates HMAC-signed `consentChallengeToken` (`chk_<nonce>_<expiresAt>_<signature>`).
+   - Returns `consentStatus: 'CONSENT_REQUIRED'`, `consentChallengeToken`, and `transferPayloadPreview`.
    - `handoffUri` remains strictly `null`.
-2. **User Confirmation Dialog (Developer D UI):**
+2. **User Confirmation Dialog (Developer D UI Agreement):**
    - Flutter client renders modal displaying `transferPayloadPreview`:
      - Neighborhood: e.g. "Malleshwaram"
      - GPS Sharing: Approximate coordinates (e.g. `12.998° N, 77.571° E`)
      - Route & Spots: "Malleshwaram Breakfast Walk (CTR Shri Sagar, ...)"
      - Conversation: Count of recent dialogue snippets shared.
    - User choices:
-     - **[Cancel / Stay in Guide]:** Dialog closes, takes `cancellationPath: 'REMAIN_IN_APP'`, 0 data exported.
-     - **[Share & Continue in Gemini]:** Explicit affirmative action triggers Phase 2.
-3. **Phase 2 (Verified Export):**
-   - Flutter client sends `{ userConsentGranted: true, consentChallengeToken: '<challenge_from_phase_1>' }`.
-   - Backend validates the challenge token against session hash.
+     - **[Cancel / Stay in Guide]:** Client sends `{ action: 'CANCEL' }`, dialog closes, takes `cancellationPath: 'REMAIN_IN_APP'`, 0 data exported.
+     - **[Share & Continue in Gemini]:** Explicit affirmative user action triggers Phase 2.
+3. **Phase 2 (Verified Export & Anti-Replay):**
+   - Flutter client sends `{ action: 'CONFIRM', userConsentGranted: true, consentChallengeToken: '<token_from_phase_1>' }`.
+   - Backend verifies:
+     - Challenge has not expired (`now <= expiresAt`).
+     - Cryptographic signature matches.
+     - Payload binding matches (if coordinates or spots were altered between preview and confirmation, verification fails).
+     - Nonce has not been consumed (one-time use; replay attempts are strictly rejected).
    - If valid, returns `consentStatus: 'CONSENT_GRANTED'` and `handoffUri`.
-   - If challenge token is missing or mismatched, returns `consentStatus: 'CANCELLED'` and blocks export.
+   - If challenge token is missing, expired, altered, or replayed, returns `consentStatus: 'CANCELLED'` with `handoffUri: null`.
 4. **Privacy Protection:**
    - Raw payment tokens, user passwords, and internal database IDs are permanently excluded (`omittedAttributes`).
    - Deep-link targets official Gemini web app: `https://gemini.google.com/app?context=...`.
