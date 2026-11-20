@@ -8,6 +8,7 @@ import '../models/spot_card.dart';
 import '../providers/spot_providers.dart';
 import '../widgets/app_async_states.dart';
 import '../widgets/spot_card_tile.dart';
+import '../widgets/tipping_modal_sheet.dart';
 
 class PocketGuideScreen extends ConsumerStatefulWidget {
   const PocketGuideScreen({super.key});
@@ -63,6 +64,16 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
         title: const Text('Street Pocket Guide'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.confirmation_number_outlined),
+            onPressed: () => context.push('/route-passes'),
+            tooltip: 'Route Passes',
+          ),
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            onPressed: () => context.push('/contributor-profile'),
+            tooltip: 'Contributor Profile & Earnings',
+          ),
+          IconButton(
             icon: const Icon(Icons.offline_pin_outlined),
             onPressed: () => context.push('/offline-packs'),
             tooltip: 'Offline Neighborhood Packs',
@@ -114,6 +125,22 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
                     onPressed: () => _playAudioCue(spot),
                     icon: const Icon(Icons.headphones, size: 18),
                     label: const Text('Audio Cue'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        builder: (ctx) => TippingModalSheet(
+                          recipientUserId: spot.contributedBy?.userId ?? 'usr_blr_782914',
+                          recipientName: spot.contributedBy?.displayName ?? 'Local Contributor',
+                          spotId: spot.id,
+                          spotName: spot.spotName,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.volunteer_activism_outlined, size: 18),
+                    label: const Text('Tip'),
                   ),
                 ],
               );
