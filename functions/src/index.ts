@@ -33,3 +33,8 @@ export const healthCheck = onRequest(
  * Export AI services.
  */
 export * as AI from "./ai/index.js";
+
+/**
+ * Export Contribution persistence functions (Task A3).
+ */
+export * as Contributions from "./contributions/index.js";
