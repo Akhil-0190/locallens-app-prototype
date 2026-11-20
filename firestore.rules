@@ -53,15 +53,72 @@ service cloud.firestore {
     }
 
     // -----------------------------------------------------------------------
-    // users/{userId}/preferences
+    // preferences/{userId} (Domain 02 Canonical Storage)
     // -----------------------------------------------------------------------
-    // - Owner: full read/write of their own preferences sub-document.
-    // - Others: no access.
+    // - Read: Owner of preferences.
+    // - Write: STRICTLY DENIED for direct client writes (allow write: if false).
+    //          All preference modifications MUST go through the updatePreferences
+    //          Cloud Function to guarantee Zod schema validation, bounds checking,
+    //          and timestamp normalization.
     // -----------------------------------------------------------------------
 
-    match /users/{userId}/preferences/{prefDoc} {
-      allow read, write: if isOwner(userId);
+    match /preferences/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
     }
+
+    // Legacy subcollection path compatibility (read-only for owner)
+    match /users/{userId}/preferences/{prefDoc} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // group_sessions/{sessionId} (Domain 09 Groups & Taste Matching)
+    // -----------------------------------------------------------------------
+    // - Read: Host or members listed in resource.data.memberUserIds.
+    //         (Note: resource.data.members is an array of maps; Firestore rules
+    //          requires a simple string array memberUserIds to test membership).
+    // - Write: Admin SDK only via Cloud Functions (enforces short codes,
+    //          Zod schema validation, and state machine transitions).
+    // -----------------------------------------------------------------------
+
+    match /group_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (
+        resource.data.hostUserId == request.auth.uid ||
+        request.auth.uid in resource.data.memberUserIds
+      );
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // places/{placeId}/hourly_capacities/{slotId} (Domain 07 Venue Capacity)
+    // -----------------------------------------------------------------------
+    // - Read: Any authenticated user (to render live crowd badge indicators).
+    // - Write: Admin SDK only via Cloud Functions transactions.
+    // -----------------------------------------------------------------------
+
+    match /places/{placeId}/hourly_capacities/{slotId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // scheduled_visits/{visitId} (Domain 07 Scheduled Visits)
+    // -----------------------------------------------------------------------
+    // - Read: Booking traveler, member in memberUserIds, or moderator/admin.
+    // - Write: Admin SDK only via bookScheduledVisit / cancelScheduledVisit.
+    // -----------------------------------------------------------------------
+
+    match /scheduled_visits/{visitId} {
+      allow read: if isAuthenticated() && (
+        resource.data.travelerId == request.auth.uid ||
+        request.auth.uid in resource.data.memberUserIds ||
+        isModerator()
+      );
+      allow create, update, delete: if false;
+    }
+
 
     // -----------------------------------------------------------------------
     // contributions/{contributionId}

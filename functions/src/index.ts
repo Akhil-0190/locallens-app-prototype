@@ -38,3 +38,10 @@ export * as AI from "./ai/index.js";
  * Export Contribution persistence functions (Task A3).
  */
 export * as Contributions from "./contributions/index.js";
+
+/**
+ * Export Preferences, Groups, and Capacity functions (Task A4).
+ */
+export * as Preferences from "./preferences/index.js";
+export * as Groups from "./groups/index.js";
+export * as Capacity from "./capacity/index.js";
