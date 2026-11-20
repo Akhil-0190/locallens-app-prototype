@@ -24,11 +24,275 @@ import {
   GroupPlaceMatchResultSchema,
   SoloMatchInput,
   GroupBlendAndMatchInput,
+  DietaryProvenance,
 } from '../schemas/matching-schemas.js';
 import {
   generateEmbedding,
   computeCosineSimilarity,
 } from './embedding-service.js';
+import type { CanonicalPlaceDocument } from '../../types/contracts/index.js';
+
+// ==============================================================================
+// Dietary Evaluation Helper: Strict Separation of Place Identity & Dietary Claims
+// ==============================================================================
+
+/**
+ * Evaluates dietary suitability strictly separating:
+ * 1. Place identity verification (Maps grounding does NOT verify kitchen practices)
+ * 2. Dietary provenance (Independent certification vs community audit vs directory listing)
+ * 3. Actual suitability (VERIFIED_SAFE, CONFLICT_DETECTED, UNVERIFIED_DATA)
+ * 4. Recommendation sufficiency (Unverified data can NEVER produce isRecommended: true)
+ */
+function evaluateDietaryRestriction(
+  place: CanonicalPlaceDocument,
+  dietaryRestriction: string
+): {
+  status: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA';
+  safetyVerified: boolean;
+  provenance: DietaryProvenance;
+  dietaryFit: number;
+  alert?: string;
+} {
+  const d = dietaryRestriction.toLowerCase();
+  const placeLower = (
+    (place.infoParagraph || '') +
+    ' ' +
+    (place.categories || []).join(' ') +
+    ' ' +
+    (place.authenticity?.vibeTags || []).join(' ') +
+    ' ' +
+    (place.authenticity?.localSentimentSummary || '') +
+    ' ' +
+    (place.authenticity?.practicalTips || '')
+  ).toLowerCase();
+
+  const isVerifiedResident = Boolean(place.contributorAttribution?.isVerifiedResident);
+
+  // 1. PURE VEG / VEGETARIAN
+  if (d === 'pure_veg' || d === 'vegetarian') {
+    // Conflict check: Explicit meat/seafood on premises
+    if (
+      placeLower.includes('meat') ||
+      placeLower.includes('chicken') ||
+      placeLower.includes('mutton') ||
+      placeLower.includes('pork') ||
+      placeLower.includes('beef') ||
+      placeLower.includes('barbecue') ||
+      placeLower.includes('seafood') ||
+      placeLower.includes('fish')
+    ) {
+      return {
+        status: 'CONFLICT_DETECTED',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 0,
+        alert: `Establishment serves meat/poultry, conflicting with vegetarian requirement.`,
+      };
+    }
+
+    // Grounded Independent Certification (Statutory / Certified Kitchen)
+    if (
+      placeLower.includes('certified pure vegetarian') ||
+      placeLower.includes('certified pure veg') ||
+      placeLower.includes('fssai certified pure veg') ||
+      placeLower.includes('dedicated pure vegetarian kitchen') ||
+      placeLower.includes('certified 100% vegetarian')
+    ) {
+      return {
+        status: 'VERIFIED_SAFE',
+        safetyVerified: true,
+        provenance: 'INDEPENDENT_CERTIFICATION',
+        dietaryFit: 100,
+      };
+    }
+
+    // Grounded Verified Community Audit (Verified Resident Auditor confirming kitchen practices)
+    if (
+      isVerifiedResident &&
+      (placeLower.includes('verified pure veg kitchen') ||
+        placeLower.includes('verified resident kitchen audit') ||
+        placeLower.includes('resident verified pure veg'))
+    ) {
+      return {
+        status: 'VERIFIED_SAFE',
+        safetyVerified: true,
+        provenance: 'VERIFIED_COMMUNITY_AUDIT',
+        dietaryFit: 100,
+      };
+    }
+
+    // Directory Listing Only (Categories or general uncertified claims)
+    // CRITICAL: A directory category or Google Places identity match alone is NOT certification!
+    if (
+      (place.categories || []).includes('pure_veg') ||
+      placeLower.includes('pure veg') ||
+      placeLower.includes('vegetarian')
+    ) {
+      return {
+        status: 'UNVERIFIED_DATA',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 70,
+        alert: `Venue listing indicates pure vegetarian category, but operational kitchen certification is unverified online. Patron inquiry advised.`,
+      };
+    }
+
+    // Unstated
+    return {
+      status: 'UNVERIFIED_DATA',
+      safetyVerified: false,
+      provenance: 'UNSTATED',
+      dietaryFit: 50,
+      alert: `Vegetarian suitability unstated in listing; confirm with venue before visiting.`,
+    };
+  }
+
+  // 2. VEGAN
+  if (d === 'vegan') {
+    if (
+      placeLower.includes('meat') ||
+      placeLower.includes('chicken') ||
+      placeLower.includes('pork') ||
+      placeLower.includes('beef')
+    ) {
+      return {
+        status: 'CONFLICT_DETECTED',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 0,
+        alert: `Meat-serving establishment conflicting with vegan requirement.`,
+      };
+    }
+
+    if (
+      placeLower.includes('certified vegan') ||
+      placeLower.includes('certified 100% vegan') ||
+      placeLower.includes('dedicated vegan kitchen')
+    ) {
+      return {
+        status: 'VERIFIED_SAFE',
+        safetyVerified: true,
+        provenance: 'INDEPENDENT_CERTIFICATION',
+        dietaryFit: 100,
+      };
+    }
+
+    if (
+      placeLower.includes('vegan') ||
+      placeLower.includes('plant-based') ||
+      placeLower.includes('dairy-free')
+    ) {
+      return {
+        status: 'UNVERIFIED_DATA',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 60,
+        alert: `Listing mentions vegan/plant-based options, but operational cross-contamination protocols are unverified.`,
+      };
+    }
+
+    // Pure veg venues using butter/ghee/milk
+    return {
+      status: 'UNVERIFIED_DATA',
+      safetyVerified: false,
+      provenance: 'DIRECTORY_LISTING_ONLY',
+      dietaryFit: 40,
+      alert: `Vegan suitability unverified: South Indian pure vegetarian venues commonly use ghee, butter, and dairy.`,
+    };
+  }
+
+  // 3. JAIN
+  if (d === 'jain') {
+    if (
+      placeLower.includes('meat') ||
+      placeLower.includes('chicken') ||
+      placeLower.includes('pork') ||
+      placeLower.includes('beef')
+    ) {
+      return {
+        status: 'CONFLICT_DETECTED',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 0,
+        alert: `Meat-serving establishment conflicting with Jain requirement.`,
+      };
+    }
+
+    if (
+      placeLower.includes('certified jain') ||
+      placeLower.includes('dedicated jain counter') ||
+      placeLower.includes('statutory jain kitchen')
+    ) {
+      return {
+        status: 'VERIFIED_SAFE',
+        safetyVerified: true,
+        provenance: 'INDEPENDENT_CERTIFICATION',
+        dietaryFit: 100,
+      };
+    }
+
+    if (
+      placeLower.includes('jain food') ||
+      placeLower.includes('jain menu') ||
+      placeLower.includes('no onion no garlic')
+    ) {
+      return {
+        status: 'UNVERIFIED_DATA',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 60,
+        alert: `Jain options mentioned, but separate prep area for root vegetables unverified.`,
+      };
+    }
+
+    return {
+      status: 'UNVERIFIED_DATA',
+      safetyVerified: false,
+      provenance: 'DIRECTORY_LISTING_ONLY',
+      dietaryFit: 45,
+      alert: `Jain suitability (no root vegetables, onions, or garlic) unverified online; patron confirmation required.`,
+    };
+  }
+
+  // 4. HALAL
+  if (d === 'halal') {
+    if (placeLower.includes('pork') || placeLower.includes('bacon')) {
+      return {
+        status: 'CONFLICT_DETECTED',
+        safetyVerified: false,
+        provenance: 'DIRECTORY_LISTING_ONLY',
+        dietaryFit: 0,
+        alert: `Pork-serving establishment conflicting with halal requirement.`,
+      };
+    }
+
+    if (placeLower.includes('halal certified') || placeLower.includes('certified halal')) {
+      return {
+        status: 'VERIFIED_SAFE',
+        safetyVerified: true,
+        provenance: 'INDEPENDENT_CERTIFICATION',
+        dietaryFit: 100,
+      };
+    }
+
+    return {
+      status: 'UNVERIFIED_DATA',
+      safetyVerified: false,
+      provenance: 'DIRECTORY_LISTING_ONLY',
+      dietaryFit: 50,
+      alert: `Halal certification unverified from online listing; please verify with management.`,
+    };
+  }
+
+  // 5. ALLERGENS (Nut allergy, gluten free, etc.)
+  return {
+    status: 'UNVERIFIED_DATA',
+    safetyVerified: false,
+    provenance: 'DIRECTORY_LISTING_ONLY',
+    dietaryFit: 50,
+    alert: `Allergen safety (${dietaryRestriction.replace('_', ' ')}) unverified online; cross-contamination risk unknown. Contact kitchen directly.`,
+  };
+}
 
 // ==============================================================================
 // 1. Group Preference Blending Engine (Domain 09)
@@ -210,6 +474,14 @@ export async function matchSoloPreferences(
     const cosineSim = computeCosineSimilarity(userEmbedding.values, placeEmbedding.values);
     const vibeMatch = Math.round(cosineSim * 100);
 
+    const placeLower = (
+      (place.infoParagraph || '') +
+      ' ' +
+      (place.categories || []).join(' ') +
+      ' ' +
+      (place.authenticity?.vibeTags || []).join(' ')
+    ).toLowerCase();
+
     // 2. Budget Fit Score (0 - 100)
     let budgetSuitability = 80;
     const maxBudget = preferences.maxBudgetPerMealInr || 250;
@@ -233,123 +505,38 @@ export async function matchSoloPreferences(
     // Unverified data is NEVER treated as verified suitability.
     let dietaryStatus: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA' = 'VERIFIED_SAFE';
     let dietarySafetyVerified = true;
+    let dietaryProvenance: DietaryProvenance = 'UNSTATED';
     let dietaryFit = 100;
     let dietaryAlert: string | undefined = undefined;
 
-    const placeLower = (
-      (place.infoParagraph || '') +
-      ' ' +
-      (place.categories || []).join(' ') +
-      ' ' +
-      (place.authenticity?.vibeTags || []).join(' ')
-    ).toLowerCase();
-
     const userDiets = preferences.dietaryRestrictions || [];
     if (userDiets.length > 0) {
-      for (const diet of userDiets) {
-        const d = diet.toLowerCase();
-        if (d === 'pure_veg' || d === 'vegetarian') {
-          const hasPureVegEvidence =
-            (place.categories || []).includes('pure_veg') ||
-            placeLower.includes('pure veg') ||
-            placeLower.includes('pure_veg');
+      dietarySafetyVerified = false; // default to false until proven verified
+      let allVerifiedSafe = true;
 
-          // Strict ground truth requirement: Venue must be verified AND have explicit pure veg category/listing
-          if (place.isVerified && hasPureVegEvidence) {
-            // Verified lacto-vegetarian from grounded, verified place document
-          } else if (
-            placeLower.includes('meat') ||
-            placeLower.includes('chicken') ||
-            placeLower.includes('pork') ||
-            placeLower.includes('beef') ||
-            placeLower.includes('barbecue')
-          ) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlert = `Explicit non-vegetarian establishment conflicting with ${diet.replace('_', ' ')} preference.`;
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlert = place.isVerified
-              ? `Vegetarian suitability unverified from available online listing; patron confirmation advised.`
-              : `Unverified venue record; vegetarian suitability cannot be guaranteed until venue is grounded and verified.`;
-          }
-        } else if (d === 'vegan') {
-          // Vegan requires strictly plant-based (no ghee, butter, curd, milk, honey).
-          // Pure veg South Indian restaurants heavily use ghee/butter on dosas and dairy milk in coffee.
-          if (
-            placeLower.includes('vegan') ||
-            placeLower.includes('plant-based') ||
-            placeLower.includes('dairy-free')
-          ) {
-            // Verified vegan
-          } else if (
-            placeLower.includes('meat') ||
-            placeLower.includes('chicken') ||
-            placeLower.includes('pork') ||
-            placeLower.includes('beef')
-          ) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlert = `Meat-serving establishment conflicting with vegan requirement.`;
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlert = `Vegan suitability unverified: pure vegetarian venues commonly use ghee, butter, and dairy.`;
-          }
-        } else if (d === 'jain') {
-          // Jain requires strictly no root vegetables (onion, garlic, potato, carrot).
-          if (
-            placeLower.includes('jain food') ||
-            placeLower.includes('jain menu') ||
-            placeLower.includes('no onion no garlic')
-          ) {
-            // Verified Jain
-          } else if (
-            placeLower.includes('meat') ||
-            placeLower.includes('chicken') ||
-            placeLower.includes('pork') ||
-            placeLower.includes('beef')
-          ) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlert = `Meat-serving establishment conflicting with Jain requirement.`;
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlert = `Jain suitability (no root vegetables, onions, or garlic) unverified online; patron confirmation required.`;
-          }
-        } else if (d === 'halal') {
-          if (placeLower.includes('halal certified') || placeLower.includes('halal meat')) {
-            // Verified halal
-          } else if (placeLower.includes('pork') || placeLower.includes('bacon')) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlert = `Pork-serving establishment conflicting with halal requirement.`;
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlert = `Halal certification unverified from online listing; please verify with management.`;
-          }
-        } else if (d === 'nut_allergy' || d === 'gluten_free') {
-          // Allergens can NEVER be verified from generic categories alone
+      for (const diet of userDiets) {
+        const evalResult = evaluateDietaryRestriction(place, diet);
+        if (evalResult.status === 'CONFLICT_DETECTED') {
+          dietaryStatus = 'CONFLICT_DETECTED';
+          allVerifiedSafe = false;
+          dietaryFit = 0;
+          dietaryAlert = evalResult.alert;
+          dietaryProvenance = evalResult.provenance;
+          break;
+        } else if (evalResult.status === 'UNVERIFIED_DATA') {
+          allVerifiedSafe = false;
           dietaryStatus = 'UNVERIFIED_DATA';
-          dietarySafetyVerified = false;
-          dietaryFit = Math.min(dietaryFit, 50);
-          dietaryAlert = `Allergen safety (${diet.replace('_', ' ')}) unverified online; cross-contamination risk unknown. Contact kitchen directly.`;
+          dietaryFit = Math.min(dietaryFit, evalResult.dietaryFit);
+          dietaryAlert = dietaryAlert || evalResult.alert;
+          dietaryProvenance = evalResult.provenance;
+        } else if (evalResult.status === 'VERIFIED_SAFE') {
+          dietaryProvenance = evalResult.provenance;
         }
+      }
+
+      dietarySafetyVerified = allVerifiedSafe;
+      if (allVerifiedSafe) {
+        dietaryStatus = 'VERIFIED_SAFE';
       }
     }
 
@@ -461,6 +648,7 @@ export async function matchSoloPreferences(
       matchedVibes,
       dietarySafetyVerified,
       dietaryStatus,
+      dietaryProvenance,
       dietaryAlert,
       practicalTip: place.authenticity?.practicalTips || undefined,
       isOfflineMock,
@@ -520,114 +708,39 @@ export async function matchGroupPreferences(
     // Pure veg, vegan, and Jain are evaluated individually and NOT treated as interchangeable.
     let dietaryStatus: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA' = 'VERIFIED_SAFE';
     let dietarySafetyVerified = true;
+    let dietaryProvenance: DietaryProvenance = 'UNSTATED';
     let dietaryFit = 100;
     const dietaryAlerts: string[] = [];
 
     if (consensus.dietaryConstraintsUnion.length > 0) {
-      for (const diet of consensus.dietaryConstraintsUnion) {
-        const d = diet.toLowerCase();
-        if (d === 'pure_veg' || d === 'vegetarian') {
-          const hasPureVegEvidence =
-            (place.categories || []).includes('pure_veg') ||
-            placeLower.includes('pure veg') ||
-            placeLower.includes('pure_veg');
+      dietarySafetyVerified = false;
+      let allVerifiedSafe = true;
 
-          // Strict ground truth requirement: Venue must be verified AND have explicit pure veg category/listing
-          if (place.isVerified && hasPureVegEvidence) {
-            // Verified pure vegetarian from grounded, verified place document
-          } else if (
-            placeLower.includes('meat') ||
-            placeLower.includes('chicken') ||
-            placeLower.includes('mutton') ||
-            placeLower.includes('pork') ||
-            placeLower.includes('beef') ||
-            placeLower.includes('barbecue')
-          ) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's ${diet} requirement.`);
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlerts.push(
-              place.isVerified
-                ? `Unverified vegetarian suitability; confirm with venue before group arrival.`
-                : `Unverified venue record; pure vegetarian compliance cannot be certified until place is verified.`
-            );
-          }
-        } else if (d === 'vegan') {
-          if (
-            placeLower.includes('vegan') ||
-            placeLower.includes('plant-based') ||
-            placeLower.includes('dairy-free')
-          ) {
-            // Verified vegan
-          } else if (
-            placeLower.includes('meat') ||
-            placeLower.includes('chicken') ||
-            placeLower.includes('pork') ||
-            placeLower.includes('beef')
-          ) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's vegan requirement.`);
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlerts.push(`Vegan compliance unverified: pure veg venues commonly use ghee, butter, and dairy.`);
-          }
-        } else if (d === 'jain') {
-          if (
-            placeLower.includes('jain food') ||
-            placeLower.includes('jain menu') ||
-            placeLower.includes('no onion no garlic')
-          ) {
-            // Verified Jain
-          } else if (
-            placeLower.includes('meat') ||
-            placeLower.includes('chicken') ||
-            placeLower.includes('pork') ||
-            placeLower.includes('beef')
-          ) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlerts.push(`Conflict: Venue serves meat, violating group member's Jain requirement.`);
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlerts.push(`Jain suitability (no root vegetables, onions, or garlic) unverified online.`);
-          }
-        } else if (d === 'halal') {
-          if (placeLower.includes('halal certified') || placeLower.includes('halal meat')) {
-            // Verified halal
-          } else if (placeLower.includes('pork') || placeLower.includes('bacon')) {
-            dietaryStatus = 'CONFLICT_DETECTED';
-            dietarySafetyVerified = false;
-            dietaryFit = 0;
-            dietaryAlerts.push(`Conflict: Venue serves pork, violating group member's halal requirement.`);
-            break;
-          } else {
-            dietaryStatus = 'UNVERIFIED_DATA';
-            dietarySafetyVerified = false;
-            dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlerts.push(`Halal certification unverified online.`);
-          }
-        } else if (d === 'nut_allergy' || d === 'gluten_free') {
-          // Allergens cannot be verified safe from general listing alone
+      for (const diet of consensus.dietaryConstraintsUnion) {
+        const evalResult = evaluateDietaryRestriction(place, diet);
+        if (evalResult.status === 'CONFLICT_DETECTED') {
+          dietaryStatus = 'CONFLICT_DETECTED';
+          allVerifiedSafe = false;
+          dietaryFit = 0;
+          if (evalResult.alert) dietaryAlerts.push(evalResult.alert);
+          dietaryProvenance = evalResult.provenance;
+          break;
+        } else if (evalResult.status === 'UNVERIFIED_DATA') {
+          allVerifiedSafe = false;
           dietaryStatus = 'UNVERIFIED_DATA';
-          dietarySafetyVerified = false;
-          dietaryFit = Math.min(dietaryFit, 50);
-          dietaryAlerts.push(`Group member allergen (${diet}) unverified online; please contact kitchen.`);
+          dietaryFit = Math.min(dietaryFit, evalResult.dietaryFit);
+          if (evalResult.alert && !dietaryAlerts.includes(evalResult.alert)) {
+            dietaryAlerts.push(evalResult.alert);
+          }
+          dietaryProvenance = evalResult.provenance;
+        } else if (evalResult.status === 'VERIFIED_SAFE') {
+          dietaryProvenance = evalResult.provenance;
         }
+      }
+
+      dietarySafetyVerified = allVerifiedSafe;
+      if (allVerifiedSafe) {
+        dietaryStatus = 'VERIFIED_SAFE';
       }
     }
 
@@ -750,6 +863,7 @@ export async function matchGroupPreferences(
       sharedGroupVibesMatched,
       dietarySafetyVerified,
       dietaryStatus,
+      dietaryProvenance,
       isOfflineMock,
     };
 

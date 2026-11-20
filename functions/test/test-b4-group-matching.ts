@@ -65,7 +65,7 @@ const sampleHeritageDosaSpot: CanonicalPlaceDocument = {
   mapsLink: 'https://maps.google.com/?cid=1029384756',
   primaryCategory: 'restaurant',
   categories: ['breakfast_restaurant', 'cafe', 'pure_veg', 'heritage'],
-  infoParagraph: 'Generational pure veg benne masala dosa and filter coffee prepared on cast iron tawa since 1924 in Malleshwaram. Affordable legacy breakfast under 150 INR.',
+  infoParagraph: 'Generational certified pure vegetarian benne masala dosa and filter coffee prepared in dedicated pure vegetarian kitchen since 1924 in Malleshwaram. Affordable legacy breakfast under 150 INR.',
   photoUrls: ['https://storage.googleapis.com/spots/ctr.jpg'],
   openHours: '7:30 AM - 12:30 PM & 4:00 PM - 9:00 PM',
   isOpenNow: true,
@@ -73,11 +73,17 @@ const sampleHeritageDosaSpot: CanonicalPlaceDocument = {
     authenticityScore: 94,
     touristTrapLikelihood: 'LOW',
     isTouristTrap: false,
-    localSentimentSummary: 'Cherished generational institution with pure veg authentic South Indian recipes.',
+    localSentimentSummary: 'Cherished generational institution with certified pure veg authentic South Indian recipes.',
     recommendedTiming: 'Morning before 8:30 AM to avoid lines',
     practicalTips: 'Token counter at entrance; cash and UPI preferred.',
     greetingCard: 'Welcome to CTR! The golden standard of Bengaluru benne dosa.',
     vibeTags: ['heritage', 'vintage_filter_coffee', 'pure_veg', 'breakfast'],
+  },
+  contributorAttribution: {
+    userId: 'usr_priya_resident',
+    displayName: 'Priya Sharma',
+    badgeTitle: 'Local Historian',
+    isVerifiedResident: true,
   },
   capacity: {
     hourlyLimit: 12,
@@ -197,6 +203,7 @@ async function runB4Tests() {
   assert(topMatch.breakdown.pacingAlignment === null, 'Pacing alignment is null when route evidence is absent');
   assert(topMatch.dietarySafetyVerified === true, 'Dietary safety verified for pure veg traveler at pure veg spot');
   assert(topMatch.dietaryStatus === 'VERIFIED_SAFE', 'Dietary status marked VERIFIED_SAFE for pure veg traveler');
+  assert(topMatch.dietaryProvenance === 'INDEPENDENT_CERTIFICATION', 'Dietary provenance is INDEPENDENT_CERTIFICATION for certified pure veg');
 
   // Verify pacing alignment when route evidence is provided
   const soloRouteResults = await matchSoloPreferences({
@@ -261,11 +268,40 @@ async function runB4Tests() {
     'Emits Jain alert about root vegetables and onions'
   );
 
-  // Verify Unverified Venue (isVerified: false) cannot claim VERIFIED_SAFE even if category says pure_veg
+  // Verify Separation of Place Identity Verification from Dietary Verification:
+  // A venue with place.isVerified: true (Maps identity grounded) and categories: ['pure_veg']
+  // but WITHOUT certified kitchen audit yields DIRECTORY_LISTING_ONLY, UNVERIFIED_DATA, and isRecommended: false.
+  const categoryOnlyVegSpot: CanonicalPlaceDocument = {
+    ...sampleHeritageDosaSpot,
+    id: 'spot_category_only_veg',
+    infoParagraph: 'General neighborhood eatery with traditional recipes under 150 INR.',
+    categories: ['breakfast_restaurant', 'pure_veg'],
+    authenticity: {
+      ...sampleHeritageDosaSpot.authenticity,
+      localSentimentSummary: 'Popular local food spot.',
+    },
+    contributorAttribution: undefined,
+  };
+  const categoryOnlyResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [categoryOnlyVegSpot],
+  });
+  assert(categoryOnlyResults[0]!.dietaryProvenance === 'DIRECTORY_LISTING_ONLY', 'Provenance is DIRECTORY_LISTING_ONLY when listing lacks certified audit');
+  assert(categoryOnlyResults[0]!.dietarySafetyVerified === false, 'Directory category alone does NOT verify dietary safety');
+  assert(categoryOnlyResults[0]!.dietaryStatus === 'UNVERIFIED_DATA', 'Status is UNVERIFIED_DATA without grounded dietary certification');
+  assert(categoryOnlyResults[0]!.isRecommended === false, 'Venue is NOT recommended when dietary certification is missing');
+
+  // Verify Unverified Place Draft with ungrounded claims (isVerified: false and no certified audit)
   const unverifiedPureVegSpot: CanonicalPlaceDocument = {
     ...sampleHeritageDosaSpot,
     id: 'spot_unverified_veg',
     isVerified: false,
+    infoParagraph: 'Unverified local discovery claiming vegetarian food without certification.',
+    authenticity: {
+      ...sampleHeritageDosaSpot.authenticity,
+      localSentimentSummary: 'Unverified neighborhood food stop.',
+    },
+    contributorAttribution: undefined,
   };
   const unverifiedResults = await matchSoloPreferences({
     preferences: soloVegTraveler,
@@ -543,6 +579,10 @@ async function runB4Tests() {
     ['VERIFIED_SAFE', 'CONFLICT_DETECTED', 'UNVERIFIED_DATA'].includes(soloJson.dietaryStatus),
     'D3 Contract: dietaryStatus is valid enum'
   );
+  assert(
+    ['INDEPENDENT_CERTIFICATION', 'VERIFIED_COMMUNITY_AUDIT', 'DIRECTORY_LISTING_ONLY', 'UNSTATED'].includes(soloJson.dietaryProvenance),
+    'D3 Contract: dietaryProvenance is valid enum'
+  );
   assert(Array.isArray(soloJson.topMatchReasons), 'D3 Contract: topMatchReasons is array of strings');
   assert(Array.isArray(soloJson.compromiseAlerts), 'D3 Contract: compromiseAlerts is array of strings');
   assert(typeof soloJson.isOfflineMock === 'boolean', 'D3 Contract: isOfflineMock is boolean');
@@ -556,6 +596,10 @@ async function runB4Tests() {
 
   const groupJson = JSON.parse(JSON.stringify(groupResults[0]));
   assert(typeof groupJson.matchScore === 'number', 'D3 Group Contract: matchScore is numeric');
+  assert(
+    ['INDEPENDENT_CERTIFICATION', 'VERIFIED_COMMUNITY_AUDIT', 'DIRECTORY_LISTING_ONLY', 'UNSTATED'].includes(groupJson.dietaryProvenance),
+    'D3 Group Contract: dietaryProvenance is valid enum'
+  );
   assert(typeof groupJson.memberSatisfactionScores === 'object', 'D3 Group Contract: memberSatisfactionScores is object');
   assert(Array.isArray(groupJson.sharedGroupVibesMatched), 'D3 Group Contract: sharedGroupVibesMatched is array');
 

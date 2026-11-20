@@ -85,8 +85,25 @@ Task B4 implements semantic vector representation, solo traveler preference matc
 
 ## 4. Group Preference Blending Engine (Domain 09)
 
-### A. Strict Dietary Constraints Union & Allergen Guardrails
-If **any** single group member has a dietary restriction or allergen (e.g., vegan, nut allergy, jain), it is added to `dietaryConstraintsUnion`.
+### A. Strict Dietary Constraints Union & 4-Part Verification Architecture
+If **any** single group member has a dietary restriction or allergen (e.g., pure veg, vegan, nut allergy, jain), it is added to `dietaryConstraintsUnion`.
+
+#### The 4-Part Separation of Concerns:
+1. **Place Identity Verification (`place.isVerified`)**:
+   - Confirms that the venue identity physically matches Google Places or Maps Grounding.
+   - Grounding a place's coordinates and name does **NOT** certify its kitchen practices or dietary claims.
+2. **Dietary Provenance (`dietaryProvenance`)**:
+   - `INDEPENDENT_CERTIFICATION`: Official statutory certification or verified dedicated kitchen (e.g., FSSAI certified pure veg, dedicated pure veg kitchen).
+   - `VERIFIED_COMMUNITY_AUDIT`: Verified resident auditor (`contributorAttribution.isVerifiedResident === true`) explicitly certifying kitchen practices.
+   - `DIRECTORY_LISTING_ONLY`: Directory category tags (`categories: ['pure_veg']`) or ungrounded claims. This alone is **insufficient** for dietary certification.
+   - `UNSTATED`: No dietary claims present.
+3. **Actual Suitability (`dietaryStatus`)**:
+   - `VERIFIED_SAFE`: Awarded **only** when dietary provenance is `INDEPENDENT_CERTIFICATION` or `VERIFIED_COMMUNITY_AUDIT`.
+   - `UNVERIFIED_DATA`: Assigned whenever provenance is `DIRECTORY_LISTING_ONLY` or `UNSTATED`, or when allergen/cross-contamination cannot be certified online.
+   - `CONFLICT_DETECTED`: Explicit conflicting food served (e.g., meat at pure veg request).
+4. **Recommendation Sufficiency (`isRecommended`)**:
+   - Invariant: A venue is **never** recommended (`isRecommended: false`) if any traveler restriction has `dietaryStatus !== 'VERIFIED_SAFE'`, regardless of how high the taste match score is.
+
 - **Zero False-Positive Safety Guarantees:** Generic Google Maps categories **never** certify allergen safety (e.g., nut allergy, celiac gluten-free). If a venue does not possess explicit allergen-free certification, it is classified as `dietaryStatus: 'UNVERIFIED_DATA'` with `dietarySafetyVerified: false` and an explicit compromise alert is emitted.
 - **Conflict Disqualification:** A place that serves explicit non-vegetarian food when a member is vegetarian is classified as `CONFLICT_DETECTED`, receives a penalized score (<= 40), and is disqualified from recommendations (`isRecommended: false`).
 
@@ -104,43 +121,50 @@ Each group recommendation calculates a per-member satisfaction score (`memberSat
 
 ---
 
-## 5. D3 Client-Facing Payload Alignment
+## 5. D3 Client-Facing Payload & Model Association Pattern
 
-The output schema directly fulfills Developer D's Flutter `SpotCard` and discovery view expectations:
+### Client Association Pattern with SpotCard
+- In Developer D's architecture, `SpotCard` (`lib/models/spot_card.dart`) represents the **underlying place document** (Domain 06).
+- B4 produces the **taste matching evaluation** (`SoloPlaceMatchResult` and `GroupPlaceMatchResult`).
+- The client associates each `SpotCard` with its matching evaluation using `placeId`:
+  `spotCard.id == matchResult.placeId`.
+- D3's `SpotCardTile` renders the canonical place details (authenticity, capacity, timing) augmented by the match breakdown: `matchScore`, `breakdown`, `topMatchReasons`, `compromiseAlerts`, and suppresses unrecommended items (`isRecommended: false`).
 
 ```json
 {
   "placeId": "spot_ctr_1924",
   "spotName": "CTR Shri Sagar",
-  "matchScore": 92,
+  "matchScore": 88,
   "isRecommended": true,
   "breakdown": {
-    "vibeMatch": 91,
-    "budgetSuitability": 95,
+    "vibeMatch": 85,
+    "budgetSuitability": 90,
     "dietaryFit": 100,
-    "pacingAlignment": 95,
+    "pacingAlignment": null,
     "authenticityBonus": 12
   },
   "topMatchReasons": [
     "Highly authentic local gem (94/100) matching your heritage interest."
   ],
-  "compromiseAlerts": [
-    "Strict dietary union enforced for: pure_veg, nut_allergy"
-  ],
+  "compromiseAlerts": [],
+  "matchedVibes": ["heritage", "vintage_filter_coffee", "pure_veg"],
+  "dietarySafetyVerified": true,
+  "dietaryStatus": "VERIFIED_SAFE",
+  "dietaryProvenance": "INDEPENDENT_CERTIFICATION",
   "isOfflineMock": false
 }
 ```
 
 ---
 
-## 5. Verification Scenarios (16 Passed)
+## 6. Verification Scenarios (17 Scenarios / 88 Assertions Passed)
 
 | # | Scenario | Verification Focus | Result |
 |---|---|---|---|
 | 1 | Individual Preference Model | Supports vibes, budget, pacing, neighborhood filters | **PASSED** |
-| 2 | Embedding Vector Output | Confirms exact 3,072 dimensions | **PASSED** |
+| 2 | Embedding Vector Output | Confirms exact 3,072 dimensions via Gemini Embedding 2 | **PASSED** |
 | 3 | Cosine Vector Math | Identical concepts ~1.0; divergent concepts lower | **PASSED** |
-| 4 | Strong Solo Match | High score (>=80), recommended, matched vibes | **PASSED** |
+| 4 | Strong Solo Match & Dietary Separation | Independent certification yields VERIFIED_SAFE; category-only yields UNVERIFIED_DATA | **PASSED** |
 | 5 | Weak Solo Match | Penalized score, dietary alert emitted | **PASSED** |
 | 6 | Incomplete Preferences | Zero-bias graceful handling without errors | **PASSED** |
 | 7 | Group Preference Blending | Domain 09 ConsensusBlendOutput schema validation | **PASSED** |
@@ -148,8 +172,9 @@ The output schema directly fulfills Developer D's Flutter `SpotCard` and discove
 | 9 | Conflicting Group Preferences | Compromise factors articulated; min budget preserved | **PASSED** |
 | 10 | Dietary Constraints Union | Strict union of distinct member restrictions | **PASSED** |
 | 11 | Minority Preservation | Minority member vibes documented in compromises | **PASSED** |
-| 12 | Group-to-Place Matching | High group score with member satisfaction breakdown | **PASSED** |
+| 12 | Group-to-Place Matching & Pacing | Group score, member satisfaction, routeContext pacing vs null pacing | **PASSED** |
 | 13 | Group Dietary Disqualification | Meat spot disqualified for group with vegetarian member | **PASSED** |
 | 14 | Explainable Match Reasons | Clear group rationale and compromise notes | **PASSED** |
 | 15 | Malformed Input Rejection | Rejects empty member lists and empty texts safely | **PASSED** |
 | 16 | Output Schema Validation | Zod schema parse and offline adapter labeling | **PASSED** |
+| 17 | D3 Client Serialization | JSON payload compatibility with Flutter models and enum validity | **PASSED** |

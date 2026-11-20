@@ -56,6 +56,15 @@ export const DietaryStatusSchema = z.enum([
 
 export type DietaryStatus = z.infer<typeof DietaryStatusSchema>;
 
+export const DietaryProvenanceSchema = z.enum([
+  'INDEPENDENT_CERTIFICATION',
+  'VERIFIED_COMMUNITY_AUDIT',
+  'DIRECTORY_LISTING_ONLY',
+  'UNSTATED',
+]);
+
+export type DietaryProvenance = z.infer<typeof DietaryProvenanceSchema>;
+
 // ==============================================================================
 // 3. Solo Preference Matching Schema
 // ==============================================================================
@@ -71,6 +80,7 @@ export const SoloPlaceMatchResultSchema = z.object({
   matchedVibes: z.array(z.string()).default([]).describe('Specific user vibes that strongly matched this spot'),
   dietarySafetyVerified: z.boolean().describe('True ONLY if venue has verified compliance with user dietary restrictions; false if unverified or conflict'),
   dietaryStatus: DietaryStatusSchema.describe('VERIFIED_SAFE, CONFLICT_DETECTED, or UNVERIFIED_DATA'),
+  dietaryProvenance: DietaryProvenanceSchema.default('UNSTATED').describe('Provenance of dietary evidence: INDEPENDENT_CERTIFICATION, VERIFIED_COMMUNITY_AUDIT, DIRECTORY_LISTING_ONLY, or UNSTATED'),
   dietaryAlert: z.string().optional().describe('Warning if spot has limited options or unverified dietary information'),
   practicalTip: z.string().optional().describe('Contextual visit tip derived from place enrichment'),
   isOfflineMock: z.boolean().default(false).describe('True if vector was computed via offline test adapter rather than live Gemini API'),
@@ -94,6 +104,7 @@ export const GroupPlaceMatchResultSchema = z.object({
   sharedGroupVibesMatched: z.array(z.string()).default([]).describe('Vibes shared by multiple members that this spot fulfills'),
   dietarySafetyVerified: z.boolean().describe('True ONLY if spot has verified compliance for the strict group union; false if unverified or conflict'),
   dietaryStatus: DietaryStatusSchema.describe('VERIFIED_SAFE, CONFLICT_DETECTED, or UNVERIFIED_DATA'),
+  dietaryProvenance: DietaryProvenanceSchema.default('UNSTATED').describe('Provenance of dietary evidence for group evaluation'),
   isOfflineMock: z.boolean().default(false).describe('True if computed via offline test adapter'),
 });
 
