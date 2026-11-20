@@ -1,21 +1,23 @@
 {
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "es2022",
+    "rootDir": ".",
     "outDir": "lib",
-    "rootDir": "src",
     "strict": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
-    "sourceMap": true,
-    "allowImportingTsExtensions": true,
-    "noEmit": true
+    "sourceMap": true
   },
+  "compileOnSave": true,
   "include": [
-    "src/**/*"
+    "src//*",
+    "tests//*"
   ],
   "exclude": [
     "node_modules",

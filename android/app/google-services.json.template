@@ -1,0 +1,23 @@
+{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "neighborhoodguideapp-35856",
+    "storage_bucket": "neighborhoodguideapp-35856.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "com.neighborhoodguide.app"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "MOCK_CLIENT_API_KEY_DO_NOT_USE_IN_PROD"
+        }
+      ]
+    }
+  ],
+  "configuration_version": "1"
+}
