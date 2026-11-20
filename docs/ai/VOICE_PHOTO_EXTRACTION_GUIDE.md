@@ -58,18 +58,23 @@ The pipeline isolates genuine local cues from commercial tourist kitsch:
 
 ---
 
-## 4. Spot-Card Synthesis (Domain 06)
+## 4. Spot-Card Synthesis (Domain 06) & Null-Safety Guardrails
 
 The `synthesizeSpotCard` service combines the contributor's narrative (`infoParagraph`), Google Maps link (`mapsLink`), voice insights, and photo OCR into a draft `CanonicalPlaceDocument`:
 
-1. **Distinction of Contributor Claims:**  
-   Synthesized descriptions explicitly bracket contributor claims:  
+1. **Defensive Null-Safety & Pipeline Resilience:**
+   - Safely accepts `null`, `undefined`, sparse arrays (e.g. `[null]`, `[undefined]`, `[null, valid]`), and unpopulated extractions without throwing runtime errors.
+   - A failure or unavailability in one extraction source (e.g. photo extraction returns `null`) does not degrade or destroy valid data extracted from other sources (e.g. voice notes).
+   - Defensively sanitizes nested practical details (`openingHoursMentioned`, `signatureDishesOrItems`, `priceLevelNote`, `insiderTips`, `cashOnlyWarning`) against primitive or malformed values.
+2. **Distinction of Contributor Claims:**
+   Synthesized descriptions explicitly bracket contributor claims when present:
    `"...narrative text... [Contributor Claim: Recommended items per contributor: Masala Dosa, Filter Coffee. Contributor note: Cash or UPI payments only.]"`
-2. **Default Opening Hours:**  
-   If extracted from supported audio or photo signage, `openHours` is populated; if unmentioned, it strictly defaults to `'Check Maps for hours'`.
-3. **Attribution:**  
+   When no contributor claims exist, trailing bracket boilerplate is omitted to keep the narrative clean.
+3. **Default Opening Hours (Anti-Hallucination):**
+   If extracted from supported audio or photo signage, `openHours` is populated; if unmentioned or whitespace, it strictly defaults to `'Check Maps for hours'`.
+4. **Attribution:**
    Full contributor attribution (`userId`, `displayName`, `badgeTitle`, `isVerifiedResident`) is attached directly to the spot card.
-4. **Verification State:**  
+5. **Verification State:**
    `isVerified` is initialized to `false`. Maps grounding (Developer C) and backend verification (Developer A) occur in subsequent pipeline stages.
 
 ---
