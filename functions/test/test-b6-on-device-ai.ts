@@ -26,6 +26,11 @@ import {
   DeviceAICapabilities,
   LocalInferenceRequest,
 } from '../src/ai/schemas/local-ai-schemas.js';
+import {
+  evaluateAICoreReadinessCallable,
+  evaluateGemmaReadinessCallable,
+  executeCloudFallbackInference,
+} from '../src/ai/controllers/local-ai-controller.js';
 
 let passedAssertions = 0;
 let failedAssertions = 0;
@@ -508,6 +513,7 @@ async function runB6TestSuite() {
     'D5 executeOfflineInference contract verified (reconciling AICORE and LLAMA_CPP engines)'
   );
 
+
   // --------------------------------------------------------------------------
   // Suite 6: Physical Hardware Real Inference Verification (NOT TESTED)
   // --------------------------------------------------------------------------
@@ -517,6 +523,98 @@ async function runB6TestSuite() {
   console.log('    1. Physical Google Pixel 8/8a/9 or Galaxy S24 running Android 14+ (API 34+) with AICore initialized.');
   console.log('    2. Physical 64-bit ARM device (>= 8 GB physical RAM) with gemma-4-E2B-it-Q4_K_M.gguf and libllama.so.');
   console.log('  Deterministic schemas, readiness gates, fallback engines, and mock bridges are 100% verified.');
+
+  // --------------------------------------------------------------------------
+  // Suite 7: Local AI Callable Endpoints & Cloud Fallback Governance
+  // --------------------------------------------------------------------------
+  console.log('\n--- [Suite 7] Local AI Callable Endpoints & Cloud Fallback Governance ---');
+
+  // 7.1: evaluateAICoreReadinessCallable
+  const callableCoreRes: any = await (evaluateAICoreReadinessCallable as any).run({
+    data: {
+      deviceCapabilities: baseTelemetry,
+      taskType: 'SUMMARIZATION',
+      dynamicStatus: 'DOWNLOADABLE',
+    },
+  });
+  assert(
+    callableCoreRes.success === true && callableCoreRes.data.status === 'MODEL_DOWNLOADABLE',
+    'Callable evaluateAICoreReadiness returns structured evaluation'
+  );
+
+  // 7.2: evaluateGemmaReadinessCallable
+  const callableGemmaRes: any = await (evaluateGemmaReadinessCallable as any).run({
+    data: {
+      deviceCapabilities: baseTelemetry,
+      runtimeBinaryPresent: true,
+      modelFilePresent: true,
+    },
+  });
+  assert(
+    callableGemmaRes.success === true && callableGemmaRes.data.isReady === true,
+    'Callable evaluateGemmaReadiness returns structured evaluation'
+  );
+
+  // 7.3: executeCloudFallbackInference enforces authentication
+  let unauthError = false;
+  try {
+    await (executeCloudFallbackInference as any).run({
+      auth: null,
+      data: reqCloud,
+    });
+  } catch (err: any) {
+    unauthError = err.code === 'unauthenticated';
+  }
+  assert(unauthError, 'executeCloudFallbackInference rejects unauthenticated caller');
+
+  // 7.4: executeCloudFallbackInference rejects when user consent is withheld
+  let noConsentError = false;
+  try {
+    await (executeCloudFallbackInference as any).run({
+      auth: { uid: 'user-traveler-99' },
+      data: {
+        ...reqCloud,
+        userConsentCloudFallback: false,
+      },
+    });
+  } catch (err: any) {
+    noConsentError = err.code === 'permission-denied';
+  }
+  assert(noConsentError, 'executeCloudFallbackInference rejects when userConsentCloudFallback is false');
+
+  // 7.5: executeCloudFallbackInference rejects when offlineOnly or OFFLINE
+  let offlineRejected = false;
+  try {
+    await (executeCloudFallbackInference as any).run({
+      auth: { uid: 'user-traveler-99' },
+      data: {
+        ...reqCloud,
+        userConsentCloudFallback: true,
+        connectivity: 'OFFLINE',
+      },
+    });
+  } catch (err: any) {
+    offlineRejected = err.code === 'failed-precondition';
+  }
+  assert(offlineRejected, 'executeCloudFallbackInference rejects when connectivity is OFFLINE');
+
+  // 7.6: executeCloudFallbackInference succeeds when authenticated, online, and consented
+  const cloudFallbackSuccess: any = await (executeCloudFallbackInference as any).run({
+    auth: { uid: 'user-traveler-99' },
+    data: {
+      ...reqCloud,
+      userConsentCloudFallback: true,
+      connectivity: 'WIFI',
+      offlineOnly: false,
+    },
+  });
+  assert(
+    cloudFallbackSuccess.success === true &&
+    cloudFallbackSuccess.data.provenance === 'CLOUD_FALLBACK' &&
+    cloudFallbackSuccess.data.isLocalInference === false &&
+    cloudFallbackSuccess.data.executionEnvironment === 'BACKEND_CLOUD_FUNCTIONS',
+    'executeCloudFallbackInference succeeds with CLOUD_FALLBACK provenance and BACKEND_CLOUD_FUNCTIONS environment'
+  );
 
   // Final Results
   console.log('\n================================================================');

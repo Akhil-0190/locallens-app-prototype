@@ -60,3 +60,8 @@ export * as Monetization from "./monetization/index.js";
  * Export Street Assistance and Gemini Live functions (Task B5).
  */
 export * as Assistance from "./ai/controllers/assistance-controller.js";
+
+/**
+ * Export Local & On-Device AI functions (Task B6).
+ */
+export * as LocalAI from "./ai/controllers/local-ai-controller.js";
