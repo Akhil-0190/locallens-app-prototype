@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/walking_route.dart';
 import '../providers/route_providers.dart';
 import '../services/native_platform_service.dart';
+import '../services/on_device_ai_service.dart';
 import '../services/street_assistance_service.dart';
 import '../utils/polyline_decoder.dart';
 import '../widgets/adaptive_route_map.dart';
@@ -208,6 +209,92 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
         }
       },
       child: Text(label),
+    );
+  }
+
+  void _openLocalAiTipModal(BuildContext context, String placeId, String neighborhood) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final cleanName = placeId.replaceAll('_', ' ').toUpperCase();
+        return FutureBuilder<AdaptiveAiTipResult>(
+          future: ref.read(onDeviceAiServiceProvider).getAdaptiveVenueTip(
+                spotName: cleanName,
+                neighborhood: neighborhood,
+              ),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const SizedBox(
+                height: 200,
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final tip = snapshot.data;
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          cleanName,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.amber.shade700),
+                        ),
+                        child: Text(
+                          tip?.sourceBadge ?? 'AI Guide',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Greeting: ${tip?.greetingCard ?? "Namaskara!"}',
+                    style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.teal),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    tip?.practicalTips ?? 'Visit early for the best experience.',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Recommended timing: ${tip?.recommendedTiming ?? "Morning"}',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -527,6 +614,11 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              IconButton(
+                                icon: const Icon(Icons.tips_and_updates_outlined, size: 20, color: Colors.amber),
+                                tooltip: 'Local AI Tip',
+                                onPressed: () => _openLocalAiTipModal(context, placeId, route.neighborhood),
+                              ),
                               IconButton(
                                 icon: const Icon(Icons.people_outline, size: 20, color: Colors.teal),
                                 tooltip: 'Report Crowd',
