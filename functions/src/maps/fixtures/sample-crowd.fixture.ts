@@ -10,7 +10,7 @@
  */
 
 import type { VenueHourlyCapacityDocument } from '../../types/contracts/index.js';
-import type { AlternativeVenueOption } from '../types/crowd.types.js';
+import type { AlternativeVenueOption, CommunityCrowdSignal } from '../types/crowd.types.js';
 
 export const SAMPLE_HOURLY_CAPACITIES_FIXTURE: Record<string, Record<string, VenueHourlyCapacityDocument>> = {
   // CTR Shri Sagar (Malleswaram) - popular breakfast/tiffin spot
@@ -192,6 +192,52 @@ export const SAMPLE_FALLBACK_ALTERNATIVES_FIXTURE: Record<string, AlternativeVen
       remainingCapacity: 20,
       capacityStatus: 'AVAILABLE',
       reason: 'Spacious vintage tiffin room with ample capacity',
+      isMockData: true,
+    },
+  ],
+};
+
+/**
+ * Sample real-time community crowd reports for Malleswaram local spots
+ */
+export const SAMPLE_COMMUNITY_CROWD_SIGNALS_FIXTURE: Record<string, CommunityCrowdSignal[]> = {
+  'place_8th_cross_market': [
+    {
+      reportId: 'sig_market_01',
+      placeId: 'place_8th_cross_market',
+      reportedCrowdLevel: 'AT_CAPACITY',
+      estimatedWaitMinutes: 30,
+      reporterType: 'LOCAL_RESIDENT',
+      reporterWeight: 1.5,
+      reportedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 75 * 60 * 1000).toISOString(),
+      note: 'Festival flower rush in 8th cross market lane',
+      isMockData: true,
+    },
+    {
+      reportId: 'sig_market_02',
+      placeId: 'place_8th_cross_market',
+      reportedCrowdLevel: 'HIGH',
+      estimatedWaitMinutes: 20,
+      reporterType: 'PARTNER_MERCHANT',
+      reporterWeight: 1.25,
+      reportedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 65 * 60 * 1000).toISOString(),
+      note: 'Heavy pedestrian footfall',
+      isMockData: true,
+    },
+  ],
+  'place_kadu_malleshwara': [
+    {
+      reportId: 'sig_kadu_01',
+      placeId: 'place_kadu_malleshwara',
+      reportedCrowdLevel: 'LOW',
+      estimatedWaitMinutes: 0,
+      reporterType: 'LOCAL_RESIDENT',
+      reporterWeight: 1.5,
+      reportedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 70 * 60 * 1000).toISOString(),
+      note: 'Peaceful temple courtyard; open for darshan',
       isMockData: true,
     },
   ],
