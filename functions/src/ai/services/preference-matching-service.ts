@@ -249,12 +249,14 @@ export async function matchSoloPreferences(
       for (const diet of userDiets) {
         const d = diet.toLowerCase();
         if (d === 'pure_veg' || d === 'vegetarian') {
-          if (
+          const hasPureVegEvidence =
+            (place.categories || []).includes('pure_veg') ||
             placeLower.includes('pure veg') ||
-            placeLower.includes('pure_veg') ||
-            (place.categories || []).includes('pure_veg')
-          ) {
-            // Verified lacto-vegetarian
+            placeLower.includes('pure_veg');
+
+          // Strict ground truth requirement: Venue must be verified AND have explicit pure veg category/listing
+          if (place.isVerified && hasPureVegEvidence) {
+            // Verified lacto-vegetarian from grounded, verified place document
           } else if (
             placeLower.includes('meat') ||
             placeLower.includes('chicken') ||
@@ -271,7 +273,9 @@ export async function matchSoloPreferences(
             dietaryStatus = 'UNVERIFIED_DATA';
             dietarySafetyVerified = false;
             dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlert = `Vegetarian suitability unverified from available online listing; patron confirmation advised.`;
+            dietaryAlert = place.isVerified
+              ? `Vegetarian suitability unverified from available online listing; patron confirmation advised.`
+              : `Unverified venue record; vegetarian suitability cannot be guaranteed until venue is grounded and verified.`;
           }
         } else if (d === 'vegan') {
           // Vegan requires strictly plant-based (no ghee, butter, curd, milk, honey).
@@ -523,12 +527,14 @@ export async function matchGroupPreferences(
       for (const diet of consensus.dietaryConstraintsUnion) {
         const d = diet.toLowerCase();
         if (d === 'pure_veg' || d === 'vegetarian') {
-          if (
+          const hasPureVegEvidence =
+            (place.categories || []).includes('pure_veg') ||
             placeLower.includes('pure veg') ||
-            placeLower.includes('pure_veg') ||
-            (place.categories || []).includes('pure_veg')
-          ) {
-            // Verified pure vegetarian
+            placeLower.includes('pure_veg');
+
+          // Strict ground truth requirement: Venue must be verified AND have explicit pure veg category/listing
+          if (place.isVerified && hasPureVegEvidence) {
+            // Verified pure vegetarian from grounded, verified place document
           } else if (
             placeLower.includes('meat') ||
             placeLower.includes('chicken') ||
@@ -546,7 +552,11 @@ export async function matchGroupPreferences(
             dietaryStatus = 'UNVERIFIED_DATA';
             dietarySafetyVerified = false;
             dietaryFit = Math.min(dietaryFit, 50);
-            dietaryAlerts.push(`Unverified vegetarian suitability; confirm with venue before group arrival.`);
+            dietaryAlerts.push(
+              place.isVerified
+                ? `Unverified vegetarian suitability; confirm with venue before group arrival.`
+                : `Unverified venue record; pure vegetarian compliance cannot be certified until place is verified.`
+            );
           }
         } else if (d === 'vegan') {
           if (

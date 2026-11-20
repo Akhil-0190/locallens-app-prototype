@@ -261,6 +261,20 @@ async function runB4Tests() {
     'Emits Jain alert about root vegetables and onions'
   );
 
+  // Verify Unverified Venue (isVerified: false) cannot claim VERIFIED_SAFE even if category says pure_veg
+  const unverifiedPureVegSpot: CanonicalPlaceDocument = {
+    ...sampleHeritageDosaSpot,
+    id: 'spot_unverified_veg',
+    isVerified: false,
+  };
+  const unverifiedResults = await matchSoloPreferences({
+    preferences: soloVegTraveler,
+    places: [unverifiedPureVegSpot],
+  });
+  assert(unverifiedResults[0]!.dietarySafetyVerified === false, 'Unverified venue record cannot produce VERIFIED_SAFE');
+  assert(unverifiedResults[0]!.dietaryStatus === 'UNVERIFIED_DATA', 'Unverified venue record stays UNVERIFIED_DATA');
+  assert(unverifiedResults[0]!.isRecommended === false, 'Unverified venue is NOT recommended for dietary traveler');
+
   // -------------------------------------------------------------------------
   // Scenario 5: Weak Individual Preference Match & Dietary Constraint Penalty
   // -------------------------------------------------------------------------
@@ -442,6 +456,26 @@ async function runB4Tests() {
   assert(
     vegGroupResults[0]!.isRecommended === true,
     'Group recommendation is true when preferences match AND dietary safety is verified'
+  );
+  assert(
+    topGroupSpot.breakdown.pacingAlignment === null,
+    'Group pacing alignment is null when route evidence is omitted'
+  );
+
+  // Verify Group Pacing with Route Evidence (Developer C route input)
+  const groupWithRouteResults = await matchGroupPreferences({
+    neighborhood: 'Malleshwaram',
+    members: vegOnlyMembers,
+    places: [sampleHeritageDosaSpot],
+    routeContext: {
+      totalWalkingDurationMinutes: 20,
+      totalDistanceMeters: 1200,
+      numberOfStops: 3,
+    },
+  });
+  assert(
+    groupWithRouteResults[0]!.breakdown.pacingAlignment === 90,
+    'Group pacing alignment is 90 when routeContext has 20 min walking duration'
   );
 
   // -------------------------------------------------------------------------
