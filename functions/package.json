@@ -1,12 +1,12 @@
 {
   "name": "neighborhoodguide-functions",
-  "description": "Firebase Cloud Functions for Neighborhood Guide Backend",
   "version": "0.1.0",
+  "description": "Firebase Cloud Functions backend for Neighborhood Guide - Maps, Places, AI and shared services",
   "private": true,
+  "main": "lib/src/index.js",
   "engines": {
     "node": ">=22.0.0"
   },
-  "main": "lib/index.js",
   "scripts": {
     "lint": "tsc --noEmit",
     "build": "tsc",
@@ -16,8 +16,18 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "test": "node --test lib/tests/*.test.js"
+    "test": "npm run build && node --test lib/tests/foundation.test.js lib/src/maps/tests/normalization.test.js lib/src/maps/tests/quota-handler.test.js lib/src/maps/tests/places.test.js lib/src/maps/tests/routes.test.js",
+    "test:maps": "npm run build && node --test lib/src/maps/tests/normalization.test.js lib/src/maps/tests/quota-handler.test.js lib/src/maps/tests/places.test.js lib/src/maps/tests/routes.test.js"
   },
+  "keywords": [
+    "firebase",
+    "cloud-functions",
+    "maps",
+    "places-new",
+    "routes-api"
+  ],
+  "author": "InnovoTribe Team",
+  "license": "UNLICENSED",
   "dependencies": {
     "@google/genai": "^0.2.0",
     "firebase-admin": "^12.0.0",
