@@ -26,7 +26,6 @@ import {
   GroupBlendAndMatchInput,
   DietaryProvenance,
   PlaceDietaryEvidence,
-  TRUSTED_SERVER_AUTH_SYMBOL,
 } from '../schemas/matching-schemas.js';
 import {
   generateEmbedding,
@@ -53,8 +52,7 @@ import type { CanonicalPlaceDocument } from '../../types/contracts/index.js';
 function evaluateDietaryRestriction(
   place: CanonicalPlaceDocument,
   dietaryRestriction: string,
-  dietaryEvidence?: PlaceDietaryEvidence,
-  options?: { trustedServerVerification?: boolean }
+  dietaryEvidence?: PlaceDietaryEvidence
 ): {
   status: 'VERIFIED_SAFE' | 'CONFLICT_DETECTED' | 'UNVERIFIED_DATA';
   safetyVerified: boolean;
@@ -126,7 +124,9 @@ function evaluateDietaryRestriction(
   }
 
   // 2. IDENTIFIABLE INDEPENDENT CERTIFICATION EVIDENCE
-  // Evaluates validity, authority qualifications, expiration, revocation, and server-side verification.
+  // Evaluates validity, authority qualifications, expiration, and revocation.
+  // In the current phase, no trusted statutory dietary certification registry exists.
+  // Therefore, all externally or internally supplied certification claims remain unverified.
   const cert = dietaryEvidence?.certification;
   if (cert) {
     // 2a. Disallow general regulatory/statutory food licenses as dietary proof
@@ -167,77 +167,31 @@ function evaluateDietaryRestriction(
       };
     }
 
-    // 2d. Anti-Manufacture Guardrail: Trusted Server Authority Verification
-    // Ordinary caller input, client payloads, or unmoderated metadata cannot manufacture VERIFIED_SAFE.
-    // In the current phase, no real statutory dietary certification registry is connected to the backend.
-    if (!options?.trustedServerVerification) {
-      return {
-        status: 'UNVERIFIED_DATA',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 70,
-        alert: `Dietary certification claim from ${cert.issuingOrganization} is unverified: No trusted server-side dietary certification authority is connected to authenticate caller-supplied claims.`,
-      };
-    }
-
-    // 2e. Scope Evaluation (only when backed by trusted server verification)
-    const isCovered = (cert.certificationScope || []).some(
-      (scope) => scope.toLowerCase() === d || (d === 'vegetarian' && scope.toLowerCase() === 'pure_veg')
-    );
-    if (isCovered && cert.verificationStatus === 'VERIFIED') {
-      return {
-        status: 'VERIFIED_SAFE',
-        safetyVerified: true,
-        provenance: 'INDEPENDENT_CERTIFICATION',
-        dietaryFit: 100,
-      };
-    } else {
-      return {
-        status: 'UNVERIFIED_DATA',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 55,
-        alert: `Certified scope [${(cert.certificationScope || []).join(', ')}] does not establish compliance for requested restriction "${dietaryRestriction}".`,
-      };
-    }
+    // 2d. Anti-Manufacture Guardrail: No Trusted Dietary Authority Exists Yet
+    // Neither external JSON callers nor ordinary internal matching inputs can manufacture verified status.
+    // VERIFIED_SAFE requires a future authorized statutory verification workflow.
+    return {
+      status: 'UNVERIFIED_DATA',
+      safetyVerified: false,
+      provenance: 'DIRECTORY_LISTING_ONLY',
+      dietaryFit: 70,
+      alert: `Dietary certification claim from ${cert.issuingOrganization} is unverified: No trusted statutory dietary certification registry currently exists. VERIFIED_SAFE requires a future authorized verification workflow.`,
+    };
   }
 
   // 3. IDENTIFIABLE VERIFIED COMMUNITY AUDIT EVIDENCE
-  // Evaluates auditor credentials, documented kitchen practices, and authorized server moderation.
+  // Evaluates auditor credentials and documented kitchen practices.
+  // In the current phase, no authorized server-side moderation workflow exists.
+  // Therefore, all community audit claims remain unverified.
   const audit = dietaryEvidence?.communityAudit;
   if (audit) {
-    // 3a. Anti-Manufacture Guardrail: Authorized Server Moderation Workflow
-    // Contributor statements or caller-submitted audits cannot grant verified dietary status without server moderation approval.
-    if (!options?.trustedServerVerification) {
-      return {
-        status: 'UNVERIFIED_DATA',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 65,
-        alert: `Community audit by ${audit.auditorName} is unverified: Contributor statements cannot grant verified dietary status without an authorized server-side moderation workflow.`,
-      };
-    }
-
-    // 3b. Scope & Status Evaluation (only when authenticated by server moderation)
-    const isCovered = (audit.auditScope || []).some(
-      (scope) => scope.toLowerCase() === d || (d === 'vegetarian' && scope.toLowerCase() === 'pure_veg')
-    );
-    if (isCovered && audit.verificationStatus === 'VERIFIED') {
-      return {
-        status: 'VERIFIED_SAFE',
-        safetyVerified: true,
-        provenance: 'VERIFIED_COMMUNITY_AUDIT',
-        dietaryFit: 100,
-      };
-    } else {
-      return {
-        status: 'UNVERIFIED_DATA',
-        safetyVerified: false,
-        provenance: 'DIRECTORY_LISTING_ONLY',
-        dietaryFit: 50,
-        alert: `Community audit scope does not verify compliance for requested restriction "${dietaryRestriction}".`,
-      };
-    }
+    return {
+      status: 'UNVERIFIED_DATA',
+      safetyVerified: false,
+      provenance: 'DIRECTORY_LISTING_ONLY',
+      dietaryFit: 65,
+      alert: `Community audit by ${audit.auditorName} is unverified: Contributor statements cannot grant verified dietary status without an authorized server-side moderation workflow.`,
+    };
   }
 
   // 4. DIRECTORY LISTING ONLY / UNVERIFIED DATA
@@ -546,17 +500,8 @@ export async function matchSoloPreferences(
       dietarySafetyVerified = false; // default to false until proven verified
       let allVerifiedSafe = true;
 
-      // Runtime Security Boundary: External callers cannot influence verification via options or JSON fields.
-      // Verification is strictly granted ONLY when called with unforgeable TRUSTED_SERVER_AUTH_SYMBOL.
-      const isTrustedServer = Boolean(
-        input.internalSecurityContext &&
-        input.internalSecurityContext[TRUSTED_SERVER_AUTH_SYMBOL] === true
-      );
-
       for (const diet of userDiets) {
-        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence, {
-          trustedServerVerification: isTrustedServer,
-        });
+        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence);
         if (evalResult.status === 'CONFLICT_DETECTED') {
           dietaryStatus = 'CONFLICT_DETECTED';
           allVerifiedSafe = false;
@@ -758,17 +703,8 @@ export async function matchGroupPreferences(
       dietarySafetyVerified = false;
       let allVerifiedSafe = true;
 
-      // Runtime Security Boundary: External callers cannot influence verification via options or JSON fields.
-      // Verification is strictly granted ONLY when called with unforgeable TRUSTED_SERVER_AUTH_SYMBOL.
-      const isTrustedServer = Boolean(
-        input.internalSecurityContext &&
-        input.internalSecurityContext[TRUSTED_SERVER_AUTH_SYMBOL] === true
-      );
-
       for (const diet of consensus.dietaryConstraintsUnion) {
-        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence, {
-          trustedServerVerification: isTrustedServer,
-        });
+        const evalResult = evaluateDietaryRestriction(place, diet, placeEvidence);
         if (evalResult.status === 'CONFLICT_DETECTED') {
           dietaryStatus = 'CONFLICT_DETECTED';
           allVerifiedSafe = false;
