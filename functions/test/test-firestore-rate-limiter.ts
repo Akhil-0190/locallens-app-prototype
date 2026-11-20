@@ -145,7 +145,7 @@ async function runFirestoreIntegrationTests() {
   const resB1 = await instanceB.checkRateLimit(user, 'askStreetCopilot', baseTime + 100);
   assert(resB1.allowed, 'Instance B: request allowed from shared collection');
   assert.equal(resB1.remaining, 18, 'Instance B: reads shared quota correctly (18)');
-  console.log('✅ PASSED: Instance B sees decremented quota in Firestore collection (remaining = 18)');
+  console.log('✅ PASSED: Instance B sees decremented quota in transactional adapter store (remaining = 18)');
   passed++;
 
   // --- Test 3: Concurrent Request Race Resilience ---
@@ -177,7 +177,7 @@ async function runFirestoreIntegrationTests() {
   }
   // Now quota is exactly 0. Next request on Instance B must be rejected.
   const resExhausted = await instanceB.checkRateLimit(user, 'askStreetCopilot', baseTime + 500);
-  assert(!resExhausted.allowed, 'Instance B correctly rejects request when Firestore quota is 0');
+  assert(!resExhausted.allowed, 'Instance B correctly rejects request when quota is 0');
   assert.equal(resExhausted.remaining, 0, 'Instance B reports remaining quota as 0');
   assert(resExhausted.resetMs > 0, 'Instance B calculates positive resetMs');
   console.log('✅ PASSED: Instance B rejects request upon quota exhaustion with 429 error payload');
@@ -190,11 +190,11 @@ async function runFirestoreIntegrationTests() {
   const resReplenished = await instanceB.checkRateLimit(user, 'askStreetCopilot', futureTime);
   assert(resReplenished.allowed, 'Request allowed after sliding window expiration');
   assert.equal(resReplenished.remaining, 19, 'Quota replenished after window expiration');
-  console.log('✅ PASSED: Sliding window expiration replenishes quota in Firestore collection');
+  console.log('✅ PASSED: Sliding window expiration replenishes quota in transactional adapter store');
   passed++;
 
-  // --- Test 6: Firestore-Backed Atomic Handoff Anti-Replay ---
-  console.log('\n--- [Test 6] Firestore-Backed Atomic Handoff Anti-Replay ---');
+  // --- Test 6: Atomic Handoff Anti-Replay via Transactional Store ---
+  console.log('\n--- [Test 6] Atomic Handoff Anti-Replay via Transactional Store ---');
   const challengeDb = new MockTransactionalFirestore();
   const challengeStore = new FirestoreHandoffChallengeStore(challengeDb, 'ai_handoff_challenges');
 
@@ -255,7 +255,7 @@ async function runFirestoreIntegrationTests() {
     secondConfirm.handoffDisclaimer.includes('already been consumed'),
     'Disclaimer flags replay violation'
   );
-  console.log('✅ PASSED: 6B - Rejected second use (anti-replay violation prevented in Firestore)');
+  console.log('✅ PASSED: 6B - Rejected second use (anti-replay violation prevented in transactional store)');
   passed++;
 
   // Case 6C: Rejected expired challenge
@@ -352,7 +352,7 @@ async function runFirestoreIntegrationTests() {
   const grantedCount = raceAttempts.filter((r) => r.consentStatus === 'CONSENT_GRANTED').length;
   const cancelledCount = raceAttempts.filter((r) => r.consentStatus === 'CANCELLED').length;
 
-  assert.equal(grantedCount, 1, 'Exactly one concurrent attempt must succeed in atomic Firestore transaction');
+  assert.equal(grantedCount, 1, 'Exactly one concurrent attempt must succeed in atomic transaction');
   assert.equal(cancelledCount, 2, 'Remaining concurrent attempts must be rejected as already consumed');
   console.log('✅ PASSED: 6F - Concurrent challenge consumption race: exactly 1 granted, 2 rejected');
   passed++;
