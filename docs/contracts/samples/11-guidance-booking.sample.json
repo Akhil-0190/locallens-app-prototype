@@ -1,0 +1,22 @@
+{
+  "bookingId": "guidance_blr_1732147200000_abc123",
+  "offeringId": "guide_offering_usr_guide_priya_01",
+  "travelerUserId": "usr_traveler_alex_888",
+  "guideUserId": "usr_priya_782",
+  "neighborhood": "Malleshwaram",
+  "offeringTitle": "Heritage Temple Architecture & Traditional Filter Coffee Walk",
+  "scheduledDateTime": "2026-11-22T09:30:00.000Z",
+  "durationMinutes": 90,
+  "meetingPoint": "Main entrance of Kadu Malleshwara Temple, 15th Cross Road",
+  "specialNotes": "Interested in heritage photography and South Indian filter coffee roasting techniques.",
+  "priceInr": 750,
+  "platformFeeInr": 75,
+  "guideNetInr": 675,
+  "currency": "INR",
+  "paymentMode": "SANDBOX",
+  "paymentStatus": "COMPLETED",
+  "paymentGatewayReference": "sandbox_sim_guidance_874192305a2b",
+  "status": "CONFIRMED",
+  "createdAt": "2026-11-20T11:00:00.000Z",
+  "updatedAt": "2026-11-20T11:05:00.000Z"
+}

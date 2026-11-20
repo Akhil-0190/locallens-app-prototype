@@ -81,6 +81,7 @@ export const ContributionStatusSchema = z.enum([
   'MAPS_GROUNDED',
   'VERIFIED',
   'REJECTED',
+  'RETRACTED',
 ]);
 
 export const ContributorSubmissionInputSchema = z.object({
@@ -551,6 +552,7 @@ export const MerchantPlanTierSchema = z.enum([
 
 export const PartnerMerchantSubscriptionSchema = z.object({
   subscriptionId: z.string().min(1),
+  ownerUserId: z.string().min(1).optional(), // Authenticated Firebase UID of merchant owner
   merchantPlaceId: z.string().min(1),
   businessName: z.string().min(1),
   contactEmail: z.string().email(),
@@ -560,6 +562,7 @@ export const PartnerMerchantSubscriptionSchema = z.object({
     terms: z.string().min(1),
   }).optional(),
   paymentMode: PaymentModeSchema.default('SANDBOX'),
+  paymentGatewayReference: z.string().optional(),
   isActive: z.boolean().default(true),
   expiresAt: z.string(),
   createdAt: z.string(),
@@ -568,6 +571,69 @@ export const PartnerMerchantSubscriptionSchema = z.object({
 
 export type MerchantPlanTier = z.infer<typeof MerchantPlanTierSchema>;
 export type PartnerMerchantSubscription = z.infer<typeof PartnerMerchantSubscriptionSchema>;
+
+// ==============================================================================
+// 13. One-on-One Paid Local Guidance (Domain 11/12 Extension)
+// ==============================================================================
+
+export const GuidanceOfferingDocumentSchema = z.object({
+  offeringId: z.string().min(1),
+  guideUserId: z.string().min(1),
+  neighborhood: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  durationMinutes: z.number().int().min(15).max(480),
+  priceInr: z.number().int().min(100).max(10000),
+  meetingPoint: z.string().min(1),
+  languages: z.array(z.string()).min(1),
+  isActive: z.boolean().default(true),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const GuidanceBookingStatusSchema = z.enum([
+  'REQUESTED',
+  'ACCEPTED',
+  'CONFIRMED',
+  'REJECTED',
+  'CANCELLED',
+  'COMPLETED',
+]);
+
+export const GuidanceBookingDocumentSchema = z.object({
+  bookingId: z.string().min(1),
+  offeringId: z.string().min(1),
+  travelerUserId: z.string().min(1),
+  guideUserId: z.string().min(1),
+  neighborhood: z.string().min(1),
+  offeringTitle: z.string().min(1),
+  scheduledDateTime: z.string(),
+  durationMinutes: z.number().int().positive(),
+  meetingPoint: z.string().min(1),
+  specialNotes: z.string().optional(),
+  priceInr: z.number().int().positive(),
+  platformFeeInr: z.number().int().nonnegative(),
+  guideNetInr: z.number().int().positive(),
+  currency: z.literal('INR').default('INR'),
+  paymentMode: PaymentModeSchema,
+  paymentStatus: TipPaymentStatusSchema,
+  paymentGatewayReference: z.string().optional(),
+  status: GuidanceBookingStatusSchema,
+  refundStatus: z.enum(['PENDING', 'COMPLETED', 'FAILED']).optional(),
+  refundReference: z.string().optional(),
+  refundIdempotencyKey: z.string().optional(),
+  refundInitiatedAt: z.string().optional(),
+  refundedAt: z.string().optional(),
+  cancellationReason: z.string().optional(),
+  rejectionReason: z.string().optional(),
+  completedAt: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type GuidanceOfferingDocument = z.infer<typeof GuidanceOfferingDocumentSchema>;
+export type GuidanceBookingStatus = z.infer<typeof GuidanceBookingStatusSchema>;
+export type GuidanceBookingDocument = z.infer<typeof GuidanceBookingDocumentSchema>;
 
 // ==============================================================================
 // Standard API Envelopes
