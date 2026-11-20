@@ -8,8 +8,9 @@
   "platformFeeInr": 5,
   "contributorNetInr": 95,
   "currency": "INR",
+  "paymentMode": "SANDBOX",
   "paymentStatus": "COMPLETED",
-  "paymentGatewayReference": "pay_upi_987213892",
+  "paymentGatewayReference": "sandbox_sim_upi_987213892",
   "personalNote": "Thank you Priya! The benne dose and filter coffee were unforgettable.",
   "createdAt": "2026-11-20T12:30:00.000Z",
   "settledAt": "2026-11-20T12:31:00.000Z"

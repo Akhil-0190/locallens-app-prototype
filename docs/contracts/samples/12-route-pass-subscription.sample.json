@@ -9,6 +9,8 @@
   ],
   "pricePaidInr": 299,
   "currency": "INR",
+  "paymentMode": "SANDBOX",
+  "paymentGatewayReference": "sandbox_sim_pass_781290",
   "status": "ACTIVE",
   "perksIncluded": {
     "audioGuidanceUnlocked": true,
