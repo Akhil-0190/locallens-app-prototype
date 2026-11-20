@@ -19,6 +19,23 @@ import {
 import { executeWithRetry } from '../client/gemini-client.js';
 import { getAIConfig } from '../config/env.js';
 
+export {
+  extractVoiceNoteDetails,
+  VoiceExtractionInput,
+  VoiceExtractionOutput,
+} from './voice-extraction-service.js';
+
+export {
+  extractPhotoDetails,
+  PhotoExtractionInput,
+  PhotoExtractionOutput,
+} from './photo-extraction-service.js';
+
+export {
+  synthesizeSpotCard,
+  SpotCardSynthesisInput,
+} from './spot-card-synthesis-service.js';
+
 /**
  * 1. Foundation Verification Call
  * Runs a small, verified model call to test authorized credentials and structured schema return.
