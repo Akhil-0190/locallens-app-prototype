@@ -59,6 +59,20 @@ export {
 
 export * from '../schemas/matching-schemas.js';
 
+export {
+  initializeLiveSession,
+  askStreetCopilot,
+  translateText,
+  getOrderingPhrases,
+  getEtiquetteGuidance,
+  translateCameraSignage,
+  generateAudioGuidance,
+  explainPlanBReroute,
+  formatGeminiHandoffContext,
+} from './live-assistance-service.js';
+
+export * from '../schemas/assistance-schemas.js';
+
 /**
  * 1. Foundation Verification Call
  * Runs a small, verified model call to test authorized credentials and structured schema return.
