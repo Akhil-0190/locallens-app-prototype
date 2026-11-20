@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
+import '../models/contribution.dart';
 import '../models/spot_card.dart';
+import '../services/contribution_service.dart';
 import '../services/spot_service.dart';
 
 /// Database provider for offline SQLite/Drift storage.
@@ -37,3 +39,19 @@ final isGeneratingRouteProvider = StateProvider<bool>((ref) => false);
 
 /// State flag indicating whether route matching has been executed.
 final hasGeneratedRouteProvider = StateProvider<bool>((ref) => false);
+
+/// Service provider for contributor submissions and status pipeline.
+final contributionServiceProvider = Provider<ContributionService>((ref) {
+  return ContributionService();
+});
+
+/// Contributor profile provider (Domain 05).
+final contributorProfileProvider = Provider<ContributorVerificationProfile>((ref) {
+  return ref.watch(contributionServiceProvider).currentProfile;
+});
+
+/// Active contribution currently being tracked through pipeline.
+final activeContributionProvider = StateProvider<ContributionDocument?>((ref) => null);
+
+/// Pipeline tracking state flag.
+final isTrackingPipelineProvider = StateProvider<bool>((ref) => false);

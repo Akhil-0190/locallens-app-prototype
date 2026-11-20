@@ -38,6 +38,8 @@ coverage/
 .pub/
 **/doc/api/
 **/ios/Flutter/.last_build_id
+ios/Flutter/
+**/ios/Runner/GeneratedPluginRegistrant.*
 migrate_working_dir/
 
 # Android Build Outputs
