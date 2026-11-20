@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/monetization_providers.dart';
@@ -43,9 +44,6 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
     }
     return _selectedAmount;
   }
-
-  double get _platformFee => (_currentAmount * 0.05).roundToDouble();
-  double get _netEarnings => (_currentAmount - _platformFee).clamp(0.0, double.infinity);
 
   @override
   Widget build(BuildContext context) {
@@ -214,7 +212,7 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Platform Fee (5%):', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        const Text('Platform Fee:', style: TextStyle(fontSize: 12, color: Colors.grey)),
                         Text('₹${uiState.pendingTip!.platformFeeInr.toStringAsFixed(0)}', style: const TextStyle(color: Colors.grey)),
                       ],
                     ),
@@ -320,7 +318,7 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
               ],
               const SizedBox(height: 14),
 
-              // Fee Breakdown
+              // Fee Note
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
@@ -329,15 +327,14 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                   border: Border.all(color: Colors.grey.shade200),
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Contributor receives: ₹${_netEarnings.toStringAsFixed(0)}',
-                      style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.w600),
-                    ),
-                    Text(
-                      'Platform fee (5%): ₹${_platformFee.toStringAsFixed(0)}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                    Icon(Icons.info_outline, size: 14, color: Colors.grey.shade600),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Minimum ₹10, maximum ₹5,000. Net credit and any nominal platform fee are calculated and verified by the backend upon initiation.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                      ),
                     ),
                   ],
                 ),

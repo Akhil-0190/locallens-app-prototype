@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -108,7 +109,7 @@ class RoutePassScreen extends ConsumerWidget {
             _buildTierCard(
               context: context,
               tier: PassTier.singleRoute,
-              description: 'Access 1 curated walking route for 48 hours. Includes audio walking co-pilot and offline map.',
+              description: 'Access 1 curated walking route for 48 hours. Includes audio walking co-pilot and offline spot cards (map tile pre-caching pending).',
               neighborhood: 'Malleshwaram',
             ),
             const SizedBox(height: 12),
@@ -116,7 +117,7 @@ class RoutePassScreen extends ConsumerWidget {
             _buildTierCard(
               context: context,
               tier: PassTier.neighborhoodAllAccess,
-              description: 'Unlimited access to all walking routes and curated food trails in a neighborhood for 7 days. Includes 10% partner merchant discounts.',
+              description: 'Access to walking routes and curated food trails in the neighborhood for 7 days. Includes 10% partner merchant discounts and offline spot packs.',
               neighborhood: 'Malleshwaram',
               isPopular: true,
             ),
@@ -125,8 +126,8 @@ class RoutePassScreen extends ConsumerWidget {
             _buildTierCard(
               context: context,
               tier: PassTier.annualExplorer,
-              description: 'Annual global pass unlocking every neighborhood route, all offline map packs, and exclusive artisan discounts across Bangalore.',
-              neighborhood: 'All Bangalore Neighborhoods',
+              description: '365-day explorer pass for walking routes within the neighborhood, with 20% partner merchant discounts and offline spot cards (map tile pre-caching pending).',
+              neighborhood: 'Malleshwaram',
             ),
             const SizedBox(height: 24),
           ],
@@ -151,10 +152,13 @@ class RoutePassScreen extends ConsumerWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  pass.tier.displayName,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                Expanded(
+                  child: Text(
+                    pass.tier.displayName,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
                 ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
@@ -232,11 +236,14 @@ class RoutePassScreen extends ConsumerWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  tier.displayName,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Expanded(
+                  child: Text(
+                    tier.displayName,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
                 ),
-                if (isPopular)
+                if (isPopular) ...[
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
@@ -248,6 +255,7 @@ class RoutePassScreen extends ConsumerWidget {
                       style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white),
                     ),
                   ),
+                ],
               ],
             ),
             const SizedBox(height: 4),

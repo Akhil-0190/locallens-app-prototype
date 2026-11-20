@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -396,8 +397,7 @@ void main() {
       expect(find.text('₹50'), findsOneWidget);
       expect(find.text('₹100'), findsOneWidget);
       expect(find.text('₹200'), findsOneWidget);
-      expect(find.textContaining('Contributor receives: ₹95'), findsOneWidget);
-      expect(find.textContaining('Platform fee (5%): ₹5'), findsOneWidget);
+      expect(find.textContaining('Minimum ₹10, maximum ₹5,000'), findsOneWidget);
     });
 
     testWidgets('RoutePassScreen renders passes and Pricing: Pending Commercial Confirmation', (tester) async {
@@ -408,9 +408,9 @@ void main() {
       expect(find.textContaining('[Sandbox Mode: Simulated Payment'), findsOneWidget);
       expect(find.text('My Passes'), findsOneWidget);
       expect(find.text('Available Pass Tiers'), findsOneWidget);
-      expect(find.text('Single Route Pass'), findsWidgets);
-      expect(find.text('Neighborhood Explorer'), findsWidgets);
-      expect(find.text('Annual Global Pass'), findsOneWidget);
+      expect(find.textContaining('SINGLE_ROUTE'), findsWidgets);
+      expect(find.textContaining('NEIGHBORHOOD_ALL_ACCESS'), findsWidgets);
+      expect(find.textContaining('ANNUAL_EXPLORER'), findsOneWidget);
 
       // Verify that no hardcoded prices (₹99 / ₹299 / ₹999) appear in the catalog
       expect(find.textContaining('Pricing: Pending Commercial Confirmation'), findsWidgets);
@@ -430,7 +430,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      expect(find.text('Neighborhood Explorer'), findsOneWidget);
+      expect(find.textContaining('NEIGHBORHOOD_ALL_ACCESS'), findsOneWidget);
       expect(find.textContaining('[Sandbox Mode: Simulated Payment'), findsOneWidget);
       expect(find.text('Pricing: Pending Commercial Confirmation'), findsOneWidget);
       expect(find.text('Initiate Pass Purchase (Sandbox)'), findsOneWidget);

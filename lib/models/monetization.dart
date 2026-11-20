@@ -268,11 +268,11 @@ extension PassTierX on PassTier {
   String get displayName {
     switch (this) {
       case PassTier.singleRoute:
-        return 'Single Route Pass';
+        return 'Single Route (SINGLE_ROUTE)';
       case PassTier.neighborhoodAllAccess:
-        return 'Neighborhood Explorer';
+        return 'Neighborhood All-Access (NEIGHBORHOOD_ALL_ACCESS)';
       case PassTier.annualExplorer:
-        return 'Annual Global Pass';
+        return 'Annual Explorer (ANNUAL_EXPLORER)';
     }
   }
 

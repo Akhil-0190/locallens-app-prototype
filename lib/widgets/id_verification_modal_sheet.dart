@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -178,7 +179,7 @@ class _IdVerificationModalSheetState
               ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                value: _selectedDocType,
+                initialValue: _selectedDocType,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.badge_outlined),

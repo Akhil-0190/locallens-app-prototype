@@ -77,7 +77,7 @@ final routePassAccessProvider =
 final publicPartnerOfferProvider =
     FutureProvider.family<PublicPartnerOffer?, String>((ref, merchantPlaceId) async {
   final service = ref.watch(monetizationServiceProvider);
-  return service.getPublicPartnerOffer(merchantPlaceId: merchantPlaceId);
+  return service.getPublicPartnerMerchantOffer(merchantPlaceId: merchantPlaceId);
 });
 
 /// State representation for monetization interactions (Tipping, Checkout, Drafts).

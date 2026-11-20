@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -194,7 +195,7 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
               ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                value: _selectedTimeOfDay,
+                initialValue: _selectedTimeOfDay,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.access_time),
@@ -214,7 +215,7 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
               ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                value: _selectedCulturalFocus,
+                initialValue: _selectedCulturalFocus,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.explore_outlined),

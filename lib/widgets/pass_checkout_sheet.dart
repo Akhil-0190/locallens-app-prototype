@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -121,8 +122,8 @@ class PassCheckoutSheet extends ConsumerWidget {
             const Text('Included Perks:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
             const SizedBox(height: 8),
             _buildPerkRow(Icons.headphones, 'Turn-by-turn Audio Walking Co-pilot'),
-            _buildPerkRow(Icons.offline_pin_outlined, 'Curated Vector Offline Map Pack & Audio Clips'),
-            _buildPerkRow(Icons.local_offer_outlined, 'Partner Merchant Discounts at Local Stalls'),
+            _buildPerkRow(Icons.offline_pin_outlined, 'Offline Spot Cards & Audio Pack (Map tile pre-caching pending)'),
+            _buildPerkRow(Icons.local_offer_outlined, 'Partner Merchant Discounts at Participating Stalls'),
             const SizedBox(height: 16),
 
             // Error display

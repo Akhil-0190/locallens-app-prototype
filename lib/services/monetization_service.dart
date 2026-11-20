@@ -474,7 +474,7 @@ class MonetizationService {
 
   /// Fetches sanitized public partner offer for a place.
   /// Calls `Monetization-getPublicPartnerMerchantOffer`.
-  Future<PublicPartnerOffer?> getPublicPartnerOffer({
+  Future<PublicPartnerOffer?> getPublicPartnerMerchantOffer({
     required String merchantPlaceId,
   }) async {
     if (isTestMode) {

@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -205,7 +206,7 @@ class _PartnerSubscriptionScreenState
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _selectedPropertyType,
+                      initialValue: _selectedPropertyType,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         labelText: 'Property Category',
