@@ -37,11 +37,11 @@ console.log('--- [Test Suite 1] Model Registry & Alias Resolution ---');
 
 const flashDef = resolveModelDefinition('Gemini 3.8 Flash');
 assert(flashDef !== undefined, 'Resolve alias "Gemini 3.8 Flash" to real definition');
-assert(flashDef?.apiModelId === 'gemini-2.5-flash', 'Gemini 3.8 Flash maps to verified API ID gemini-2.5-flash');
+assert(flashDef?.apiModelId === 'gemini-3.8-flash', 'Gemini 3.8 Flash maps to verified API ID gemini-3.8-flash');
 
 const embedDef = resolveModelDefinition('Gemini Embedding 2');
 assert(embedDef !== undefined, 'Resolve alias "Gemini Embedding 2"');
-assert(embedDef?.apiModelId === 'text-embedding-004', 'Gemini Embedding 2 maps to text-embedding-004');
+assert(embedDef?.apiModelId === 'gemini-embedding-2', 'Gemini Embedding 2 maps to verified API ID gemini-embedding-2');
 
 const liveDef = resolveModelDefinition('Gemini 3.8 Live');
 assert(liveDef !== undefined, 'Resolve alias "Gemini 3.8 Live"');

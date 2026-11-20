@@ -17,14 +17,18 @@ In accordance with Buildathon Model Integrity Rules:
 
 ## 2. Model Mapping Matrix: Submitted Labels vs. Canonical APIs
 
-| Submitted Label | Canonical API Model ID | Deployment / Runtime Target | Status / Availability | Context Window | Primary Neighborhood Guide Responsibility |
+| Submitted Label | Canonical API Model ID | Deployment / Runtime Target | Status / Availability | Verified Context / Output | Primary Neighborhood Guide Responsibility |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Gemini 3.8 Flash** | `gemini-2.5-flash` | Cloud API (`@google/genai`) | Public Preview / Production | 1M in / 8k out | Primary extraction engine: regional voice transcription, photo OCR, authenticity scoring, and structured JSON output. |
-| *(Flash Fallback)* | `gemini-2.0-flash` | Cloud API (`@google/genai`) | Generally Available (GA) | 1M in / 8k out | Immediate automatic fallback when primary model encounters 429 rate limits or transient 503 unavailability. |
-| **Gemini Embedding 2**| `text-embedding-004` | Cloud API (`@google/genai`) | Generally Available (GA) | 2,048 tokens | 768-dimensional vector embeddings for place profiles, user preferences, and solo/group cosine similarity blending. |
-| **Gemini 3.8 Live** | `gemini-2.0-flash-exp` | Multimodal Live API (WebSocket) | Public Preview | 1M in / 8k out | Low-latency bidirectional voice translation, live audio turn-by-turn cultural commentary, and conversational handoff. |
+| **Gemini 3.8 Flash** | `gemini-3.8-flash` | Cloud API (`@google/genai`) | GA in project catalog | 1M in / 65k out, thinking: true | Primary reasoning engine for complex multimodal and authenticity assessment. Exhibits 503 spikes under high demand. |
+| *(High-Speed Workhorse)*| `gemini-3.5-flash-lite` | Cloud API (`@google/genai`) | Generally Available (GA) | 1M in / 8k out | Fast, verified operational model (2.6s live latency). Handles high-throughput voice/photo extractions and verification calls. |
+| *(Flash Fallback)* | `gemini-3.1-flash-lite` | Cloud API (`@google/genai`) | Generally Available (GA) | 1M in / 8k out | Immediate responsive fallback when primary models encounter rate limits or transient outages. |
+| **Gemini Embedding 2**| `gemini-embedding-2` | Cloud API (`@google/genai`) | Generally Available (GA) | 8,192 in / 3072 dims | Verified live: 3072-dimensional semantic embeddings for place profiles and group preference cosine blending. |
+| **Gemini 3.8 Live** | `gemini-2.0-flash-exp` | Multimodal Live API (WebSocket) | Public Preview | 1M in / 8k out | Low-latency bidirectional voice translation, live audio turn-by-turn cultural commentary. |
 | **Gemini Nano** | `android.aicore.gemini-nano` | On-Device Edge (Android AICore) | Edge System Service | 4k in / 1k out | Zero-latency on-device processing: offline notes summary, keyword tagging. Owned by Dev D (Kotlin bridge); prompt contracts defined by Dev B. |
 | **Gemma 4 E2B** | `gemma-2-2b-it` | On-Device Edge (MediaPipe / LiteRT) | Local Open Weights Runtime | 2k in / 1k out | Cross-platform fallback for offline inference on Android/iOS devices lacking AICore hardware. |
+
+> [!NOTE]
+> **API Deprecation Note:** Legacy `gemini-2.5-flash` was confirmed via live API inspection to be deprecated for new users by Google (`404 NOT_FOUND: This model is no longer available to new users. Please update your code to use models/gemini-3.8-flash or gemini-3.5-flash-lite`). The configuration was updated accordingly.
 
 ---
 

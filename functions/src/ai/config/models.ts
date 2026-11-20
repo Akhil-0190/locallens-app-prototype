@@ -63,13 +63,13 @@ export interface AIModelDefinition {
  * model IDs or edge deployment targets.
  */
 export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
-  // Alias: "Gemini 3.8 Flash" -> Real API: gemini-2.5-flash / gemini-2.0-flash
+  // Verified Live API ID: gemini-3.8-flash
   GEMINI_FLASH_PRIMARY: {
-    apiModelId: 'gemini-2.5-flash',
-    displayName: 'Gemini 2.5 Flash (Primary Multimodal & Extraction Engine)',
+    apiModelId: 'gemini-3.8-flash',
+    displayName: 'Gemini 3.8 Flash (Primary Multimodal & Extraction Engine)',
     alias: 'Gemini 3.8 Flash',
     primaryUse: 'Fast multimodal extraction (voice transcripts, photo analysis, authenticity assessment, structured JSON generation)',
-    availability: 'PUBLIC_PREVIEW',
+    availability: 'PUBLIC_GA',
     contextWindow: {
       inputTokens: 1048576, // 1M tokens
       outputTokens: 8192,
@@ -94,16 +94,16 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 100000,
       },
     },
-    fallbackModelId: 'gemini-2.0-flash',
-    notes: 'Primary server-side workhorse. High throughput, low latency. Maps to submitted label "Gemini 3.8 Flash".',
+    fallbackModelId: 'gemini-3.5-flash-lite',
+    notes: 'Primary server-side workhorse. Maps to submitted label "Gemini 3.8 Flash". Has thinking capabilities enabled.',
   },
 
-  // Fallback for Flash: gemini-2.0-flash
+  // High-performance operational fallback: gemini-3.5-flash-lite
   GEMINI_FLASH_FALLBACK: {
-    apiModelId: 'gemini-2.0-flash',
-    displayName: 'Gemini 2.0 Flash (General Availability Workhorse)',
-    alias: 'Gemini 2.0 Flash',
-    primaryUse: 'Immediate fallback if gemini-2.5-flash experiences 429 quota exhaustion or transient 503 errors',
+    apiModelId: 'gemini-3.5-flash-lite',
+    displayName: 'Gemini 3.5 Flash-Lite (High-Speed Operational Fallback)',
+    alias: 'Gemini 3.5 Flash-Lite',
+    primaryUse: 'Immediate fallback if gemini-3.8-flash experiences 503 demand spikes or rate limits',
     availability: 'PUBLIC_GA',
     contextWindow: {
       inputTokens: 1048576,
@@ -129,16 +129,16 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 100000,
       },
     },
-    fallbackModelId: 'gemini-1.5-flash',
-    notes: 'Stable GA model. Fallback target for extraction and verification pipelines.',
+    fallbackModelId: 'gemini-3.1-flash-lite',
+    notes: 'Fast, verified GA model. Immediate responsive fallback target for extraction and verification pipelines.',
   },
 
-  // Alias: "Gemini Embedding 2" -> Real API: text-embedding-004
+  // Verified Live API ID: gemini-embedding-2
   GEMINI_EMBEDDING_PRIMARY: {
-    apiModelId: 'text-embedding-004',
-    displayName: 'Text Embedding 004',
+    apiModelId: 'gemini-embedding-2',
+    displayName: 'Gemini Embedding 2',
     alias: 'Gemini Embedding 2',
-    primaryUse: 'Generating 768-dimensional semantic embeddings for user preferences, place profiles, and solo/group blending',
+    primaryUse: 'Generating semantic embeddings for user preferences, place profiles, and solo/group blending',
     availability: 'PUBLIC_GA',
     contextWindow: {
       inputTokens: 2048,
@@ -164,7 +164,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 500000,
       },
     },
-    notes: 'Generates normalized 768-dim embeddings. Used by Developer B for cosine similarity vector operations and group preference blending.',
+    notes: 'Generates normalized embeddings. Verified live API model ID in project catalog.',
   },
 
   // Alias: "Gemini 3.8 Live" -> Real API: gemini-2.0-flash-exp (Multimodal Live API)
