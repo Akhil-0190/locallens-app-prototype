@@ -23,6 +23,7 @@
     "test:ai": "tsx test/verify-ai-foundation.ts",
     "test:b2": "tsx test/test-b2-voice-photo-extraction.ts",
     "test:b3": "tsx test/test-b3-authenticity-assessment.ts",
+    "test:b4": "tsx test/test-b4-group-matching.ts",
     "test:schemas": "tsx test/test-schemas.ts"
   },
   "keywords": [
