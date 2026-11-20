@@ -1,10 +1,17 @@
 /**
- * Integration Test: Firestore-Backed Rate Limiting & Atomic Handoff Replay Protection
+ * Transactional Adapter Tests: Production Firestore Store Classes & Atomic Handoff Replay
  * Task B5 — Verification for PR #24 Review
  * Developer B — AI & Model Integration Lead
  * 
+ * NOTE ON TEST CLASSIFICATION:
+ * These tests execute the actual production store classes (FirestoreRateLimitStore and FirestoreHandoffChallengeStore)
+ * using an in-process transactional mock database (MockTransactionalFirestore) implementing the Firestore Admin SDK
+ * transactional contract (collection, doc, get, set, runTransaction with serializable locking).
+ * Because standalone Java/Firebase emulators are not installed on this host, real Firestore server-side concurrency
+ * is classified as NOT TESTED until verified in an environment with the official Firebase emulator or live project.
+ *
  * Verifies:
- * 1. Production callable handlers use FirestoreRateLimitStore (no silent memory fallback)
+ * 1. Production callable handlers instantiate FirestoreRateLimitStore (no silent memory fallback)
  * 2. Atomic quota consumption across separate RateLimiter instances targeting the same collection
  * 3. Sliding window expiry & quota replenishment
  * 4. Concurrent requests race condition resilience (Promise.all)
@@ -98,8 +105,8 @@ class MockTransactionalFirestore {
 
 async function runFirestoreIntegrationTests() {
   console.log('================================================================');
-  console.log('  Startup Buildathon 2026 — Task B5 Firestore Integration Tests  ');
-  console.log('  Firestore Rate Limiter & Atomic Handoff Anti-Replay Engine     ');
+  console.log('  Startup Buildathon 2026 — Task B5 Transactional Adapter Tests ');
+  console.log('  Production Firestore Store Classes & Atomic Anti-Replay Engine ');
   console.log('================================================================');
 
   let passed = 0;

@@ -190,10 +190,10 @@ Run the full verification pipeline:
 # Deterministic B5 logic & offline fallbacks
 npm --prefix functions run test:b5
 
-# Firestore emulator integration & atomic concurrency
+# Transactional adapter tests for production Firestore store classes & atomic concurrency
 npm --prefix functions run test:firestore
 
-# Real Google Provider live token generation
+# Real Google Provider live token generation, handshake & model content response
 npm --prefix functions run test:live-provider
 
 # Full backend regression suite

@@ -1,13 +1,13 @@
 /**
- * Real Google Provider Integration Test: Gemini 3.8 Live Access, Token Minting & WebSocket Handshake
+ * Real Google Provider Integration Test: Gemini 3.8 Live Access, Token Minting, WebSocket Handshake & Generated Content
  * Task B5 — Verification for PR #24 Review
  * Developer B — AI & Model Integration Lead
  * 
  * Demonstrates real Google Provider capability:
- * 1. Project credential & quota verification
- * 2. Model catalog inspection for models/gemini-3.8-live
- * 3. Ephemeral token creation via @google/genai client.authTokens.create (v1alpha)
- * 4. WebSocket connection URL formation and live handshake exchange with Gemini 3.8 Live
+ * 1. Project credential & model catalog inspection for models/gemini-3.8-live
+ * 2. Real ephemeral token creation via @google/genai client.authTokens.create (v1alpha)
+ * 3. Real WebSocket handshake (setupComplete)
+ * 4. Actual conversational model content generation (text transcription & streaming audio synthesis)
  */
 
 import dotenv from 'dotenv';
@@ -18,7 +18,7 @@ import { GoogleGenAI } from '@google/genai';
 async function runProviderLiveTest() {
   console.log('================================================================');
   console.log('   Startup Buildathon 2026 — Real Google Provider Live Test    ');
-  console.log('   Gemini 3.8 Live Ephemeral Token & Live WebSocket Handshake   ');
+  console.log('   Gemini 3.8 Live Token, WebSocket Handshake & Content Test    ');
   console.log('================================================================');
 
   const apiKey = process.env.GEMINI_API_KEY || '';
@@ -33,6 +33,8 @@ async function runProviderLiveTest() {
   });
 
   const targetModel = 'models/gemini-3.8-live';
+
+  // --- Step 1: Model Catalog Inspection ---
   console.log(`\n[Step 1] Inspecting Model Definition: ${targetModel}`);
   const startTime = Date.now();
   let modelInfo: any;
@@ -58,6 +60,7 @@ async function runProviderLiveTest() {
     throw err;
   }
 
+  // --- Step 2: Ephemeral Token Minting ---
   console.log(`\n[Step 2] Minting Real Ephemeral Auth Token: ${targetModel}`);
   const tokenStartTime = Date.now();
   let tokenResponse: any;
@@ -89,31 +92,36 @@ async function runProviderLiveTest() {
     throw err;
   }
 
-  console.log(`\n[Step 3] Establishing Real WebSocket Session Handshake: ${targetModel}`);
+  // --- Step 3: WebSocket Session Handshake & Actual Generated Content ---
+  console.log(`\n[Step 3] Establishing WebSocket Handshake & Generated Content Exchange: ${targetModel}`);
   const wsEndpoint = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained';
   const connectionUrl = `${wsEndpoint}?access_token=${tokenResponse.name}`;
 
   await new Promise<void>((resolve, reject) => {
     const ws = new WebSocket(connectionUrl);
     let setupAcknowledged = false;
-    let turnAcknowledged = false;
+    let accumulatedText = '';
+    let audioBytesReceived = 0;
+    let turnCompleteReceived = false;
 
     const timeout = setTimeout(() => {
       ws.close();
       if (!setupAcknowledged) {
-        reject(new Error('Timeout: WebSocket connection did not complete setup handshake within 10s'));
+        reject(new Error('Timeout: WebSocket connection did not complete setup handshake within 12s'));
+      } else if (!accumulatedText && audioBytesReceived === 0) {
+        reject(new Error('Timeout: No model-generated content received in response turn'));
       } else {
         resolve();
       }
-    }, 10000);
+    }, 12000);
 
     ws.onopen = () => {
-      console.log('   - WebSocket socket opened');
+      console.log('   - WebSocket connection opened');
       const setupMessage = {
         setup: {
           model: targetModel,
           generationConfig: {
-            responseModalities: ['TEXT'],
+            responseModalities: ['AUDIO'],
           },
         },
       };
@@ -124,6 +132,8 @@ async function runProviderLiveTest() {
       const text = event.data instanceof Blob ? await event.data.text() : event.data.toString();
       try {
         const parsed = JSON.parse(text);
+
+        // 1. Setup acknowledgment
         if (parsed.setupComplete) {
           setupAcknowledged = true;
           console.log('   - Server acknowledged setupComplete: {}');
@@ -132,24 +142,46 @@ async function runProviderLiveTest() {
               turns: [
                 {
                   role: 'user',
-                  parts: [{ text: 'Hello, what is your name?' }],
+                  parts: [{ text: 'Respond with exactly the single word "READY".' }],
                 },
               ],
               turnComplete: true,
             },
           };
+          console.log('   - Transmitted client prompt turn: \'Respond with exactly the single word "READY".\'');
           ws.send(JSON.stringify(turnMessage));
         }
 
+        // 2. Session resumption
         if (parsed.sessionResumptionUpdate) {
           console.log(`   - Session resumption handle received: ${parsed.sessionResumptionUpdate.newHandle?.slice(0, 8)}...`);
         }
 
-        if (parsed.serverContent) {
-          turnAcknowledged = true;
-          console.log('   - Server responded with serverContent frame');
+        // 3. Model generated transcription / text
+        if (parsed.serverContent?.outputTranscription?.text) {
+          accumulatedText += parsed.serverContent.outputTranscription.text;
+          console.log(`   - Received outputTranscription text chunk: "${parsed.serverContent.outputTranscription.text}"`);
+        }
+
+        // 4. Model generated audio parts
+        if (parsed.serverContent?.modelTurn?.parts) {
+          for (const part of parsed.serverContent.modelTurn.parts) {
+            if (part.text) {
+              accumulatedText += part.text;
+              console.log(`   - Received modelTurn text part: "${part.text}"`);
+            }
+            if (part.inlineData?.data) {
+              audioBytesReceived += part.inlineData.data.length;
+            }
+          }
+        }
+
+        // 5. Turn completion
+        if (parsed.serverContent?.turnComplete) {
+          turnCompleteReceived = true;
+          console.log(`   - Turn complete received from model (audioBytes: ${audioBytesReceived}, text: "${accumulatedText.trim()}")`);
           clearTimeout(timeout);
-          ws.close(1000, 'Handshake verified');
+          ws.close(1000, 'Handshake and generation verified');
           resolve();
         }
       } catch (err) {
@@ -165,17 +197,22 @@ async function runProviderLiveTest() {
 
     ws.onclose = (event) => {
       clearTimeout(timeout);
-      if (setupAcknowledged) {
-        console.log(`✅ Live WebSocket session verified & cleanly closed (code=${event.code})`);
+      if (setupAcknowledged && (accumulatedText.length > 0 || audioBytesReceived > 0)) {
+        console.log(`✅ Live session content verified & cleanly closed (code=${event.code})`);
         resolve();
-      } else {
+      } else if (!setupAcknowledged) {
         reject(new Error(`WebSocket closed unexpectedly before setup complete: code=${event.code}`));
+      } else {
+        reject(new Error('WebSocket closed without generating response content'));
       }
     };
   });
 
   console.log('\n================================================================');
-  console.log('Provider Live Verification: 3/3 checks PASSED successfully.');
+  console.log('Provider Live Verification: 3/3 checks PASSED successfully:');
+  console.log('  1. Model Catalog Access: PASSED');
+  console.log('  2. Ephemeral Token Issuance: PASSED');
+  console.log('  3. WebSocket Handshake & Generated Content: PASSED');
   console.log('================================================================');
 }
 
