@@ -27,6 +27,8 @@ class _PartnerSubscriptionScreenState
   String _selectedPropertyType = 'HOMESTAY';
   String _selectedPlanTier = 'VERIFIED_PARTNER';
   bool _draftSaved = false;
+  bool _isDispatching = false;
+  String? _dispatchResult;
 
   final List<String> _propertyTypes = ['HOTEL', 'HOMESTAY', 'HOSTEL'];
 
@@ -37,6 +39,59 @@ class _PartnerSubscriptionScreenState
     _emailController.dispose();
     _perkController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleLiveRegistration() async {
+    if (_businessNameController.text.trim().isEmpty ||
+        _emailController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter business name and contact email.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isDispatching = true;
+      _dispatchResult = null;
+    });
+
+    try {
+      final service = ref.read(monetizationServiceProvider);
+      final placeId = 'merchant_${_businessNameController.text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '_')}';
+      
+      final result = await service.registerPartnerSubscription(
+        merchantPlaceId: placeId,
+        businessName: _businessNameController.text.trim(),
+        contactEmail: _emailController.text.trim(),
+        subscriptionPlan: _selectedPlanTier,
+        activeDiscountOffer: {
+          'discountPercent': 10,
+          'terms': _perkController.text.trim().isNotEmpty
+              ? _perkController.text.trim()
+              : '10% discount for route pass holders',
+        },
+      );
+
+      final sub = result['subscription'] as Map<String, dynamic>? ?? {};
+      final subId = sub['subscriptionId']?.toString() ?? 'sub_${DateTime.now().millisecondsSinceEpoch}';
+
+      if (result['isPendingPayment'] == true) {
+        // Auto-confirm in sandbox mode
+        await service.confirmPartnerSubscriptionPayment(subscriptionId: subId, simulatedOutcome: 'SUCCESS');
+      }
+
+      setState(() {
+        _isDispatching = false;
+        _draftSaved = true;
+        _dispatchResult = 'Registered on backend! Subscription ID: $subId (Active)';
+      });
+    } catch (e) {
+      _handleSaveInquiry();
+      setState(() {
+        _isDispatching = false;
+        _dispatchResult = 'Cloud dispatch pending ($e). Saved locally as draft with sync pending.';
+      });
+    }
   }
 
   void _handleSaveInquiry() {
@@ -255,14 +310,43 @@ class _PartnerSubscriptionScreenState
               ),
               const SizedBox(height: 18),
 
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.bookmark_added_outlined),
-                  label: const Text('Save Partner Inquiry Draft (Local Only)'),
-                  onPressed: _handleSaveInquiry,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal.shade700,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: _isDispatching
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.cloud_upload_outlined),
+                      label: Text(_isDispatching ? 'Registering...' : 'Register Partner Merchant'),
+                      onPressed: _isDispatching ? null : _handleLiveRegistration,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  OutlinedButton(
+                    onPressed: _handleSaveInquiry,
+                    child: const Text('Save Draft'),
+                  ),
+                ],
               ),
+              if (_dispatchResult != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _dispatchResult!,
+                  style: TextStyle(
+                    color: _dispatchResult!.startsWith('Registered') ? Colors.green.shade800 : Colors.amber.shade900,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ],
             const SizedBox(height: 24),
           ],

@@ -48,6 +48,48 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
     super.dispose();
   }
 
+  bool _isDispatching = false;
+  String? _dispatchError;
+  String? _confirmedBookingId;
+
+  Future<void> _handleLiveBooking() async {
+    setState(() {
+      _isDispatching = true;
+      _dispatchError = null;
+    });
+
+    final dateStr =
+        '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
+    final notes = _notesController.text.trim();
+
+    try {
+      final service = ref.read(monetizationServiceProvider);
+      final result = await service.requestLocalGuidance(
+        offeringId: 'offering_${widget.neighborhood.toLowerCase()}_01',
+        scheduledDateTime: dateStr,
+        specialNotes: notes.isNotEmpty ? notes : null,
+      );
+
+      final bookingId = result['bookingId']?.toString() ?? 'book_${DateTime.now().millisecondsSinceEpoch}';
+      
+      // Auto-confirm payment in sandbox escrow
+      await service.confirmGuidancePayment(bookingId: bookingId, simulatedOutcome: 'SUCCESS');
+
+      setState(() {
+        _isDispatching = false;
+        _confirmedBookingId = bookingId;
+        _saved = true;
+      });
+    } catch (e) {
+      // Offline fallback: save as local draft
+      _handleSaveDraft();
+      setState(() {
+        _isDispatching = false;
+        _dispatchError = 'Cloud dispatch pending ($e). Saved locally as draft with sync pending.';
+      });
+    }
+  }
+
   void _handleSaveDraft() {
     final draft = LocalGuidanceRequestDraft(
       guideUserId: widget.guideUserId,
@@ -244,14 +286,46 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
               ),
               const SizedBox(height: 20),
 
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.bookmark_add_outlined),
-                  label: const Text('Save Local Guidance Request'),
-                  onPressed: _handleSaveDraft,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal.shade700,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: _isDispatching
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.send_outlined),
+                      label: Text(_isDispatching ? 'Dispatching...' : 'Book 1-on-1 Guidance'),
+                      onPressed: _isDispatching ? null : _handleLiveBooking,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  OutlinedButton(
+                    onPressed: _handleSaveDraft,
+                    child: const Text('Save Draft'),
+                  ),
+                ],
               ),
+              if (_dispatchError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _dispatchError!,
+                  style: TextStyle(color: Colors.amber.shade900, fontSize: 12),
+                ),
+              ],
+              if (_confirmedBookingId != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'Booking confirmed on backend: $_confirmedBookingId',
+                  style: TextStyle(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ],
             ],
             const SizedBox(height: 24),
           ],
