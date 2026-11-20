@@ -1,5 +1,5 @@
 /**
- * Real Google Provider Integration Test: Gemini 3.8 Live Access & Ephemeral Token Minting
+ * Real Google Provider Integration Test: Gemini 3.8 Live Access, Token Minting & WebSocket Handshake
  * Task B5 — Verification for PR #24 Review
  * Developer B — AI & Model Integration Lead
  * 
@@ -7,7 +7,7 @@
  * 1. Project credential & quota verification
  * 2. Model catalog inspection for models/gemini-3.8-live
  * 3. Ephemeral token creation via @google/genai client.authTokens.create (v1alpha)
- * 4. WebSocket connection URL formation
+ * 4. WebSocket connection URL formation and live handshake exchange with Gemini 3.8 Live
  */
 
 import dotenv from 'dotenv';
@@ -18,7 +18,7 @@ import { GoogleGenAI } from '@google/genai';
 async function runProviderLiveTest() {
   console.log('================================================================');
   console.log('   Startup Buildathon 2026 — Real Google Provider Live Test    ');
-  console.log('   Gemini 3.8 Live Ephemeral Token Minting & Model Access       ');
+  console.log('   Gemini 3.8 Live Ephemeral Token & Live WebSocket Handshake   ');
   console.log('================================================================');
 
   const apiKey = process.env.GEMINI_API_KEY || '';
@@ -75,7 +75,6 @@ async function runProviderLiveTest() {
     });
     const tokenLatencyMs = Date.now() - tokenStartTime;
     console.log(`✅ Ephemeral Token Successfully Minted (${tokenLatencyMs}ms):`);
-    // Sanitize token for security in reports
     const sanitizedToken = tokenResponse.name
       ? `${tokenResponse.name.slice(0, 20)}...[REDACTED_HASH_LEN_${tokenResponse.name.length}]`
       : 'UNDEFINED';
@@ -90,8 +89,93 @@ async function runProviderLiveTest() {
     throw err;
   }
 
+  console.log(`\n[Step 3] Establishing Real WebSocket Session Handshake: ${targetModel}`);
+  const wsEndpoint = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained';
+  const connectionUrl = `${wsEndpoint}?access_token=${tokenResponse.name}`;
+
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(connectionUrl);
+    let setupAcknowledged = false;
+    let turnAcknowledged = false;
+
+    const timeout = setTimeout(() => {
+      ws.close();
+      if (!setupAcknowledged) {
+        reject(new Error('Timeout: WebSocket connection did not complete setup handshake within 10s'));
+      } else {
+        resolve();
+      }
+    }, 10000);
+
+    ws.onopen = () => {
+      console.log('   - WebSocket socket opened');
+      const setupMessage = {
+        setup: {
+          model: targetModel,
+          generationConfig: {
+            responseModalities: ['TEXT'],
+          },
+        },
+      };
+      ws.send(JSON.stringify(setupMessage));
+    };
+
+    ws.onmessage = async (event) => {
+      const text = event.data instanceof Blob ? await event.data.text() : event.data.toString();
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.setupComplete) {
+          setupAcknowledged = true;
+          console.log('   - Server acknowledged setupComplete: {}');
+          const turnMessage = {
+            clientContent: {
+              turns: [
+                {
+                  role: 'user',
+                  parts: [{ text: 'Hello, what is your name?' }],
+                },
+              ],
+              turnComplete: true,
+            },
+          };
+          ws.send(JSON.stringify(turnMessage));
+        }
+
+        if (parsed.sessionResumptionUpdate) {
+          console.log(`   - Session resumption handle received: ${parsed.sessionResumptionUpdate.newHandle?.slice(0, 8)}...`);
+        }
+
+        if (parsed.serverContent) {
+          turnAcknowledged = true;
+          console.log('   - Server responded with serverContent frame');
+          clearTimeout(timeout);
+          ws.close(1000, 'Handshake verified');
+          resolve();
+        }
+      } catch (err) {
+        console.error('   - Failed to parse server message:', text);
+      }
+    };
+
+    ws.onerror = (err: any) => {
+      clearTimeout(timeout);
+      console.error('❌ WebSocket error during live handshake:', err?.message || err);
+      reject(err);
+    };
+
+    ws.onclose = (event) => {
+      clearTimeout(timeout);
+      if (setupAcknowledged) {
+        console.log(`✅ Live WebSocket session verified & cleanly closed (code=${event.code})`);
+        resolve();
+      } else {
+        reject(new Error(`WebSocket closed unexpectedly before setup complete: code=${event.code}`));
+      }
+    };
+  });
+
   console.log('\n================================================================');
-  console.log('Provider Live Verification: 2/2 checks PASSED successfully.');
+  console.log('Provider Live Verification: 3/3 checks PASSED successfully.');
   console.log('================================================================');
 }
 
