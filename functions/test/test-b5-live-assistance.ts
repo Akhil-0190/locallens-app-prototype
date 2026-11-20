@@ -86,9 +86,9 @@ async function runB5Tests() {
   assert(liveSession.model === 'gemini-3.8-live', 'Targets registered Gemini 3.8 Live model');
   assert(liveSession.deliveryMode === 'LIVE_STREAMING', 'Explicitly labeled deliveryMode: LIVE_STREAMING');
   assert(liveSession.webSocketEndpoint.startsWith('wss://'), 'Returns valid wss:// streaming WebSocket endpoint');
-  assert(liveSession.ephemeralToken.startsWith('gem_live_ephem_'), 'Mints unique ephemeral session token prefix');
-  assert(liveSession.ttlSeconds === 900, 'Enforces 15-minute (900s) token TTL');
-  assert(!liveSession.ephemeralToken.includes('AIzaSy'), 'Zero leakage: raw Google API keys are NEVER returned to client');
+  assert(liveSession.diagnostics.providerMechanism.includes('authTokens.create'), 'Identifies official Google Provider mechanism');
+  assert(liveSession.ephemeralToken === null ? !liveSession.isLiveSessionSupported : liveSession.isLiveSessionSupported, 'Honest provider state: no fake tokens returned when offline');
+  assert(liveSession.ephemeralToken === null || !liveSession.ephemeralToken.includes('AIzaSy'), 'Zero leakage: raw Google API keys are NEVER returned to client');
   assert(liveSession.systemInstructionsApplied.includes('Malleshwaram'), 'System instructions contextualized to requested neighborhood');
 
   // =========================================================================
@@ -304,11 +304,12 @@ async function runB5Tests() {
   );
 
   // =========================================================================
-  // Test Suite 9: Continue in Gemini Handoff Interface
+  // Test Suite 9: Continue in Gemini Handoff Interface (Explicit Consent)
   // =========================================================================
   console.log('\n--- [Suite 9] Continue in Gemini Handoff Interface ---');
 
-  const handoffResponse = formatGeminiHandoffContext({
+  // Case A: Traveler has NOT granted consent yet
+  const handoffRequiresConsent = formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
     currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
@@ -317,13 +318,33 @@ async function runB5Tests() {
       { spotName: 'CTR Shri Sagar', category: 'tiffin_hall', openHours: '7:30 AM - 12:30 PM' },
     ],
     recentConversationSnippets: ['What is the best dish at CTR?'],
+    userConsentGranted: false,
   });
 
-  assert(GeminiHandoffResponseSchema.safeParse(handoffResponse).success, 'Handoff response conforms to schema');
-  assert(handoffResponse.handoffUri.startsWith('https://gemini.google.com/app'), 'Deep-link targets official Gemini app');
-  assert(handoffResponse.transferredAttributes.includes('activeNeighborhood'), 'Transfers activeNeighborhood');
-  assert(handoffResponse.omittedAttributes.includes('rawPaymentTokens'), 'Omits private payment tokens');
-  assert(handoffResponse.handoffDisclaimer.length > 0, 'Contains explicit privacy and data transfer disclaimer');
+  assert(GeminiHandoffResponseSchema.safeParse(handoffRequiresConsent).success, 'Handoff preview conforms to schema');
+  assert(handoffRequiresConsent.consentStatus === 'CONSENT_REQUIRED', 'Demands explicit user consent before data export');
+  assert(handoffRequiresConsent.handoffUri === null, 'Does NOT generate handoff deep link without consent');
+  assert(handoffRequiresConsent.cancellationPath === 'REMAIN_IN_APP', 'Provides safe cancellation path (REMAIN_IN_APP)');
+  assert(handoffRequiresConsent.transferPayloadPreview.neighborhood === 'Malleshwaram', 'Presents transparent payload preview to user');
+
+  // Case B: Traveler confirms and grants consent
+  const handoffConfirmed = formatGeminiHandoffContext({
+    travelerId: 'usr_traveler_101',
+    activeNeighborhood: 'Malleshwaram',
+    currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
+    currentRouteSummary: 'Malleshwaram Heritage Breakfast Walk (4 stops)',
+    recentSpotCards: [
+      { spotName: 'CTR Shri Sagar', category: 'tiffin_hall', openHours: '7:30 AM - 12:30 PM' },
+    ],
+    recentConversationSnippets: ['What is the best dish at CTR?'],
+    userConsentGranted: true,
+  });
+
+  assert(handoffConfirmed.consentStatus === 'CONSENT_GRANTED', 'Marks consent status as granted');
+  assert(handoffConfirmed.handoffUri !== null && handoffConfirmed.handoffUri.startsWith('https://gemini.google.com/app'), 'Deep-link targets official Gemini app');
+  assert(handoffConfirmed.transferredAttributes.includes('activeNeighborhood'), 'Transfers activeNeighborhood');
+  assert(handoffConfirmed.omittedAttributes.includes('rawPaymentTokens'), 'Omits private payment tokens');
+  assert(handoffConfirmed.handoffDisclaimer.length > 0, 'Contains explicit privacy and data transfer disclaimer');
 
   // =========================================================================
   // Test Suite 10: Live Gemini API Integration (Conditional)

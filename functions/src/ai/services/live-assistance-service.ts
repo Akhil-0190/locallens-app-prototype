@@ -62,19 +62,19 @@ import {
 // ==============================================================================
 
 /**
- * Initializes a secure bidirectional WebSocket session for Gemini 3.8 Live.
- * Mints an ephemeral session token with 15-minute TTL so client devices never hold raw API keys.
+ * Initializes a secure bidirectional WebSocket session for Gemini Live.
+ * Invokes Google's official Developer API (client.authTokens.create) to mint a provider-backed
+ * ephemeral session credential.
+ * STRICT HONESTY AND PROVIDER RULES:
+ * - Never manufactures a local synthetic UUID as an ephemeral credential.
+ * - If Google API access, credentials, or network are unavailable, reports isLiveSessionSupported: false
+ *   and ephemeralToken: null with explicit diagnostic status.
+ * - Raw permanent API keys are NEVER sent to the client.
  */
 export async function initializeLiveSession(
   request: LiveSessionTokenRequest
 ): Promise<LiveSessionTokenResponse> {
   const sessionId = `live_sess_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-  const now = new Date();
-  const ttlSeconds = 900; // 15 minutes standard TTL
-  const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
-
-  // Mint ephemeral token (cryptographically random session identifier tied to backend proxy)
-  const ephemeralToken = `gem_live_ephem_${randomUUID().replace(/-/g, '')}`;
   const webSocketEndpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`;
 
   const neighborhood = request.neighborhoodHint || 'Bengaluru Neighborhoods';
@@ -83,7 +83,59 @@ Speak naturally, warmly, and concisely. Keep spoken replies under 3 sentences fo
 Support regional languages (${request.preferredLanguage}) and English interchangeably.`;
 
   const config = getAIConfig();
-  const isKeyAvailable = config.hasApiKey;
+  let ephemeralToken: string | null = null;
+  let expiresAt: string | null = null;
+  let ttlSeconds = 0;
+  let isLiveSessionSupported = false;
+  let status: 'ACTIVE' | 'UNAVAILABLE' = 'UNAVAILABLE';
+  let notes = '';
+
+  if (config.hasApiKey && config.apiKey) {
+    try {
+      // Official Google Gen AI SDK ephemeral token issuance via v1alpha authTokens.create
+      const client = new GoogleGenAI({
+        apiKey: config.apiKey,
+        httpOptions: { apiVersion: 'v1alpha' },
+      });
+
+      const tokenResponse = await client.authTokens.create({
+        config: {
+          uses: 1,
+          expireTime: new Date(Date.now() + 900 * 1000).toISOString(),
+          newSessionExpireTime: new Date(Date.now() + 300 * 1000).toISOString(),
+          liveConnectConstraints: {
+            model: 'models/gemini-2.0-flash-exp',
+          },
+        },
+      });
+
+      if (tokenResponse && tokenResponse.name) {
+        ephemeralToken = tokenResponse.name;
+        expiresAt = tokenResponse.expireTime || new Date(Date.now() + 900 * 1000).toISOString();
+        ttlSeconds = 900;
+        isLiveSessionSupported = true;
+        status = 'ACTIVE';
+        notes = 'Real Google Gemini Live ephemeral token successfully minted via Google Developer API.';
+      } else {
+        throw new Error('Provider response did not contain an ephemeral token name.');
+      }
+    } catch (err: any) {
+      // Honest failure: do not fabricate a token when provider call fails or network is offline
+      ephemeralToken = null;
+      expiresAt = null;
+      ttlSeconds = 0;
+      isLiveSessionSupported = false;
+      status = 'UNAVAILABLE';
+      notes = `Google Live API ephemeral token creation unavailable: ${err?.message || 'Outbound network or API access restricted'}. Live session cannot be established.`;
+    }
+  } else {
+    ephemeralToken = null;
+    expiresAt = null;
+    ttlSeconds = 0;
+    isLiveSessionSupported = false;
+    status = 'UNAVAILABLE';
+    notes = 'No Gemini API key configured. Provider ephemeral token creation is unavailable.';
+  }
 
   const response: LiveSessionTokenResponse = {
     sessionId,
@@ -94,12 +146,11 @@ Support regional languages (${request.preferredLanguage}) and English interchang
     ttlSeconds,
     deliveryMode: 'LIVE_STREAMING',
     systemInstructionsApplied,
-    isLiveSessionSupported: isKeyAvailable,
+    isLiveSessionSupported,
     diagnostics: {
-      status: isKeyAvailable ? 'ACTIVE' : 'SIMULATED_TEST',
-      notes: isKeyAvailable
-        ? 'Ephemeral session token successfully minted for Gemini 3.8 Live WebSocket connection.'
-        : 'Running in offline test mode: live WebSocket endpoint requires outbound network credentials.',
+      status,
+      notes,
+      providerMechanism: '@google/genai client.authTokens.create (v1alpha)',
     },
   };
 
@@ -787,7 +838,46 @@ export function formatGeminiHandoffContext(
 ): GeminiHandoffResponse {
   const generatedAt = new Date().toISOString();
 
-  // Assemble sanitized context bundle
+  const transferPayloadPreview = {
+    neighborhood: context.activeNeighborhood,
+    coordinatesShared: Boolean(context.currentCoordinates),
+    routeSummary: context.currentRouteSummary,
+    spotsCount: context.recentSpotCards.length,
+    conversationSnippetsCount: context.recentConversationSnippets.length,
+  };
+
+  const transferredAttributes = [
+    'activeNeighborhood',
+    'currentCoordinates',
+    'currentRouteSummary',
+    'recentSpotCards',
+    'recentConversationSnippets',
+  ];
+
+  const omittedAttributes = [
+    'rawPaymentTokens',
+    'privateIdentityDetails',
+    'internalDatabaseIds',
+  ];
+
+  const handoffDisclaimer = 'Continuing in Gemini exports public location, route, and dialogue context to Google Gemini web assistant. Private authentication credentials remain protected.';
+
+  // If traveler has NOT granted explicit consent, require confirmation and return preview + cancellation path
+  if (!context.userConsentGranted) {
+    return GeminiHandoffResponseSchema.parse({
+      consentStatus: 'CONSENT_REQUIRED',
+      handoffUri: null,
+      transferPayloadPreview,
+      transferPayloadJson: null,
+      transferredAttributes,
+      omittedAttributes,
+      cancellationPath: 'REMAIN_IN_APP',
+      handoffDisclaimer: `Confirmation required: Please review the information being transferred before opening Gemini. ${handoffDisclaimer}`,
+      generatedAt,
+    });
+  }
+
+  // Traveler explicitly confirmed consent: formulate transfer payload and deep link
   const payloadData = {
     app: 'NeighborhoodGuide',
     travelerId: context.travelerId,
@@ -801,26 +891,17 @@ export function formatGeminiHandoffContext(
 
   const transferPayloadJson = JSON.stringify(payloadData);
   const encodedPayload = encodeURIComponent(transferPayloadJson);
-
-  // Deep-link URI to web Gemini app with pre-seeded context
   const handoffUri = `https://gemini.google.com/app?context=${encodedPayload}`;
 
   return GeminiHandoffResponseSchema.parse({
+    consentStatus: 'CONSENT_GRANTED',
     handoffUri,
+    transferPayloadPreview,
     transferPayloadJson,
-    transferredAttributes: [
-      'activeNeighborhood',
-      'currentCoordinates',
-      'currentRouteSummary',
-      'recentSpotCards',
-      'recentConversationSnippets',
-    ],
-    omittedAttributes: [
-      'rawPaymentTokens',
-      'privateIdentityDetails',
-      'internalDatabaseIds',
-    ],
-    handoffDisclaimer: 'Continuing in Gemini exports public location, route, and dialogue context to Google Gemini web assistant. Private authentication credentials remain protected.',
+    transferredAttributes,
+    omittedAttributes,
+    cancellationPath: 'CANCEL_SESSION',
+    handoffDisclaimer,
     generatedAt,
   });
 }

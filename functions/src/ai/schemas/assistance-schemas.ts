@@ -83,17 +83,18 @@ export type LiveSessionTokenRequest = z.infer<typeof LiveSessionTokenRequestSche
 
 export const LiveSessionTokenResponseSchema = z.object({
   sessionId: z.string().min(1),
-  ephemeralToken: z.string().min(1),
+  ephemeralToken: z.string().nullable(), // Null when provider token minting is unavailable
   webSocketEndpoint: z.string().url(),
-  model: z.literal('gemini-3.8-live'),
-  expiresAt: z.string(), // ISO-8601 string, typically 15 minutes TTL
-  ttlSeconds: z.number().int().positive(),
+  model: z.string(),
+  expiresAt: z.string().nullable(), // Null when live session is unavailable
+  ttlSeconds: z.number().int().nonnegative(),
   deliveryMode: AssistanceDeliveryModeSchema,
   systemInstructionsApplied: z.string(),
   isLiveSessionSupported: z.boolean(),
   diagnostics: z.object({
-    status: z.enum(['ACTIVE', 'SIMULATED_TEST', 'SERVICE_UNAVAILABLE']),
+    status: z.enum(['ACTIVE', 'UNAVAILABLE', 'SERVICE_UNAVAILABLE']),
     notes: z.string(),
+    providerMechanism: z.string(),
   }),
 });
 export type LiveSessionTokenResponse = z.infer<typeof LiveSessionTokenResponseSchema>;
@@ -339,14 +340,24 @@ export const GeminiHandoffContextSchema = z.object({
     openHours: z.string().optional(),
   })).default([]),
   recentConversationSnippets: z.array(z.string()).default([]),
+  userConsentGranted: z.boolean().default(false), // Explicit traveler confirmation required
 });
 export type GeminiHandoffContext = z.infer<typeof GeminiHandoffContextSchema>;
 
 export const GeminiHandoffResponseSchema = z.object({
-  handoffUri: z.string().url(),
-  transferPayloadJson: z.string(),
+  consentStatus: z.enum(['CONSENT_GRANTED', 'CONSENT_REQUIRED', 'CANCELLED']),
+  handoffUri: z.string().url().nullable(), // Null until traveler explicitly grants consent
+  transferPayloadPreview: z.object({
+    neighborhood: z.string(),
+    coordinatesShared: z.boolean(),
+    routeSummary: z.string().optional(),
+    spotsCount: z.number(),
+    conversationSnippetsCount: z.number(),
+  }),
+  transferPayloadJson: z.string().nullable(), // Null until traveler explicitly grants consent
   transferredAttributes: z.array(z.string()),
   omittedAttributes: z.array(z.string()),
+  cancellationPath: z.string(), // Explicit cancellation action path (e.g. 'REMAIN_IN_APP')
   handoffDisclaimer: z.string(),
   generatedAt: z.string(),
 });

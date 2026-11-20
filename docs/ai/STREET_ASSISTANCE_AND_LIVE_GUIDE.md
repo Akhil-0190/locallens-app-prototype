@@ -26,16 +26,20 @@ Task B5 introduces three operational delivery tiers:
 
 ---
 
-## 2. Gemini 3.8 Live Security & Token Lifecycle
+## 2. Gemini Live Security, Token Lifecycle & Model Verification
 
 ### A. The Ephemeral Token Architecture
 Client devices (Flutter on Android/iOS) must **never** hold permanent Google AI Studio API credentials. Instead:
 1. Flutter client calls authenticated Cloud Function: `Assistance-initializeLiveSession`.
 2. Backend validates Firebase Auth user token (`request.auth.uid`).
-3. Backend mints a signed, short-lived session identifier (`gem_live_ephem_...`) with an exact 900-second (15-minute) expiration timestamp.
-4. Client connects directly to the streaming endpoint:
+3. Backend calls Google's official Developer API via `@google/genai` SDK:
+   `client.authTokens.create({ config: { uses: 1, expireTime: ..., liveConnectConstraints: { ... } } })`.
+4. Provider-backed token (`tokenResponse.name`) is returned with exact provider expiry.
+5. **Honest Provider Fallback:** If the Google Live API endpoint, network, or credentials are unavailable, the backend reports `isLiveSessionSupported: false` and `ephemeralToken: null`. It **never** manufactures a synthetic local UUID as a fake credential.
+6. **Live Model Status:** The target model `gemini-3.8-live` is configured in the centralized registry as an `UNTESTED_ENDPOINT` pending live provider socket verification.
+7. Client connects directly to the streaming endpoint:
    `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`
-5. On expiration, the client re-authenticates to mint a fresh token seamlessly.
+8. On expiration, the client re-authenticates to mint a fresh token.
 
 ---
 
@@ -43,19 +47,23 @@ Client devices (Flutter on Android/iOS) must **never** hold permanent Google AI 
 
 Developer B provides callable Firebase Cloud Functions under the `Assistance` namespace that map 1:1 with Developer D's client models in `lib/services/street_assistance_service.dart`.
 
-### Endpoint Directory
+### Formal Agreement vs. Inspected Schema Parity
+- **Inspected Schema Parity (Achieved):** The field names, types, enums, and nullability for `OrderingCard` / `CulturalOrderingCard` match 100% with Developer D's Dart definition in `lib/services/street_assistance_service.dart`.
+- **Wire Integration (Pending D6/D7):** Developer D must replace client mock generators with live `FirebaseFunctions.instance.httpsCallable('Assistance-...')` invocations when implementing production UI.
 
-| Cloud Function Callable | Request Schema | Response Schema | Developer D Client Mapping |
+### Callable Abuse Controls & Authentication
+
+| Cloud Function Callable | Authentication (`request.auth`) | Abuse Controls & Rate Limiting | Status |
 | :--- | :--- | :--- | :--- |
-| `Assistance-initializeLiveSession` | `LiveSessionTokenRequest` | `LiveSessionTokenResponse` | WebSocket session manager |
-| `Assistance-askStreetCopilot` | `StreetCopilotRequest` | `StreetCopilotResponse` | `StreetAssistanceService.askStreetCopilot()` |
-| `Assistance-translateText` | `TranslationRequest` | `TranslationResponse` | Live translation sheet |
-| `Assistance-getOrderingPhrases` | `OrderingAssistanceRequest`| `OrderingAssistanceResponse`| `OrderingCard` deck |
-| `Assistance-getEtiquetteGuidance` | `EtiquetteGuidanceRequest` | `EtiquetteGuidanceResponse` | Cultural etiquette modal |
-| `Assistance-translateCameraSignage`| `CameraVisualTranslationRequest` | `CameraVisualTranslationResponse` | `CameraTranslationResult` |
-| `Assistance-generateAudioGuidance` | `AudioGuidanceContentRequest` | `AudioGuidanceContentResponse` | `StreetAssistanceService.speakAudioPrompt()` |
-| `Assistance-explainPlanBReroute` | `PlanBExplanationRequest` | `PlanBExplanationResponse` | Dynamic Plan-B alert sheet |
-| `Assistance-formatGeminiHandoff` | `GeminiHandoffContext` | `GeminiHandoffResponse` | Continue in Gemini button |
+| `Assistance-initializeLiveSession` | **Required** | Auth check + 15m provider token bound | Billed AI operation |
+| `Assistance-askStreetCopilot` | **Required** | Auth check + query length bound (1000 chars) | Billed AI operation |
+| `Assistance-translateText` | **Required** | Auth check + source length bound (2000 chars) | Billed AI operation |
+| `Assistance-getOrderingPhrases` | Optional | Payload size limit (< 4KB) | Public curated content |
+| `Assistance-getEtiquetteGuidance` | Optional | Payload size limit (< 4KB) | Public curated content |
+| `Assistance-translateCameraSignage`| **Required** | Auth check + MIME whitelist + base64 bounds | Billed AI operation |
+| `Assistance-generateAudioGuidance` | **Required** | Auth check + input param bounds | Billed AI operation |
+| `Assistance-explainPlanBReroute` | **Required** | Auth check + strict Zod schema parsing | Traveler route alert |
+| `Assistance-formatGeminiHandoff` | **Required** | Auth check + Explicit Consent verification | Privacy-protected handoff |
 
 ### Example Request & Response: Camera Signage Translation
 **Request Payload:**
@@ -120,11 +128,14 @@ To keep spoken walking guidance clear and safe on busy streets:
 
 ---
 
-## 6. Continue in Gemini Handoff Interface
+## 6. Continue in Gemini Handoff Interface & Explicit Consent
 
 Prepares the structured context payload for the optional "Continue in Gemini" capability:
+- **Explicit Traveler Confirmation:** Requires `userConsentGranted: true` before formulating the handoff URI.
+- **Transparent Data Preview:** When `userConsentGranted: false`, returns `consentStatus: 'CONSENT_REQUIRED'`, `handoffUri: null`, and `transferPayloadPreview` so the user sees exactly what is shared (neighborhood, coordinates, spots, dialogue) before consenting.
+- **Cancellation Path:** Provides a distinct `cancellationPath: 'REMAIN_IN_APP'` allowing the traveler to reject the transfer and stay within Neighborhood Guide.
 - **Transferred Context:** `activeNeighborhood`, `currentCoordinates`, `currentRouteSummary`, recent spot cards, and recent dialogue history.
-- **Omitted Data:** Payment tokens, private user authentication credentials, internal database identifiers.
+- **Omitted Data:** Payment tokens, private user authentication credentials, internal database identifiers (`omittedAttributes`).
 - **Handoff Target:** Official Gemini web application deep-link: `https://gemini.google.com/app?context=...`.
 - *Note:* Agent Skills execution is retained for Task B7.
 

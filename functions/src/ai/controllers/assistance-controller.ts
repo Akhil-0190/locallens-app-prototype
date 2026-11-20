@@ -134,9 +134,14 @@ export const translateText = onCall(async (request) => {
 /**
  * Callable: getOrderingPhrases
  * Returns cultural ordering cards for street vendors and eateries.
+ * Public curated reference with strict payload bounds.
  */
 export const getOrderingPhrases = onCall(async (request) => {
   const startMs = Date.now();
+  if (JSON.stringify(request.data || {}).length > 4096) {
+    throw new HttpsError('invalid-argument', 'Payload exceeds maximum allowed size.');
+  }
+
   const parseResult = OrderingAssistanceRequestSchema.safeParse(request.data || {});
   if (!parseResult.success) {
     throw new HttpsError('invalid-argument', `Validation failed: ${parseResult.error.message}`);
@@ -154,9 +159,14 @@ export const getOrderingPhrases = onCall(async (request) => {
 /**
  * Callable: getEtiquetteGuidance
  * Explains contextual temple, dining, and market decorum.
+ * Public curated reference with strict payload bounds.
  */
 export const getEtiquetteGuidance = onCall(async (request) => {
   const startMs = Date.now();
+  if (JSON.stringify(request.data || {}).length > 4096) {
+    throw new HttpsError('invalid-argument', 'Payload exceeds maximum allowed size.');
+  }
+
   const parseResult = EtiquetteGuidanceRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
     throw new HttpsError('invalid-argument', `Validation failed: ${parseResult.error.message}`);
@@ -198,9 +208,14 @@ export const translateCameraSignage = onCall(async (request) => {
 /**
  * Callable: generateAudioGuidance
  * Generates spoken walking cues under 60 words for device TTS.
+ * Externally billed AI operation: requires authentication.
  */
 export const generateAudioGuidance = onCall(async (request) => {
   const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated to generate audio guidance.');
+  }
+
   const parseResult = AudioGuidanceContentRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
     throw new HttpsError('invalid-argument', `Validation failed: ${parseResult.error.message}`);
@@ -218,9 +233,14 @@ export const generateAudioGuidance = onCall(async (request) => {
 /**
  * Callable: explainPlanBReroute
  * Explains dynamic walking reroutes using Developer C's PlanBExplanationContext.
+ * Requires authenticated traveler session.
  */
 export const explainPlanBReroute = onCall(async (request) => {
   const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated to explain Plan-B reroutes.');
+  }
+
   const parseResult = PlanBExplanationRequestSchema.safeParse(request.data);
   if (!parseResult.success) {
     throw new HttpsError('invalid-argument', `Validation failed: ${parseResult.error.message}`);
