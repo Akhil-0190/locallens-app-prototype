@@ -1,11 +1,13 @@
 /**
  * Google Routes API Types & Route Engine Schemas
- * Developer C - Google Maps Platform Integration
+ * Developer C - Task C1 & C3
  */
 
 import type { LatLng, NormalizedCoordinate } from './coordinates.types';
 
 export type RouteTravelMode = 'WALK' | 'DRIVE' | 'BICYCLE' | 'TWO_WHEELER';
+
+export type WalkingPace = 'RELAXED' | 'NORMAL' | 'BRISK';
 
 export interface RouteWaypointLocation {
   location?: {
@@ -52,7 +54,7 @@ export interface RouteStep {
   localizedValues?: RouteLocalizedValues;
 }
 
-export interface RouteLeg {
+export interface RouteLegRaw {
   distanceMeters?: number;
   duration?: string; // e.g. "540s"
   staticDuration?: string;
@@ -64,7 +66,7 @@ export interface RouteLeg {
 }
 
 export interface GoogleRouteRaw {
-  legs?: RouteLeg[];
+  legs?: RouteLegRaw[];
   distanceMeters?: number;
   duration?: string; // Duration format like "1450s"
   staticDuration?: string;
@@ -88,7 +90,52 @@ export interface ComputeRoutesResponse {
 }
 
 /**
- * Canonical Walking Route Model for LocalLens itinerary and co-pilot
+ * Stop input specification for personalized route generation
+ */
+export interface RouteStopInput {
+  placeId?: string;
+  spotName?: string;
+  coordinate: LatLng;
+}
+
+/**
+ * High-level request payload for walking route generation
+ */
+export interface GenerateWalkingRouteRequest {
+  title?: string;
+  neighborhood?: string;
+  theme?: string;
+  stops: RouteStopInput[];
+  optimizeStopOrder?: boolean;
+  walkingPace?: WalkingPace;
+  allowMockFallback?: boolean;
+}
+
+export type RouteErrorCode =
+  | 'INSUFFICIENT_STOPS'
+  | 'INVALID_COORDINATES'
+  | 'NO_ROUTE_FOUND'
+  | 'PERMISSION_DENIED'
+  | 'QUOTA_EXHAUSTED'
+  | 'NETWORK_ERROR'
+  | 'INVALID_RESPONSE';
+
+export class RouteGenerationError extends Error {
+  public code: RouteErrorCode;
+  public status: number;
+  public details?: unknown;
+
+  constructor(code: RouteErrorCode, message: string, status: number = 400, details?: unknown) {
+    super(`[${code}] ${message}`);
+    this.name = 'RouteGenerationError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+/**
+ * Preliminary walking route model retained for backwards compatibility
  */
 export interface WalkingRoute {
   routeId: string;
@@ -98,8 +145,8 @@ export interface WalkingRoute {
   optimizedWaypointOrder?: number[];
   totalDistanceMeters: number;
   totalDurationSeconds: number;
-  formattedDistance: string; // e.g. "1.2 km"
-  formattedDuration: string; // e.g. "16 mins"
+  formattedDistance: string;
+  formattedDuration: string;
   encodedPolyline: string;
   legs: {
     distanceMeters: number;
@@ -113,5 +160,5 @@ export interface WalkingRoute {
     }[];
   }[];
   isMockData: boolean;
-  generatedAt: string; // ISO 8601
+  generatedAt: string;
 }
