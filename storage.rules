@@ -1,8 +1,122 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Baseline security: default deny-all.
-    // Specific storage rules will be defined alongside asset upload contracts.
+
+    // -----------------------------------------------------------------------
+    // Helper functions
+    // -----------------------------------------------------------------------
+
+    /** True when the request comes from an authenticated user. */
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    /** True when the requesting user has MODERATOR or ADMIN role. */
+    function isModerator() {
+      return isAuthenticated() &&
+        firestore.get(
+          /databases/(default)/documents/users/$(request.auth.uid)
+        ).data.role in ['MODERATOR', 'ADMIN'];
+    }
+
+    /**
+     * True when the contribution document's submission.contributorId matches the
+     * authenticated user's UID.
+     *
+     * This is a Firestore cross-read from Storage rules — it enforces
+     * ownership at the document level, not just at the path level.
+     * A user may ONLY upload media to a contribution they themselves created.
+     */
+    function isContributionOwner(contributionId) {
+      return isAuthenticated() &&
+        firestore.get(
+          /databases/(default)/documents/contributions/$(contributionId)
+        ).data.submission.contributorId == request.auth.uid;
+    }
+
+    /** True when the media folder matches allowed media categories. */
+    function isAllowedMediaType(mediaType) {
+      return mediaType in ['photos', 'audio'];
+    }
+
+    /**
+     * True when the uploaded file's MIME type matches the folder and is allowed:
+     * - 'photos': image/jpeg, image/png
+     * - 'audio': audio/mp4, audio/aac, audio/x-m4a
+     */
+    function isAllowedMimeForType(mediaType) {
+      return (
+        mediaType == 'photos' &&
+        request.resource.contentType in ['image/jpeg', 'image/png']
+      ) || (
+        mediaType == 'audio' &&
+        request.resource.contentType in ['audio/mp4', 'audio/aac', 'audio/x-m4a']
+      );
+    }
+
+    /**
+     * True when the file size is within limits:
+     * - photos: <= 10 MB
+     * - audio:  <= 25 MB
+     */
+    function isWithinSizeLimit(mediaType) {
+      return (
+        mediaType == 'photos' &&
+        request.resource.size <= 10 * 1024 * 1024
+      ) || (
+        mediaType == 'audio' &&
+        request.resource.size <= 25 * 1024 * 1024
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // contributions/{contributionId}/{mediaType}/{fileName}
+    // -----------------------------------------------------------------------
+    // Write rules (D2 direct upload after submitContribution):
+    //   1. Must be authenticated.
+    //   2. contributionId's document must have submission.contributorId == request.auth.uid.
+    //   3. mediaType must be 'photos' or 'audio'.
+    //   4. MIME type must be allowed for that mediaType.
+    //   5. File size must be within limits.
+    //
+    // Immutability & Protection:
+    //   - allow create: Permitted under strict conditions above.
+    //   - allow update: FALSE — Overwriting uploaded media is strictly blocked!
+    //   - allow delete: FALSE — Clients cannot delete assets once uploaded.
+    //
+    // Read rules:
+    //   Allowed for the contribution owner or moderators.
+    // -----------------------------------------------------------------------
+
+    match /contributions/{contributionId}/{mediaType}/{fileName} {
+      allow create: if isAuthenticated()
+        && isContributionOwner(contributionId)
+        && isAllowedMediaType(mediaType)
+        && isAllowedMimeForType(mediaType)
+        && isWithinSizeLimit(mediaType);
+
+      allow read: if isAuthenticated()
+        && (isContributionOwner(contributionId) || isModerator());
+
+      // Overwrites and deletes are strictly prohibited from client SDKs
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // offline_packs/{packId} — read-only public (served by Cloud Storage CDN)
+    // Write: Admin SDK only (not via client).
+    // -----------------------------------------------------------------------
+
+    match /offline_packs/{packId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Default deny-all — catches any path not explicitly matched above.
+    // -----------------------------------------------------------------------
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

@@ -2,9 +2,126 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Baseline security: default deny-all.
-    // Specific collection rules will be defined alongside shared contracts
-    // with Developers B, C, and D.
+
+    // -----------------------------------------------------------------------
+    // Helper functions
+    // -----------------------------------------------------------------------
+
+    /** True when the request comes from an authenticated user. */
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    /** True when the requesting user owns the given userId value. */
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    /** True when the requesting user has MODERATOR or ADMIN role.
+        Role is stored on the user's profile document and read via get(). */
+    function isModerator() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+          in ['MODERATOR', 'ADMIN'];
+    }
+
+    /** True when the existing document's contributorId matches the authenticated UID. */
+    function isContributionOwner(contributionData) {
+      return isAuthenticated() &&
+        contributionData.submission.contributorId == request.auth.uid;
+    }
+
+    // -----------------------------------------------------------------------
+    // users/{userId}
+    // -----------------------------------------------------------------------
+    // - Owner: read and update own profile (except role field).
+    // - Role changes: Admin SDK only (backend enforces this in service layer).
+    // - Moderators/Admins: may read any profile (for moderation UI).
+    // - Create/Delete: Admin SDK only.
+    // -----------------------------------------------------------------------
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isModerator();
+
+      // Owner may update own profile but CANNOT change their own role field.
+      allow update: if isOwner(userId)
+        && request.resource.data.role == resource.data.role;
+
+      // Only Admin SDK creates/deletes user documents.
+      allow create: if false;
+      allow delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // users/{userId}/preferences
+    // -----------------------------------------------------------------------
+    // - Owner: full read/write of their own preferences sub-document.
+    // - Others: no access.
+    // -----------------------------------------------------------------------
+
+    match /users/{userId}/preferences/{prefDoc} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // -----------------------------------------------------------------------
+    // contributions/{contributionId}
+    // -----------------------------------------------------------------------
+    // - Create: STRICTLY DENIED for clients (allow create: if false).
+    //           All contributions MUST be created via the submitContribution
+    //           Cloud Function. This prevents bypassing schema validation,
+    //           canonical defaults, and immutable audit logging.
+    // - Read: Owner OR moderator/admin.
+    // - Update: DENIED for all clients. Status, analysis, and moderation fields
+    //           are only writable via Admin SDK in Cloud Functions.
+    // - Delete: DENIED for all clients.
+    // -----------------------------------------------------------------------
+
+    match /contributions/{contributionId} {
+      // Disallow direct client creation to force submitContribution backend pipeline
+      allow create: if false;
+
+      // Allow owner or moderator to read (supports real-time snapshot listeners in Flutter)
+      allow read: if isAuthenticated() &&
+        (isContributionOwner(resource.data) || isModerator());
+
+      // Clients may NEVER update or delete contribution documents directly
+      allow update: if false;
+      allow delete: if false;
+
+      // -----------------------------------------------------------------------
+      // contributions/{contributionId}/assets/{assetId}
+      // -----------------------------------------------------------------------
+      // - Create: DENIED from client. recordAssetUpload callable creates assets
+      //           via Admin SDK after client uploads media to Storage.
+      // - Read: Owner of parent contribution OR moderator.
+      // - Update/Delete: DENIED for all clients (B2 uses Admin SDK).
+      // -----------------------------------------------------------------------
+
+      match /assets/{assetId} {
+        allow read: if isAuthenticated() &&
+          (isContributionOwner(
+            get(/databases/$(database)/documents/contributions/$(contributionId)).data
+          ) || isModerator());
+
+        // All asset document writes go through Cloud Functions (Admin SDK)
+        allow create, update, delete: if false;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // audit_logs/{logId}
+    // -----------------------------------------------------------------------
+    // - Append-only via Admin SDK. No client reads or writes permitted.
+    // -----------------------------------------------------------------------
+
+    match /audit_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Default deny-all — catches any path not explicitly matched above.
+    // -----------------------------------------------------------------------
+
     match /{document=**} {
       allow read, write: if false;
     }
