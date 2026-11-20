@@ -36,6 +36,13 @@ export {
   SpotCardSynthesisInput,
 } from './spot-card-synthesis-service.js';
 
+export {
+  assessPlaceAuthenticity,
+  toPlaceAuthenticityEnrichment,
+} from './authenticity-assessment-service.js';
+
+export * from '../schemas/authenticity-schemas.js';
+
 /**
  * 1. Foundation Verification Call
  * Runs a small, verified model call to test authorized credentials and structured schema return.

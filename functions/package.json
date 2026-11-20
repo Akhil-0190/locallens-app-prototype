@@ -18,6 +18,7 @@
     "test:maps": "npm run build && node --test lib/src/maps/tests/normalization.test.js lib/src/maps/tests/quota-handler.test.js lib/src/maps/tests/places.test.js lib/src/maps/tests/routes.test.js lib/src/maps/tests/walking-routes.test.js lib/src/maps/tests/url-parser.test.js lib/src/maps/tests/grounding.test.js",
     "test:ai": "tsx test/verify-ai-foundation.ts",
     "test:b2": "tsx test/test-b2-voice-photo-extraction.ts",
+    "test:b3": "tsx test/test-b3-authenticity-assessment.ts",
     "test:schemas": "tsx test/test-schemas.ts"
   },
   "keywords": [
