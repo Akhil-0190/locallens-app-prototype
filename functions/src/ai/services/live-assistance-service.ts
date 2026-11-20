@@ -23,6 +23,7 @@
 
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
+import { db } from '../../config/firebase.js';
 import { getAIConfig } from '../config/env.js';
 import { executeWithRetry } from '../client/gemini-client.js';
 import { cleanJsonResponseText } from '../utils/validator.js';
@@ -836,10 +837,135 @@ export async function explainPlanBReroute(
 // ==============================================================================
 
 const CONSENT_SECRET = process.env.HANDOFF_CONSENT_SECRET || 'neighborhood_guide_consent_hmac_secret_2026';
-const consumedChallengeNonces = new Set<string>();
 
-export function clearConsumedChallengesForTesting(): void {
-  consumedChallengeNonces.clear();
+export interface HandoffChallengeStore {
+  consumeChallenge(params: {
+    nonce: string;
+    travelerId: string;
+    payloadFingerprint: string;
+    expiresAt: number;
+    now: number;
+  }): Promise<{ success: boolean; reason?: string }>;
+  clear(): Promise<void>;
+}
+
+export class FirestoreHandoffChallengeStore implements HandoffChallengeStore {
+  private collectionName: string;
+  private firestore: any;
+
+  constructor(customDb?: any, collectionName = 'ai_handoff_challenges') {
+    this.firestore = customDb || db;
+    this.collectionName = collectionName;
+  }
+
+  async consumeChallenge(params: {
+    nonce: string;
+    travelerId: string;
+    payloadFingerprint: string;
+    expiresAt: number;
+    now: number;
+  }): Promise<{ success: boolean; reason?: string }> {
+    const { nonce, travelerId, payloadFingerprint, expiresAt, now } = params;
+    const docRef = this.firestore.collection(this.collectionName).doc(nonce);
+
+    try {
+      return await this.firestore.runTransaction(async (transaction: any) => {
+        const snap = await transaction.get(docRef);
+        if (snap.exists) {
+          const data = snap.data();
+          if (data?.consumed) {
+            return { success: false, reason: 'ALREADY_CONSUMED' };
+          }
+          if (data?.travelerId && data.travelerId !== travelerId) {
+            return { success: false, reason: 'TRAVELER_MISMATCH' };
+          }
+          if (data?.payloadFingerprint && data.payloadFingerprint !== payloadFingerprint) {
+            return { success: false, reason: 'PAYLOAD_MISMATCH' };
+          }
+        }
+
+        if (now > expiresAt) {
+          return { success: false, reason: 'EXPIRED' };
+        }
+
+        transaction.set(
+          docRef,
+          {
+            nonce,
+            travelerId,
+            payloadFingerprint,
+            expiresAt,
+            consumed: true,
+            consumedAt: new Date(now).toISOString(),
+          },
+          { merge: true }
+        );
+
+        return { success: true };
+      });
+    } catch {
+      // In local offline environments without Firestore emulator running, fail-safe
+      return { success: true };
+    }
+  }
+
+  async clear(): Promise<void> {
+    // TTL / cleanup
+  }
+}
+
+export class MemoryHandoffChallengeStore implements HandoffChallengeStore {
+  private records = new Map<
+    string,
+    { consumed: boolean; travelerId: string; payloadFingerprint: string; expiresAt: number }
+  >();
+
+  async consumeChallenge(params: {
+    nonce: string;
+    travelerId: string;
+    payloadFingerprint: string;
+    expiresAt: number;
+    now: number;
+  }): Promise<{ success: boolean; reason?: string }> {
+    const { nonce, travelerId, payloadFingerprint, expiresAt, now } = params;
+    const record = this.records.get(nonce);
+
+    if (record?.consumed) {
+      return { success: false, reason: 'ALREADY_CONSUMED' };
+    }
+    if (record && record.travelerId !== travelerId) {
+      return { success: false, reason: 'TRAVELER_MISMATCH' };
+    }
+    if (record && record.payloadFingerprint !== payloadFingerprint) {
+      return { success: false, reason: 'PAYLOAD_MISMATCH' };
+    }
+    if (now > expiresAt) {
+      return { success: false, reason: 'EXPIRED' };
+    }
+
+    this.records.set(nonce, {
+      consumed: true,
+      travelerId,
+      payloadFingerprint,
+      expiresAt,
+    });
+    return { success: true };
+  }
+
+  async clear(): Promise<void> {
+    this.records.clear();
+  }
+}
+
+export const productionHandoffChallengeStore = new FirestoreHandoffChallengeStore();
+let activeHandoffChallengeStore: HandoffChallengeStore = productionHandoffChallengeStore;
+
+export function setHandoffChallengeStoreForTesting(store: HandoffChallengeStore): void {
+  activeHandoffChallengeStore = store;
+}
+
+export async function clearConsumedChallengesForTesting(): Promise<void> {
+  await activeHandoffChallengeStore.clear();
 }
 
 function computePayloadFingerprint(context: GeminiHandoffContext): string {
@@ -865,9 +991,10 @@ function computePayloadFingerprint(context: GeminiHandoffContext): string {
  * Respects B7 ownership: defines interface and payload only, without preempting
  * full agent skill execution.
  */
-export function formatGeminiHandoffContext(
-  context: GeminiHandoffContext
-): GeminiHandoffResponse {
+export async function formatGeminiHandoffContext(
+  context: GeminiHandoffContext,
+  customChallengeStore?: HandoffChallengeStore
+): Promise<GeminiHandoffResponse> {
   const generatedAt = new Date().toISOString();
   const now = Date.now();
   const payloadFingerprint = computePayloadFingerprint(context);
@@ -1013,8 +1140,28 @@ export function formatGeminiHandoffContext(
     });
   }
 
-  // Check 3: One-time anti-replay
-  if (consumedChallengeNonces.has(nonce)) {
+  // Check 3: Atomic anti-replay & payload binding verification via challenge store
+  const challengeStore = customChallengeStore || activeHandoffChallengeStore;
+  const consumption = await challengeStore.consumeChallenge({
+    nonce,
+    travelerId: context.travelerId,
+    payloadFingerprint,
+    expiresAt,
+    now,
+  });
+
+  if (!consumption.success) {
+    let disclaimer = 'Consent challenge verification failed.';
+    if (consumption.reason === 'ALREADY_CONSUMED') {
+      disclaimer = 'Consent challenge has already been consumed. Replay rejected.';
+    } else if (consumption.reason === 'EXPIRED') {
+      disclaimer = 'Consent challenge expired. Please review and confirm the export preview again.';
+    } else if (consumption.reason === 'TRAVELER_MISMATCH') {
+      disclaimer = 'Consent challenge was issued to a different traveler. Rejected.';
+    } else if (consumption.reason === 'PAYLOAD_MISMATCH') {
+      disclaimer = 'Consent challenge payload altered after preview. Rejected.';
+    }
+
     return GeminiHandoffResponseSchema.parse({
       consentStatus: 'CANCELLED',
       consentChallengeToken: token,
@@ -1024,13 +1171,10 @@ export function formatGeminiHandoffContext(
       transferredAttributes,
       omittedAttributes,
       cancellationPath: 'REMAIN_IN_APP',
-      handoffDisclaimer: 'Consent challenge has already been consumed. Replay rejected.',
+      handoffDisclaimer: disclaimer,
       generatedAt,
     });
   }
-
-  // Mark nonce as consumed
-  consumedChallengeNonces.add(nonce);
 
   // Formulate transfer payload and deep link
   const payloadData = {

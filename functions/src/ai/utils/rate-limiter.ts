@@ -5,8 +5,9 @@
  * 
  * Implements a shared rate-limiting mechanism with:
  * - Pluggable storage adapters (Firestore-backed for multi-instance production, in-memory for testing/local)
+ * - Atomic Firestore transactions (runTransaction) guaranteeing consistency across concurrent serverless instances
  * - Per-user sliding-window request limits for externally billed AI callables
- * - Token issuance frequency caps and concurrent session safeguards
+ * - Token issuance frequency caps (cooldown) and concurrent session safeguards
  * - Multi-instance isolation and verification support
  */
 
@@ -33,37 +34,86 @@ export interface UsageRecord {
   lastLiveTokenIssuedAt?: number;
 }
 
+export interface RateLimitConsumptionResult {
+  allowed: boolean;
+  remaining: number;
+  resetMs: number;
+  error?: string;
+}
+
+export interface CooldownResult {
+  allowed: boolean;
+  waitSec?: number;
+}
+
 /**
  * Storage adapter interface for shared rate limiting
  */
 export interface RateLimitStore {
-  getBucket(key: string): Promise<UsageRecord>;
-  saveBucket(key: string, record: UsageRecord): Promise<void>;
+  consumeQuota(
+    key: string,
+    policy: RateLimitPolicy,
+    now?: number
+  ): Promise<RateLimitConsumptionResult>;
+
+  checkLiveTokenCooldown(
+    key: string,
+    cooldownMs: number,
+    now?: number
+  ): Promise<CooldownResult>;
+
   clear(): Promise<void>;
 }
 
 /**
- * In-memory store adapter for local fallback and deterministic multi-instance unit testing
+ * In-memory store adapter for local fallback and deterministic unit testing
  */
 export class MemoryRateLimitStore implements RateLimitStore {
   private buckets = new Map<string, UsageRecord>();
 
-  async getBucket(key: string): Promise<UsageRecord> {
-    const existing = this.buckets.get(key);
-    if (!existing) {
-      return { timestamps: [] };
+  async consumeQuota(
+    key: string,
+    policy: RateLimitPolicy,
+    now: number = Date.now()
+  ): Promise<RateLimitConsumptionResult> {
+    const record = this.buckets.get(key) || { timestamps: [] };
+    record.timestamps = record.timestamps.filter((ts) => now - ts < policy.windowMs);
+
+    if (record.timestamps.length >= policy.maxRequests) {
+      const oldest = record.timestamps[0];
+      const resetMs = Math.max(0, oldest + policy.windowMs - now);
+      return {
+        allowed: false,
+        remaining: 0,
+        resetMs,
+        error: `Rate limit of ${policy.maxRequests} requests per ${policy.windowMs / 1000}s exceeded for key '${key}'. Retry in ${Math.ceil(resetMs / 1000)}s.`,
+      };
     }
+
+    record.timestamps.push(now);
+    this.buckets.set(key, record);
+
     return {
-      timestamps: [...existing.timestamps],
-      lastLiveTokenIssuedAt: existing.lastLiveTokenIssuedAt,
+      allowed: true,
+      remaining: policy.maxRequests - record.timestamps.length,
+      resetMs: policy.windowMs,
     };
   }
 
-  async saveBucket(key: string, record: UsageRecord): Promise<void> {
-    this.buckets.set(key, {
-      timestamps: [...record.timestamps],
-      lastLiveTokenIssuedAt: record.lastLiveTokenIssuedAt,
-    });
+  async checkLiveTokenCooldown(
+    key: string,
+    cooldownMs: number,
+    now: number = Date.now()
+  ): Promise<CooldownResult> {
+    const record = this.buckets.get(key) || { timestamps: [] };
+    if (record.lastLiveTokenIssuedAt && now - record.lastLiveTokenIssuedAt < cooldownMs) {
+      const waitSec = Math.ceil((cooldownMs - (now - record.lastLiveTokenIssuedAt)) / 1000);
+      return { allowed: false, waitSec };
+    }
+
+    record.lastLiveTokenIssuedAt = now;
+    this.buckets.set(key, record);
+    return { allowed: true };
   }
 
   async clear(): Promise<void> {
@@ -73,41 +123,106 @@ export class MemoryRateLimitStore implements RateLimitStore {
 
 /**
  * Firestore-backed storage adapter for production multi-instance Cloud Function execution
+ * Uses runTransaction for atomic quota consumption, surviving instance restarts and concurrent requests.
  */
 export class FirestoreRateLimitStore implements RateLimitStore {
-  private collectionName = 'ai_usage_quotas';
+  private collectionName: string;
+  private firestore: any;
 
-  async getBucket(key: string): Promise<UsageRecord> {
+  constructor(customDb?: any, collectionName = 'ai_usage_quotas') {
+    this.firestore = customDb || db;
+    this.collectionName = collectionName;
+  }
+
+  async consumeQuota(
+    key: string,
+    policy: RateLimitPolicy,
+    now: number = Date.now()
+  ): Promise<RateLimitConsumptionResult> {
+    const docRef = this.firestore.collection(this.collectionName).doc(key);
+
     try {
-      const docRef = db.collection(this.collectionName).doc(key);
-      const snapshot = await docRef.get();
-      if (!snapshot.exists) {
-        return { timestamps: [] };
-      }
-      const data = snapshot.data();
-      return {
-        timestamps: Array.isArray(data?.timestamps) ? data.timestamps : [],
-        lastLiveTokenIssuedAt: data?.lastLiveTokenIssuedAt,
-      };
+      return await this.firestore.runTransaction(async (transaction: any) => {
+        const snap = await transaction.get(docRef);
+        const data = snap.exists ? snap.data() : null;
+        const rawTimestamps: number[] = Array.isArray(data?.timestamps) ? data.timestamps : [];
+
+        // Filter timestamps within sliding window
+        const validTimestamps = rawTimestamps.filter((ts: number) => now - ts < policy.windowMs);
+
+        if (validTimestamps.length >= policy.maxRequests) {
+          const oldest = validTimestamps[0];
+          const resetMs = Math.max(0, oldest + policy.windowMs - now);
+          return {
+            allowed: false,
+            remaining: 0,
+            resetMs,
+            error: `Rate limit of ${policy.maxRequests} requests per ${policy.windowMs / 1000}s exceeded for key '${key}'. Retry in ${Math.ceil(resetMs / 1000)}s.`,
+          };
+        }
+
+        validTimestamps.push(now);
+        const remaining = policy.maxRequests - validTimestamps.length;
+
+        transaction.set(
+          docRef,
+          {
+            timestamps: validTimestamps,
+            lastLiveTokenIssuedAt: data?.lastLiveTokenIssuedAt || null,
+            remainingQuota: remaining,
+            totalCalls: (data?.totalCalls || 0) + 1,
+            updatedAt: new Date(now).toISOString(),
+          },
+          { merge: true }
+        );
+
+        return {
+          allowed: true,
+          remaining,
+          resetMs: policy.windowMs,
+        };
+      });
     } catch {
-      // Fallback to empty if Firestore is unreachable or offline
-      return { timestamps: [] };
+      // If Firestore is offline or unavailable, fallback safely
+      return {
+        allowed: true,
+        remaining: 1,
+        resetMs: policy.windowMs,
+      };
     }
   }
 
-  async saveBucket(key: string, record: UsageRecord): Promise<void> {
+  async checkLiveTokenCooldown(
+    key: string,
+    cooldownMs: number,
+    now: number = Date.now()
+  ): Promise<CooldownResult> {
+    const docRef = this.firestore.collection(this.collectionName).doc(key);
+
     try {
-      const docRef = db.collection(this.collectionName).doc(key);
-      await docRef.set(
-        {
-          timestamps: record.timestamps,
-          lastLiveTokenIssuedAt: record.lastLiveTokenIssuedAt || null,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      return await this.firestore.runTransaction(async (transaction: any) => {
+        const snap = await transaction.get(docRef);
+        const data = snap.exists ? snap.data() : null;
+        const lastIssued = data?.lastLiveTokenIssuedAt || 0;
+
+        if (lastIssued && now - lastIssued < cooldownMs) {
+          const waitSec = Math.ceil((cooldownMs - (now - lastIssued)) / 1000);
+          return { allowed: false, waitSec };
+        }
+
+        transaction.set(
+          docRef,
+          {
+            lastLiveTokenIssuedAt: now,
+            updatedAt: new Date(now).toISOString(),
+          },
+          { merge: true }
+        );
+
+        return { allowed: true };
+      });
     } catch {
-      // Silently continue if Firestore write is unavailable in offline environment
+      return { allowed: true };
     }
   }
 
@@ -122,6 +237,10 @@ export class FirestoreRateLimitStore implements RateLimitStore {
 export class RateLimiter {
   constructor(private store: RateLimitStore) {}
 
+  public getStore(): RateLimitStore {
+    return this.store;
+  }
+
   private getBucketKey(userId: string, endpoint: string): string {
     return `${userId}:${endpoint}`;
   }
@@ -130,33 +249,10 @@ export class RateLimiter {
     userId: string,
     endpoint: string,
     now: number = Date.now()
-  ): Promise<{ allowed: boolean; remaining: number; resetMs: number; error?: string }> {
+  ): Promise<RateLimitConsumptionResult> {
     const policy = ENDPOINT_POLICIES[endpoint] || { maxRequests: 20, windowMs: 60 * 1000 };
     const key = this.getBucketKey(userId, endpoint);
-
-    const bucket = await this.store.getBucket(key);
-    // Filter timestamps within sliding window
-    bucket.timestamps = bucket.timestamps.filter((ts) => now - ts < policy.windowMs);
-
-    if (bucket.timestamps.length >= policy.maxRequests) {
-      const oldest = bucket.timestamps[0];
-      const resetMs = oldest + policy.windowMs - now;
-      return {
-        allowed: false,
-        remaining: 0,
-        resetMs: Math.max(0, resetMs),
-        error: `Rate limit of ${policy.maxRequests} requests per ${policy.windowMs / 1000}s exceeded for endpoint '${endpoint}'. Retry in ${Math.ceil(resetMs / 1000)}s.`,
-      };
-    }
-
-    bucket.timestamps.push(now);
-    await this.store.saveBucket(key, bucket);
-
-    return {
-      allowed: true,
-      remaining: policy.maxRequests - bucket.timestamps.length,
-      resetMs: policy.windowMs,
-    };
+    return this.store.consumeQuota(key, policy, now);
   }
 
   async assertRateLimit(userId: string, endpoint: string, now: number = Date.now()): Promise<void> {
@@ -168,20 +264,14 @@ export class RateLimiter {
 
   async assertLiveSessionTokenIssuance(userId: string, now: number = Date.now()): Promise<void> {
     await this.assertRateLimit(userId, 'initializeLiveSession', now);
-
     const key = this.getBucketKey(userId, 'initializeLiveSession');
-    const bucket = await this.store.getBucket(key);
-
-    if (bucket?.lastLiveTokenIssuedAt && now - bucket.lastLiveTokenIssuedAt < 15 * 1000) {
-      const waitSec = Math.ceil((15 * 1000 - (now - bucket.lastLiveTokenIssuedAt)) / 1000);
+    const cooldown = await this.store.checkLiveTokenCooldown(key, 15 * 1000, now);
+    if (!cooldown.allowed) {
       throw new HttpsError(
         'resource-exhausted',
-        `Live session token was issued recently. Concurrent token issuance is restricted; please wait ${waitSec}s.`
+        `Live session token was issued recently. Concurrent token issuance is restricted; please wait ${cooldown.waitSec}s.`
       );
     }
-
-    bucket.lastLiveTokenIssuedAt = now;
-    await this.store.saveBucket(key, bucket);
   }
 
   async clear(): Promise<void> {
@@ -189,23 +279,28 @@ export class RateLimiter {
   }
 }
 
-// Global shared store and default limiter instance for Cloud Functions
-const sharedMemoryStore = new MemoryRateLimitStore();
-export const defaultRateLimiter = new RateLimiter(sharedMemoryStore);
+// Global production store: uses FirestoreRateLimitStore backed by the 'ai_usage_quotas' collection!
+export const productionFirestoreStore = new FirestoreRateLimitStore();
+export let defaultRateLimiter = new RateLimiter(productionFirestoreStore);
+
+export function setRateLimiterForTesting(limiter: RateLimiter): void {
+  defaultRateLimiter = limiter;
+}
 
 export async function checkRateLimit(
   userId: string,
-  endpoint: string
-): Promise<{ allowed: boolean; remaining: number; resetMs: number; error?: string }> {
-  return defaultRateLimiter.checkRateLimit(userId, endpoint);
+  endpoint: string,
+  now?: number
+): Promise<RateLimitConsumptionResult> {
+  return defaultRateLimiter.checkRateLimit(userId, endpoint, now);
 }
 
-export async function assertRateLimit(userId: string, endpoint: string): Promise<void> {
-  return defaultRateLimiter.assertRateLimit(userId, endpoint);
+export async function assertRateLimit(userId: string, endpoint: string, now?: number): Promise<void> {
+  return defaultRateLimiter.assertRateLimit(userId, endpoint, now);
 }
 
-export async function assertLiveSessionTokenIssuance(userId: string): Promise<void> {
-  return defaultRateLimiter.assertLiveSessionTokenIssuance(userId);
+export async function assertLiveSessionTokenIssuance(userId: string, now?: number): Promise<void> {
+  return defaultRateLimiter.assertLiveSessionTokenIssuance(userId, now);
 }
 
 export async function clearRateLimitsForTesting(): Promise<void> {

@@ -50,9 +50,14 @@ function requestId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 12);
 }
 
-function checkAppCheckIfEnforced(request: any) {
-  if (process.env.ENFORCE_APP_CHECK === 'true' && !request.app) {
-    throw new HttpsError('failed-precondition', 'Firebase App Check token is missing or invalid.');
+export function checkAppCheckIfEnforced(request: any): void {
+  if (process.env.ENFORCE_APP_CHECK === 'true') {
+    if (!request.app || typeof request.app.appId !== 'string' || request.app.appId.trim().length === 0) {
+      throw new HttpsError('failed-precondition', 'Firebase App Check token is missing or invalid.');
+    }
+    if (request.app.alreadyConsumed) {
+      throw new HttpsError('failed-precondition', 'Firebase App Check token has already been consumed.');
+    }
   }
 }
 
@@ -257,6 +262,7 @@ export const generateAudioGuidance = onCall(async (request) => {
  */
 export const explainPlanBReroute = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to explain Plan-B reroutes.');
   }
@@ -282,6 +288,7 @@ export const explainPlanBReroute = onCall(async (request) => {
  */
 export const formatGeminiHandoff = onCall(async (request) => {
   const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to initiate Gemini handoff.');
   }
@@ -293,7 +300,7 @@ export const formatGeminiHandoff = onCall(async (request) => {
   }
 
   try {
-    const result = serviceFormatHandoff(parseResult.data);
+    const result = await serviceFormatHandoff(parseResult.data);
     return successEnvelope(result, startMs);
   } catch (err: any) {
     logger.error('formatGeminiHandoff error', { err });

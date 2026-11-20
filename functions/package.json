@@ -27,6 +27,8 @@
     "test:b3": "tsx test/test-b3-authenticity-assessment.ts",
     "test:b4": "tsx test/test-b4-group-matching.ts",
     "test:b5": "tsx test/test-b5-live-assistance.ts",
+    "test:firestore": "tsx test/test-firestore-rate-limiter.ts",
+    "test:live-provider": "tsx test/test-provider-live.ts",
     "test:schemas": "tsx test/test-schemas.ts"
   },
   "keywords": [

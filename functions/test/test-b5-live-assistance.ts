@@ -26,6 +26,9 @@ import {
   generateAudioGuidance,
   explainPlanBReroute,
   formatGeminiHandoffContext,
+  MemoryHandoffChallengeStore,
+  setHandoffChallengeStoreForTesting,
+  clearConsumedChallengesForTesting,
 } from '../src/ai/services/live-assistance-service.js';
 import {
   LiveSessionTokenResponseSchema,
@@ -320,10 +323,12 @@ async function runB5Tests() {
   // =========================================================================
   console.log('\n--- [Suite 9] Continue in Gemini Handoff Interface ---');
 
-  clearConsumedChallengesForTesting();
+  const testChallengeStore = new MemoryHandoffChallengeStore();
+  setHandoffChallengeStoreForTesting(testChallengeStore);
+  await clearConsumedChallengesForTesting();
 
   // Case A: Traveler has NOT granted consent yet (Phase 1: Preview & Challenge)
-  const handoffRequiresConsent = formatGeminiHandoffContext({
+  const handoffRequiresConsent = await formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
     currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
@@ -345,7 +350,7 @@ async function runB5Tests() {
   assert(handoffRequiresConsent.transferPayloadPreview.spotNames.includes('CTR Shri Sagar'), 'Includes explicit spot names in preview');
 
   // Case B: Explicit user cancellation action in UI
-  const handoffCancelled = formatGeminiHandoffContext({
+  const handoffCancelled = await formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
     action: 'CANCEL',
@@ -357,7 +362,7 @@ async function runB5Tests() {
 
   // Case C: Expired challenge token
   const expiredChallengeToken = `chk_testnonce_${Date.now() - 10000}_invalidsig`;
-  const handoffExpired = formatGeminiHandoffContext({
+  const handoffExpired = await formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
     userConsentGranted: true,
@@ -369,7 +374,7 @@ async function runB5Tests() {
 
   // Case D: Payload Tampering / Binding Mismatch
   // User received preview for Malleshwaram, but confirmation tries to export Indiranagar
-  const handoffTampered = formatGeminiHandoffContext({
+  const handoffTampered = await formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Indiranagar', // Altered after preview
     userConsentGranted: true,
@@ -380,7 +385,7 @@ async function runB5Tests() {
   assert(handoffTampered.handoffUri === null, 'No URI generated on payload binding mismatch');
 
   // Case E: Valid Phase 2 confirmation with matching challenge and payload
-  const handoffConfirmed = formatGeminiHandoffContext({
+  const handoffConfirmed = await formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
     currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
@@ -401,7 +406,7 @@ async function runB5Tests() {
   assert(handoffConfirmed.handoffDisclaimer.length > 0, 'Contains explicit privacy and data transfer disclaimer');
 
   // Case F: One-Time Anti-Replay: Attempting to replay the exact same challenge token
-  const handoffReplay = formatGeminiHandoffContext({
+  const handoffReplay = await formatGeminiHandoffContext({
     travelerId: 'usr_traveler_101',
     activeNeighborhood: 'Malleshwaram',
     currentCoordinates: { latitude: 12.9984, longitude: 77.5714 },
@@ -417,7 +422,7 @@ async function runB5Tests() {
   assert(handoffReplay.consentStatus === 'CANCELLED', 'Replay attempt with consumed challenge token is rejected');
   assert(handoffReplay.handoffUri === null, 'Replay attempt produces null handoff URI');
 
-  clearConsumedChallengesForTesting();
+  await clearConsumedChallengesForTesting();
 
   // =========================================================================
   // Test Suite 11: Rate Limiting & Abuse Prevention Controls (Multi-Instance)

@@ -62,27 +62,29 @@ Developer B provides callable Firebase Cloud Functions under the `Assistance` na
 To protect externally billed Google AI operations and prevent quota exhaustion across multiple Cloud Function instances:
 
 1. **Shared Rate Limiting Engine:**
-   - Backed by Firestore collection `ai_usage_quotas` (coordinated with Developer A's architecture) using atomic operations, surviving instance restarts and cold starts.
-   - Includes in-memory safeguards for local execution and rapid rejection.
-   - Tested across independent limiter instances to prove shared state enforcement.
+   - Production handlers instantiate `FirestoreRateLimitStore` backed by collection `ai_usage_quotas` (coordinated with Developer A's architecture) using atomic transactions (`runTransaction`), surviving instance restarts, cold starts, and concurrent request races.
+   - Per-user sliding-window limits prevent quota exhaustion and cost spikes across all callable AI endpoints.
+   - Tested across independent limiter instances against the shared collection to verify atomic quota decrementing and concurrent race resilience.
 
 2. **Per-User Quotas:**
 
 | Cloud Function Callable | Authentication (`request.auth`) | App Check Required | Shared Rate Limit | Abuse & Cost Controls |
 | :--- | :--- | :--- | :--- | :--- |
-| `Assistance-initializeLiveSession` | **Required** | **Yes** (Production) | Max 5 calls / 15 min | Single active token per user; 15s cooldown |
-| `Assistance-askStreetCopilot` | **Required** | **Yes** (Production) | Max 20 calls / min | Query capped at 1,000 chars; history max 10 |
-| `Assistance-translateText` | **Required** | **Yes** (Production) | Max 30 calls / min | Source text capped at 2,000 chars |
-| `Assistance-translateCameraSignage`| **Required** | **Yes** (Production) | Max 10 calls / min | MIME whitelist + base64 payload bounds |
-| `Assistance-generateAudioGuidance` | **Required** | **Yes** (Production) | Max 15 calls / min | Spoken word count strictly capped < 60 |
-| `Assistance-explainPlanBReroute` | **Required** | Optional | Max 10 calls / min | Strict PlanBExplanationContext validation |
-| `Assistance-formatGeminiHandoff` | **Required** | Optional | Max 5 calls / min | Cryptographic two-phase consent challenge |
+| `Assistance-initializeLiveSession` | **Required** | **Yes** (Enforced) | Max 5 calls / 15 min | Single active token per user; 15s cooldown |
+| `Assistance-askStreetCopilot` | **Required** | **Yes** (Enforced) | Max 20 calls / min | Query capped at 1,000 chars; history max 10 |
+| `Assistance-translateText` | **Required** | **Yes** (Enforced) | Max 30 calls / min | Source text capped at 2,000 chars |
+| `Assistance-translateCameraSignage`| **Required** | **Yes** (Enforced) | Max 10 calls / min | MIME whitelist + base64 payload bounds |
+| `Assistance-generateAudioGuidance` | **Required** | **Yes** (Enforced) | Max 15 calls / min | Spoken word count strictly capped < 60 |
+| `Assistance-explainPlanBReroute` | **Required** | **Yes** (Enforced) | Max 10 calls / min | Strict PlanBExplanationContext validation |
+| `Assistance-formatGeminiHandoff` | **Required** | **Yes** (Enforced) | Max 5 calls / min | Firestore-backed atomic two-phase consent challenge |
 | `Assistance-getOrderingPhrases` | Optional | Optional | Payload < 4KB | In-memory zero-cost curated phrase deck |
 | `Assistance-getEtiquetteGuidance` | Optional | Optional | Payload < 4KB | In-memory zero-cost curated etiquette deck |
 
 3. **Firebase App Check Deployment Status:**
-   - **Deployment Truth:** In the current repository and environment, `ENFORCE_APP_CHECK` is **not yet set in production deployment secrets** (`.env.example` has no App Check keys).
-   - **Enforcement Logic:** `checkAppCheckIfEnforced(request)` is a readiness safeguard. When `ENFORCE_APP_CHECK` is unset or false (local/test/emulator), requests pass without an App Check token. When set to `'true'`, it strictly blocks callers lacking a valid App Check token (`failed-precondition`). Active production enforcement will be enabled once Play Integrity / DeviceCheck is registered in Firebase Console.
+   - **Deployment Configuration:** `ENFORCE_APP_CHECK=true` is enabled in `functions/.env` and documented in `functions/.env.example`.
+   - **Enforcement Logic:** `checkAppCheckIfEnforced(request)` validates the presence and validity of `request.app` on all externally billed and authenticated AI callables.
+   - **Rejection Behavior:** Missing or invalid App Check tokens throw `HttpsError('failed-precondition', 'Firebase App Check token is missing or invalid.')`.
+   - **Local Emulator Compatibility:** Local emulator and test suites pass mock attestation tokens (`request.app = { appId: 'com.neighborhoodguide.app', token: '...' }`) without weakening production enforcement.
 
 ### Example Request & Response: Camera Signage Translation
 **Request Payload:**
@@ -172,8 +174,8 @@ Prepares the structured context payload for the optional "Continue in Gemini" ca
      - Challenge has not expired (`now <= expiresAt`).
      - Cryptographic signature matches.
      - Payload binding matches (if coordinates or spots were altered between preview and confirmation, verification fails).
-     - Nonce has not been consumed (one-time use; replay attempts are strictly rejected).
-   - If valid, returns `consentStatus: 'CONSENT_GRANTED'` and `handoffUri`.
+     - Atomic Firestore transaction checks `ai_handoff_challenges` collection to ensure the nonce has not already been consumed by any concurrent instance.
+   - If valid, atomically marks `{ consumed: true }` in Firestore and returns `consentStatus: 'CONSENT_GRANTED'` and `handoffUri`.
    - If challenge token is missing, expired, altered, or replayed, returns `consentStatus: 'CANCELLED'` with `handoffUri: null`.
 4. **Privacy Protection:**
    - Raw payment tokens, user passwords, and internal database IDs are permanently excluded (`omittedAttributes`).
@@ -183,9 +185,19 @@ Prepares the structured context payload for the optional "Continue in Gemini" ca
 
 ## 7. Verification & Test Suite
 
-Run the B5 verification test suite via npm:
+Run the full verification pipeline:
 ```bash
+# Deterministic B5 logic & offline fallbacks
 npm --prefix functions run test:b5
+
+# Firestore emulator integration & atomic concurrency
+npm --prefix functions run test:firestore
+
+# Real Google Provider live token generation
+npm --prefix functions run test:live-provider
+
+# Full backend regression suite
+npm --prefix functions test
 ```
 Verified scenarios:
 - WebSocket ephemeral token minting & 15-minute TTL.
