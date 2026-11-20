@@ -471,7 +471,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                       ),
                                     ),
                                     Text(
-                                      '${step.distanceMeters} m • ~${step.durationSeconds ~/ 60} min',
+                                      '${step.distanceMeters} m • ${step.durationSeconds < 60 ? "< 1 min" : "~${step.durationSeconds ~/ 60} min"}',
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey.shade600,
