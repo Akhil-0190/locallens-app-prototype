@@ -1,0 +1,26 @@
+{
+  "name": "neighborhoodguide-functions",
+  "version": "1.0.0",
+  "description": "Firebase Cloud Functions and AI services for Neighborhood Guide App",
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test:ai": "tsx test/verify-ai-foundation.ts",
+    "test:schemas": "tsx test/test-schemas.ts",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^3.6.1",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+lib/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment and Secrets - NEVER COMMIT
+.env
+.env.local
+.env.*.local
+*.pem
+service-account*.json
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
