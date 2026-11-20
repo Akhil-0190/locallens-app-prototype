@@ -4,12 +4,18 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+class PickedPhoto {
+  final String base64Data;
+  final String filePath;
+  const PickedPhoto({required this.base64Data, required this.filePath});
+}
+
 class PhotoHelper {
   static final ImagePicker _picker = ImagePicker();
   static final Map<int, Uint8List> _decodedCache = {};
 
-  /// Picks an image, compresses it to ~25-45 KB, and returns a Base64 string.
-  static Future<String?> pickAndCompressPhoto({
+  /// Picks an image, compresses it to ~25-45 KB, and returns both the local path and Base64 string.
+  static Future<PickedPhoto?> pickPhoto({
     ImageSource source = ImageSource.gallery,
   }) async {
     final XFile? file = await _picker.pickImage(
@@ -29,7 +35,15 @@ class PhotoHelper {
 
     final encoded = base64Encode(bytes);
     _decodedCache[encoded.hashCode] = bytes;
-    return encoded;
+    return PickedPhoto(base64Data: encoded, filePath: file.path);
+  }
+
+  /// Picks an image, compresses it to ~25-45 KB, and returns a Base64 string.
+  static Future<String?> pickAndCompressPhoto({
+    ImageSource source = ImageSource.gallery,
+  }) async {
+    final picked = await pickPhoto(source: source);
+    return picked?.base64Data;
   }
 
   /// Safely builds a cached widget from either a Base64 string or a network URL.

@@ -1,9 +1,16 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../models/contribution.dart';
 import '../models/spot_card.dart';
 import '../services/contribution_service.dart';
 import '../services/spot_service.dart';
+
+/// Explicit flag controlling test mode vs live production backend execution.
+/// In automated flutter test environments, FLUTTER_TEST is detected automatically.
+final isTestModeProvider = StateProvider<bool>((ref) {
+  return Platform.environment.containsKey('FLUTTER_TEST');
+});
 
 /// Database provider for offline SQLite/Drift storage.
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
@@ -42,7 +49,8 @@ final hasGeneratedRouteProvider = StateProvider<bool>((ref) => false);
 
 /// Service provider for contributor submissions and status pipeline.
 final contributionServiceProvider = Provider<ContributionService>((ref) {
-  return ContributionService();
+  final isTest = ref.watch(isTestModeProvider);
+  return ContributionService(isTestMode: isTest);
 });
 
 /// Contributor profile provider (Domain 05).
