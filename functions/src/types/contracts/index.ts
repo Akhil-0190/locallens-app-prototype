@@ -552,6 +552,7 @@ export const MerchantPlanTierSchema = z.enum([
 
 export const PartnerMerchantSubscriptionSchema = z.object({
   subscriptionId: z.string().min(1),
+  ownerUserId: z.string().min(1).optional(), // Authenticated Firebase UID of merchant owner
   merchantPlaceId: z.string().min(1),
   businessName: z.string().min(1),
   contactEmail: z.string().email(),

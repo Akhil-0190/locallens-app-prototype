@@ -46,6 +46,7 @@ export type MerchantPlanTier = 'COMMUNITY_FREE' | 'VERIFIED_PARTNER' | 'FEATURED
 
 export interface PartnerMerchantSubscription {
   subscriptionId: string;               // Unique sub UUID (prefix: sub_)
+  ownerUserId?: string;                 // Authenticated Firebase UID of merchant owner
   merchantPlaceId: string;              // Canonical placeId (Domain 06)
   businessName: string;
   contactEmail: string;
@@ -76,11 +77,12 @@ When a traveler initiates audio navigation (Domain 08) or downloads an offline p
 
 ---
 
-## 4. Sandbox Payment Isolation
+## 4. Sandbox Payment Isolation & Durable Idempotency
 
 1. **Strict Mode Attribute:** All passes and subscriptions record `paymentMode: 'SANDBOX' | 'LIVE'`.
 2. **Explicit Reference Naming:** Sandbox transactions carry `sandbox_sim_...` references.
 3. **Transparent Status:** Mock activation does not generate bank settlement or fake gateway claims.
+4. **Durable Sandbox Refund Idempotency:** Sandbox simulated refunds are durably persisted to `_sandbox_simulated_refunds/{idempotencyKey}` via atomic Firestore transactions, ensuring cross-instance idempotency and resilience to Cloud Functions cold-starts or restarts without double-disbursement.
 
 ---
 
@@ -89,6 +91,7 @@ When a traveler initiates audio navigation (Domain 08) or downloads an offline p
 1. **Authentication & Ownership:**
    - Callables independently verify `request.auth != null`.
    - Passes are strictly created under `userId = request.auth.uid`.
+   - Partner merchant subscriptions bind strictly to `ownerUserId = request.auth.uid` during registration.
    - Only admin users may modify or revoke passes out-of-band.
 2. **Endpoints:**
    - `purchaseRoutePass({ tier, neighborhood, accessibleRouteIds?, mode? })`
@@ -109,6 +112,8 @@ When a traveler initiates audio navigation (Domain 08) or downloads an offline p
 2. **Server-Side Activation Guard:**
    - Paid tiers are only activated (`isActive: true`) via `confirmPartnerSubscriptionPayment` after adapter payment verification and fail-closed environment validation.
    - Public discount offers are strictly filtered on `isActive === true` and valid expiration, ensuring unconfirmed subscriptions cannot be published.
-3. **Idempotency & Authorization:**
+3. **Idempotency & Verified Ownership Authorization:**
    - Replay confirmation returns `isIdempotentReplay: true` without duplicate mutations.
-   - Authorization restricts confirmation to the authenticated place owner (`merchantPlaceId === callerUserId`) or administrator.
+   - **Ownership Model:** Registration captures `ownerUserId = request.auth.uid` directly from the authenticated context. Client attempts to supply an arbitrary owner UID are strictly ignored.
+   - **Payment Confirmation Guard:** Restricts confirmation to `sub.ownerUserId === request.auth.uid` or an administrator/moderator (`request.auth.token.role in ['admin', 'moderator']`).
+   - **Legacy Record Migration:** Existing subscriptions predating the `ownerUserId` field cannot be activated by unverified callers. Non-admin confirmation attempts on unassigned records throw `"Unauthorized: Subscription lacks a verified owner association. An administrator must verify and migrate this legacy record."` Administrators can confirm or backfill legacy records securely.

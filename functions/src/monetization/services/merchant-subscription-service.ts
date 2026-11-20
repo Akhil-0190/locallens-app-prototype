@@ -22,6 +22,7 @@ import { defaultPaymentAdapter } from '../adapters/sandbox-payment-adapter.js';
 import { validateSettlementEnvironment } from '../config/payment-environment.js';
 
 export interface CreateSubscriptionInput {
+  ownerUserId: string; // Authenticated Firebase UID
   merchantPlaceId: string;
   businessName: string;
   contactEmail: string;
@@ -92,6 +93,7 @@ export class MerchantSubscriptionService {
 
     const subscription: PartnerMerchantSubscription = {
       subscriptionId,
+      ownerUserId: input.ownerUserId,
       merchantPlaceId: input.merchantPlaceId,
       businessName: input.businessName,
       contactEmail: input.contactEmail,
@@ -131,9 +133,15 @@ export class MerchantSubscriptionService {
 
     const sub = snap.data() as PartnerMerchantSubscription;
 
-    // Authorization: Caller must be place owner or admin
-    if (sub.merchantPlaceId !== input.callerUserId && !input.isAdminOverride) {
-      throw new Error('Unauthorized: Only the merchant place owner or administrator may confirm payment.');
+    // Authorization: Caller must be verified subscription owner or administrator
+    if (!sub.ownerUserId) {
+      if (!input.isAdminOverride) {
+        throw new Error(
+          'Unauthorized: Subscription lacks a verified owner association. An administrator must verify and migrate this legacy record.'
+        );
+      }
+    } else if (sub.ownerUserId !== input.callerUserId && !input.isAdminOverride) {
+      throw new Error('Unauthorized: Only the merchant subscription owner or administrator may confirm payment.');
     }
 
     // Fail-Closed Server Environment Configuration Guard

@@ -269,6 +269,17 @@ service cloud.firestore {
     }
 
     // -----------------------------------------------------------------------
+    // _sandbox_simulated_refunds/{idempotencyKey} (Durable Sandbox Refunds)
+    // -----------------------------------------------------------------------
+    // - Internal Admin SDK only for sandbox refund deduplication across instances.
+    // - No client reads or writes permitted.
+    // -----------------------------------------------------------------------
+
+    match /_sandbox_simulated_refunds/{idempotencyKey} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------------
     // audit_logs/{logId}
     // -----------------------------------------------------------------------
     // - Append-only via Admin SDK. No client reads or writes permitted.

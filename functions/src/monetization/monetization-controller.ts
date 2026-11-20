@@ -383,6 +383,7 @@ export const registerPartnerSubscription = onCall(async (request) => {
 
   try {
     const result = await merchantService.registerPartnerSubscription({
+      ownerUserId: request.auth.uid, // Strictly bound to authenticated caller
       merchantPlaceId,
       businessName,
       contactEmail,

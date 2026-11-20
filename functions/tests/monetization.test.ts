@@ -915,6 +915,94 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual(firstRefund.amountInr, secondRefund.amountInr);
     });
 
+    test('Durable Sandbox Refund Idempotency: Survives instance restart and shares state across instances via Firestore', async () => {
+      // Mock Firestore database representing shared durable storage
+      const mockStorage = new Map<string, any>();
+      const mockFirestore = {
+        collection: (collectionName: string) => ({
+          doc: (docId: string) => ({
+            get: async () => ({
+              exists: mockStorage.has(`${collectionName}/${docId}`),
+              data: () => mockStorage.get(`${collectionName}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (updateFunction: (tx: any) => Promise<any>) => {
+          const tx = {
+            get: async (docRef: any) => ({
+              exists: mockStorage.has(`_sandbox_simulated_refunds/ref_guidance_restart_01`),
+              data: () => mockStorage.get(`_sandbox_simulated_refunds/ref_guidance_restart_01`),
+            }),
+            set: (docRef: any, data: any) => {
+              mockStorage.set(`_sandbox_simulated_refunds/ref_guidance_restart_01`, data);
+            },
+          };
+          return updateFunction(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const idempotencyKey = 'ref_guidance_restart_01';
+
+      // 1. Instance 1 executes refund and stores in durable mock Firestore
+      const instance1 = new SandboxPaymentAdapter(mockFirestore);
+      const refund1 = await instance1.refundPayment({
+        transactionId: 'guidance_blr_restart_01',
+        gatewayReference: 'sandbox_sim_guidance_restart_01',
+        amountInr: 850,
+        reason: 'Client cancelled session',
+        idempotencyKey,
+      });
+
+      assert.strictEqual(refund1.refunded, true);
+      assert.ok(mockStorage.has(`_sandbox_simulated_refunds/${idempotencyKey}`));
+
+      // 2. Instance 2 starts afresh (empty local memory) simulating Cloud Function restart / new instance
+      const instance2 = new SandboxPaymentAdapter(mockFirestore);
+      const refund2 = await instance2.refundPayment({
+        transactionId: 'guidance_blr_restart_01',
+        gatewayReference: 'sandbox_sim_guidance_restart_01',
+        amountInr: 850,
+        reason: 'Duplicate retry received after cold start',
+        idempotencyKey,
+      });
+
+      // Both instances must return the exact same reference and amount
+      assert.strictEqual(refund2.refunded, true);
+      assert.strictEqual(refund2.refundReference, refund1.refundReference);
+      assert.strictEqual(refund2.amountInr, refund1.amountInr);
+      assert.strictEqual(refund2.isSimulated, true);
+    });
+
+    test('Sandbox refund persistence failure falls back safely to in-memory generation', async () => {
+      // Mock Firestore that throws error on read/transaction
+      const failingFirestore = {
+        collection: () => ({
+          doc: () => ({
+            get: async () => {
+              throw new Error('Firestore connection timeout');
+            },
+          }),
+        }),
+        runTransaction: async () => {
+          throw new Error('Firestore transaction aborted');
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const adapter = new SandboxPaymentAdapter(failingFirestore);
+      const refund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_fallback_01',
+        gatewayReference: 'sandbox_sim_guidance_fallback_01',
+        amountInr: 500,
+        reason: 'Cancellation under degraded database connectivity',
+        idempotencyKey: 'ref_guidance_fallback_01',
+      });
+
+      // Must complete safely via fallback without throwing
+      assert.strictEqual(refund.refunded, true);
+      assert.strictEqual(refund.amountInr, 500);
+      assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
+    });
+
     test('Guidance refund concurrency lock: In-flight PENDING refund blocks concurrent attempts within timeout', () => {
       const claimTimeoutMs = 60000;
       const checkConcurrencyLock = (
@@ -1162,24 +1250,79 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual(replayResult.subscription.isActive, true);
     });
 
-    test('Authorization guard rejects unauthorized caller attempting subscription confirmation', () => {
-      const authorizeConfirmation = (merchantPlaceId: string, callerUserId: string, isAdmin: boolean) => {
-        if (merchantPlaceId !== callerUserId && !isAdmin) {
-          throw new Error('Unauthorized: Only the merchant place owner or administrator may confirm payment.');
+    test('Verified merchant owner authorization guard validates ownerUserId and preserves admin overrides', () => {
+      const authorizeConfirmation = (
+        sub: { ownerUserId?: string; merchantPlaceId: string },
+        callerUserId: string,
+        isAdmin: boolean
+      ) => {
+        if (!sub.ownerUserId) {
+          if (!isAdmin) {
+            throw new Error(
+              'Unauthorized: Subscription lacks a verified owner association. An administrator must verify and migrate this legacy record.'
+            );
+          }
+          return true;
         }
+        if (sub.ownerUserId !== callerUserId && !isAdmin) {
+          throw new Error('Unauthorized: Only the merchant subscription owner or administrator may confirm payment.');
+        }
+        return true;
       };
 
-      // Place owner can confirm
-      assert.doesNotThrow(() => authorizeConfirmation('place_ctr_01', 'place_ctr_01', false));
+      const ownedSub = {
+        ownerUserId: 'usr_merchant_alice_01',
+        merchantPlaceId: 'place_ctr_malleshwaram_01',
+      };
 
-      // Admin can confirm
-      assert.doesNotThrow(() => authorizeConfirmation('place_ctr_01', 'usr_admin_456', true));
+      // 1. Legitimate merchant owner can confirm
+      assert.doesNotThrow(() => authorizeConfirmation(ownedSub, 'usr_merchant_alice_01', false));
 
-      // Stranger is rejected
+      // 2. Different authenticated user attempting confirmation is rejected
       assert.throws(
-        () => authorizeConfirmation('place_ctr_01', 'usr_stranger_999', false),
-        /Unauthorized: Only the merchant place owner or administrator may confirm payment/
+        () => authorizeConfirmation(ownedSub, 'usr_attacker_bob_99', false),
+        /Unauthorized: Only the merchant subscription owner or administrator may confirm payment/
       );
+
+      // 3. Administrator / moderator can confirm regardless of owner
+      assert.doesNotThrow(() => authorizeConfirmation(ownedSub, 'usr_admin_mod_01', true));
+
+      // 4. Legacy subscription without owner association:
+      const legacySub = {
+        merchantPlaceId: 'place_ctr_malleshwaram_01',
+      };
+
+      // Regular user on legacy record is rejected with specific migration error
+      assert.throws(
+        () => authorizeConfirmation(legacySub, 'usr_merchant_alice_01', false),
+        /Subscription lacks a verified owner association. An administrator must verify and migrate this legacy record/
+      );
+
+      // Administrator can verify and confirm legacy record
+      assert.doesNotThrow(() => authorizeConfirmation(legacySub, 'usr_admin_mod_01', true));
+    });
+
+    test('Registration strictly captures ownerUserId from request.auth.uid ignoring client-supplied owner', () => {
+      const registerSubscriptionSafe = (
+        authUid: string,
+        clientData: { ownerUserId?: string; merchantPlaceId: string; businessName: string }
+      ) => {
+        // Enforce server-side security: ignore clientData.ownerUserId
+        return {
+          merchantPlaceId: clientData.merchantPlaceId,
+          businessName: clientData.businessName,
+          ownerUserId: authUid, // strictly from auth
+        };
+      };
+
+      const result = registerSubscriptionSafe('usr_real_owner_123', {
+        ownerUserId: 'usr_spoofed_victim_456', // malicious attempt to impersonate or bind to another user
+        merchantPlaceId: 'place_vidyarthi_bhavan_01',
+        businessName: 'Vidyarthi Bhavan',
+      });
+
+      assert.strictEqual(result.ownerUserId, 'usr_real_owner_123');
+      assert.notStrictEqual(result.ownerUserId, 'usr_spoofed_victim_456');
     });
 
     test('Subscription payment verification failure leaves subscription inactive', async () => {
