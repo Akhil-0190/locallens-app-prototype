@@ -10,8 +10,10 @@ export interface MapsPlatformConfig {
   apiKey: string;
   placesApiKey?: string;
   routesApiKey?: string;
+  weatherApiKey?: string;
   placesApiBaseUrl: string;
   routesApiBaseUrl: string;
+  weatherApiBaseUrl: string;
   requestTimeoutMs: number;
   maxRetryAttempts: number;
   retryInitialDelayMs: number;
@@ -39,12 +41,19 @@ export function getMapsConfig(): MapsPlatformConfig {
     process.env['ROUTES_API_KEY'] ||
     apiKey;
 
+  const weatherApiKey =
+    process.env['GOOGLE_MAPS_WEATHER_API_KEY'] ||
+    process.env['WEATHER_API_KEY'] ||
+    apiKey;
+
   return {
     apiKey,
     placesApiKey,
     routesApiKey,
+    weatherApiKey,
     placesApiBaseUrl: 'https://places.googleapis.com/v1/places',
     routesApiBaseUrl: 'https://routes.googleapis.com/directions/v2:computeRoutes',
+    weatherApiBaseUrl: 'https://weather.googleapis.com/v1',
     requestTimeoutMs: 10000,
     maxRetryAttempts: 3,
     retryInitialDelayMs: 500,
