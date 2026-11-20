@@ -23,6 +23,7 @@ import { PlacesService } from './places.service';
 import { NormalizationService } from './normalization.service';
 import { MapsUrlParserService } from './url-parser.service';
 import { SAMPLE_PLACES_FIXTURE } from '../fixtures/sample-places.fixture';
+import { SAMPLE_HOURLY_CAPACITIES_FIXTURE } from '../fixtures/sample-crowd.fixture';
 
 export class GroundingService {
   private placesService: PlacesService;
@@ -458,6 +459,30 @@ export class GroundingService {
     const openHours =
       matched?.openingHoursDescriptions?.join('; ') || 'Check Maps for hours';
 
+    const currentSlotId = `${nowIso.substring(0, 13)}:00:00Z`;
+    const knownCapacity =
+      matched?.placeId && SAMPLE_HOURLY_CAPACITIES_FIXTURE[matched.placeId]
+        ? Object.values(SAMPLE_HOURLY_CAPACITIES_FIXTURE[matched.placeId])[0]
+        : null;
+
+    const capacityState = knownCapacity
+      ? {
+          hourlyLimit: knownCapacity.maxCapacity,
+          currentVisitors: knownCapacity.currentVisitorsCount,
+          remainingCapacity: knownCapacity.remainingCapacity,
+          crowdLevel: knownCapacity.level,
+          isThrottled: knownCapacity.isThrottled,
+          lastUpdatedSlot: knownCapacity.hourSlot,
+        }
+      : {
+          hourlyLimit: 12,
+          currentVisitors: 0,
+          remainingCapacity: 12,
+          crowdLevel: 'LOW' as const,
+          isThrottled: false,
+          lastUpdatedSlot: currentSlotId,
+        };
+
     return {
       id: placeId,
       placeId,
@@ -487,14 +512,7 @@ export class GroundingService {
         greetingCard: `Welcome to ${spotName}! A cherished local gem.`,
         vibeTags: matched?.categories?.slice(0, 3) || ['authentic', 'local'],
       },
-      capacity: {
-        hourlyLimit: 12,
-        currentVisitors: 0,
-        remainingCapacity: 12,
-        crowdLevel: 'LOW',
-        isThrottled: false,
-        lastUpdatedSlot: `${nowIso.substring(0, 13)}:00:00Z`,
-      },
+      capacity: capacityState,
       isVerified: evidence.matchConfidence === 'EXACT_MATCH' || evidence.matchConfidence === 'HIGH_CONFIDENCE',
       isMockData: evidence.isMockData,
       createdAt: nowIso,

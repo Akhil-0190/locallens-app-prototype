@@ -489,5 +489,181 @@ describe('Task C4 - Capacity, Crowd Throttling & Alternatives', () => {
       assert.strictEqual(typeof parsed.hasThrottledStops, 'boolean');
       assert.strictEqual(typeof parsed.hasUnknownCapacityStops, 'boolean');
     });
+
+    it('26. refines scheduled arrival times using actual leg walking durations from generated route', async () => {
+      const startTime = '2026-11-20T08:00:00.000Z';
+      const response = await CrowdManagementService.generateCapacityAwareRoute({
+        title: 'Timing Accuracy Trail',
+        neighborhood: 'Malleswaram',
+        startTime,
+        stops: [
+          {
+            placeId: 'place_ctr_shri_sagar',
+            spotName: 'CTR Shri Sagar',
+            coordinate: { latitude: 13.0075, longitude: 77.5714 },
+          },
+          {
+            placeId: 'place_kadu_malleshwara',
+            spotName: 'Kadu Malleshwara Temple',
+            coordinate: { latitude: 13.0039, longitude: 77.5701 },
+          },
+        ],
+        allowMockFallback: true,
+      });
+
+      // Stop 0 arrives at startTime
+      assert.strictEqual(response.stops[0].scheduledArrival, startTime);
+
+      // Stop 1 arrival must match startTime + leg 0 duration
+      const leg0DurationSeconds = response.legs[0].durationSeconds;
+      const expectedStop1ArrivalMs = new Date(startTime).getTime() + leg0DurationSeconds * 1000;
+      const actualStop1ArrivalMs = new Date(response.stops[1].scheduledArrival).getTime();
+
+      assert.strictEqual(actualStop1ArrivalMs, expectedStop1ArrivalMs);
+    });
+  });
+
+  // ===========================================================================
+  // 6. Community Crowd Signals & Real-Time Intelligence Protocol
+  // Replacing Missing Google Crowdsource API with Proprietary Community Engine
+  // ===========================================================================
+  describe('Community Crowd Signals & Real-Time Intelligence Protocol', () => {
+    it('27. ingests 1-tap community crowd report and awards contributor reputation points', async () => {
+      CrowdManagementService.clearCommunitySignalsStore();
+
+      const result = await CrowdManagementService.submitCommunityCrowdSignal({
+        placeId: 'place_veena_stores',
+        crowdLevel: 'HIGH',
+        estimatedWaitMinutes: 20,
+        reporterType: 'LOCAL_RESIDENT',
+        travelerId: 'local_resident_appu',
+        note: 'Long queue for idli vada breakfast',
+        allowMockFallback: true,
+      });
+
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.signal.placeId, 'place_veena_stores');
+      assert.strictEqual(result.signal.reportedCrowdLevel, 'HIGH');
+      assert.strictEqual(result.signal.reporterType, 'LOCAL_RESIDENT');
+      assert.strictEqual(result.signal.reporterWeight, 1.5);
+      assert.strictEqual(result.rewardPointsEarned, 25); // Local resident rewarded 25 pts
+      assert.ok(result.synthesizedEvaluation);
+    });
+
+    it('28. filters out expired community reports (>90 min freshness TTL) while retaining fresh ones', () => {
+      CrowdManagementService.clearCommunitySignalsStore();
+
+      // Veena stores has no active community signals initially
+      const freshResult = CrowdManagementService.getActiveCommunitySignals('place_veena_stores');
+      assert.strictEqual(freshResult.length, 0); // None yet for veena stores
+
+      // Direct check with explicit timestamp filtering
+      const activeSignals = CrowdManagementService.getActiveCommunitySignals(
+        'place_8th_cross_market',
+        new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      );
+      // Fresh signals within 75 min expiresAt must be active
+      assert.ok(activeSignals.length > 0);
+
+      // Check far in the future (> 2 hours) where signals are expired
+      const expiredSignals = CrowdManagementService.getActiveCommunitySignals(
+        'place_8th_cross_market',
+        new Date(Date.now() + 120 * 60 * 1000).toISOString()
+      );
+      assert.strictEqual(expiredSignals.length, 0);
+    });
+
+    it('29. verified local resident AT_CAPACITY report overrides stale low reservations and throttles venue', async () => {
+      CrowdManagementService.clearCommunitySignalsStore();
+
+      // Submit AT_CAPACITY report from verified local resident
+      await CrowdManagementService.submitCommunityCrowdSignal({
+        placeId: 'place_veena_stores',
+        crowdLevel: 'AT_CAPACITY',
+        estimatedWaitMinutes: 35,
+        reporterType: 'LOCAL_RESIDENT',
+        travelerId: 'resident_01',
+        note: 'Complete rush; token counter closed temporarily',
+        allowMockFallback: true,
+      });
+
+      const evaluation = await CrowdManagementService.evaluateVenueCapacity({
+        placeId: 'place_veena_stores',
+        intendedVisitTime: new Date().toISOString(),
+        allowMockFallback: true,
+      });
+
+      // Assert venue is throttled based on community report
+      assert.strictEqual(evaluation.status, 'AT_CAPACITY');
+      assert.strictEqual(evaluation.isThrottled, true);
+      assert.strictEqual(evaluation.remainingCapacity, 0);
+      assert.ok(evaluation.communitySignalsSummary);
+      assert.strictEqual(evaluation.communitySignalsSummary.activeReportsCount, 1);
+      assert.strictEqual(evaluation.communitySignalsSummary.averageWaitMinutes, 35);
+      assert.strictEqual(evaluation.communitySignalsSummary.predominantReportedLevel, 'AT_CAPACITY');
+    });
+
+    it('30. transparently attributes signal provenance and summary metadata', async () => {
+      CrowdManagementService.clearCommunitySignalsStore();
+
+      await CrowdManagementService.submitCommunityCrowdSignal({
+        placeId: 'place_janatha_hotel',
+        crowdLevel: 'MODERATE',
+        estimatedWaitMinutes: 10,
+        reporterType: 'VISITING_TRAVELER',
+        travelerId: 'traveler_sam',
+        allowMockFallback: true,
+      });
+
+      const evaluation = await CrowdManagementService.evaluateVenueCapacity({
+        placeId: 'place_janatha_hotel',
+        intendedVisitTime: new Date().toISOString(),
+        allowMockFallback: true,
+      });
+
+      assert.ok(evaluation.signalSource);
+      assert.ok(
+        evaluation.signalSource === 'COMMUNITY_SIGNALS' ||
+        evaluation.signalSource === 'HYBRID_BLENDED'
+      );
+      assert.ok(evaluation.communitySignalsSummary);
+      assert.strictEqual(evaluation.communitySignalsSummary.predominantReportedLevel, 'MODERATE');
+      assert.strictEqual(evaluation.communitySignalsSummary.averageWaitMinutes, 10);
+    });
+
+    it('31. resolves previously UNKNOWN venue capacity to confirmed state when community signals exist', async () => {
+      CrowdManagementService.clearCommunitySignalsStore();
+      const uncatalogedPlaceId = 'place_uncataloged_art_corner';
+
+      // Before community report: UNKNOWN
+      const beforeEval = await CrowdManagementService.evaluateVenueCapacity({
+        placeId: uncatalogedPlaceId,
+        intendedVisitTime: new Date().toISOString(),
+        allowMockFallback: false,
+      });
+      assert.strictEqual(beforeEval.status, 'UNKNOWN');
+
+      // Community report submitted
+      await CrowdManagementService.submitCommunityCrowdSignal({
+        placeId: uncatalogedPlaceId,
+        crowdLevel: 'LOW',
+        estimatedWaitMinutes: 0,
+        reporterType: 'LOCAL_RESIDENT',
+        travelerId: 'resident_deepa',
+        allowMockFallback: false,
+      });
+
+      // After community report: AVAILABLE via community signals
+      const afterEval = await CrowdManagementService.evaluateVenueCapacity({
+        placeId: uncatalogedPlaceId,
+        intendedVisitTime: new Date().toISOString(),
+        allowMockFallback: false,
+      });
+      assert.strictEqual(afterEval.status, 'AVAILABLE');
+      assert.strictEqual(afterEval.crowdLevel, 'LOW');
+      assert.strictEqual(afterEval.signalSource, 'COMMUNITY_SIGNALS');
+      assert.ok(afterEval.communitySignalsSummary);
+      assert.strictEqual(afterEval.communitySignalsSummary.activeReportsCount, 1);
+    });
   });
 });
