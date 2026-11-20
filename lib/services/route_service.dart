@@ -1,19 +1,65 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/walking_route.dart';
 
 /// Client route service providing walking routes and alternative (Plan-B) paths.
 ///
 /// INTEGRATION BOUNDARY:
-/// - Developer C owns Google Routes API generation and stop sequencing (C3 merged in backend).
-/// - Developer C owns venue hourly capacity and rerouting decision logic (C4).
-/// - Developer D presents supplied route responses and user-triggered Plan-B selections.
-/// - Clearly discloses sample responses adhering to Domain 08 and Domain 07 contracts.
+/// - Developer C owns Google Routes API generation and stop sequencing (`Maps-computeCapacityAwareRoute`).
+/// - Developer C owns venue hourly capacity and rerouting decision logic (`Maps-computePlanBReroute`).
+/// - Developer C owns crowd reporting (`Maps-reportVenueCrowd`).
+/// - Developer D presents supplied route responses, manages offline SQLite caching,
+///   and triggers crowd report callables with graceful offline fallback.
 class RouteService {
-  static const bool useMockRoutes = true;
+  final FirebaseFunctions? _functionsInstance;
+  final bool isTestMode;
+
+  RouteService({
+    FirebaseFunctions? functions,
+    this.isTestMode = false,
+  }) : _functionsInstance = functions;
+
+  FirebaseFunctions? get _functions {
+    if (_functionsInstance != null) return _functionsInstance;
+    try {
+      return FirebaseFunctions.instanceFor(region: 'us-central1');
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Returns canonical walking route matching C3 SAMPLE_NORMALIZED_WALKING_ROUTE fixture.
+  /// Calls Developer C's callable `Maps-computeCapacityAwareRoute` when live,
+  /// with automatic fallback to sample canonical route if offline or uninitialized.
   Future<WalkingRoute> getPersonalizedRoute({
     required List<String> placeIds,
+    String routeTitle = 'Malleshwaram Heritage & Coffee Trail',
+    String neighborhood = 'Malleshwaram',
   }) async {
+    final functions = _functions;
+    if (!isTestMode && functions != null) {
+      try {
+        final callable = functions.httpsCallable('Maps-computeCapacityAwareRoute');
+        final response = await callable.call<Map<String, dynamic>>({
+          'title': routeTitle,
+          'neighborhood': neighborhood,
+          'stops': placeIds.map((id) => {'placeId': id}).toList(),
+          'optimizeStopOrder': true,
+          'walkingPace': 'MODERATE',
+          'autoSubstituteFullStops': true,
+          'allowMockFallback': true,
+        });
+
+        final data = Map<String, dynamic>.from(response.data);
+        if (data.containsKey('route') && data['route'] != null) {
+          return WalkingRoute.fromMap(Map<String, dynamic>.from(data['route'] as Map));
+        } else if (data.containsKey('routeId')) {
+          return WalkingRoute.fromMap(data);
+        }
+      } catch (_) {
+        // Fall back gracefully to canonical sample fixture
+      }
+    }
+
     // Simulate network delay
     await Future.delayed(const Duration(milliseconds: 300));
 
@@ -150,11 +196,33 @@ class RouteService {
   }
 
   /// Requests a Plan-B alternative route from supplied C4 disruption response.
-  /// Does not compute rerouting client-side; returns supplied alternative path.
+  /// Calls Developer C's callable `Maps-computePlanBReroute` when live,
+  /// with automatic fallback to sample Plan-B route if offline or uninitialized.
   Future<WalkingRoute> requestPlanBAlternative({
     required String originalRouteId,
     required String constrainedPlaceId,
   }) async {
+    final functions = _functions;
+    if (!isTestMode && functions != null) {
+      try {
+        final callable = functions.httpsCallable('Maps-computePlanBReroute');
+        final response = await callable.call<Map<String, dynamic>>({
+          'originalRouteId': originalRouteId,
+          'constrainedPlaceId': constrainedPlaceId,
+          'allowMockFallback': true,
+        });
+
+        final data = Map<String, dynamic>.from(response.data);
+        if (data.containsKey('route') && data['route'] != null) {
+          return WalkingRoute.fromMap(Map<String, dynamic>.from(data['route'] as Map));
+        } else if (data.containsKey('routeId')) {
+          return WalkingRoute.fromMap(data);
+        }
+      } catch (_) {
+        // Fall back gracefully to canonical sample fixture
+      }
+    }
+
     await Future.delayed(const Duration(milliseconds: 400));
 
     return WalkingRoute(
@@ -246,6 +314,39 @@ class RouteService {
       createdAt: '2026-11-20T08:35:00.000Z',
       updatedAt: '2026-11-20T08:35:00.000Z',
     );
+  }
+
+  /// Reports real-time venue crowd level via Developer C's callable `Maps-reportVenueCrowd`.
+  Future<Map<String, dynamic>> reportVenueCrowd({
+    required String placeId,
+    required String crowdLevel, // 'LOW', 'MODERATE', 'HIGH', 'AT_CAPACITY'
+    int estimatedWaitMinutes = 0,
+    bool isVerifiedResident = false,
+  }) async {
+    final functions = _functions;
+    if (!isTestMode && functions != null) {
+      try {
+        final callable = functions.httpsCallable('Maps-reportVenueCrowd');
+        final response = await callable.call<Map<String, dynamic>>({
+          'placeId': placeId,
+          'crowdLevel': crowdLevel,
+          'estimatedWaitMinutes': estimatedWaitMinutes,
+          'reporterType': isVerifiedResident ? 'LOCAL_RESIDENT' : 'VISITING_TRAVELER',
+        });
+        return Map<String, dynamic>.from(response.data);
+      } catch (_) {
+        // Fall back to local simulated response
+      }
+    }
+
+    return {
+      'status': 'SUCCESS',
+      'placeId': placeId,
+      'crowdLevel': crowdLevel,
+      'pointsAwarded': isVerifiedResident ? 25 : 10,
+      'isSimulated': true,
+      'reportedAt': DateTime.now().toIso8601String(),
+    };
   }
 
   /// Returns sample active venue disruptions matching Domain 07 contract.

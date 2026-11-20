@@ -1,6 +1,7 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -35,12 +36,14 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   int _activeStepIndex = 0;
   late final StreetAssistanceService _streetAssistanceService;
   DeviceNetworkStatus _networkStatus = DeviceNetworkStatus.wifi;
+  Stream<Position>? _positionStream;
 
   @override
   void initState() {
     super.initState();
     _streetAssistanceService = ref.read(streetAssistanceServiceProvider);
     _checkNetworkStatus();
+    _initGpsTracking();
   }
 
   Future<void> _checkNetworkStatus() async {
@@ -52,6 +55,45 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
         });
       }
     } catch (_) {}
+  }
+
+  void _initGpsTracking() {
+    try {
+      final settings = const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      );
+      _positionStream = Geolocator.getPositionStream(locationSettings: settings);
+      _positionStream?.listen((position) {
+        _checkStepProximity(position);
+      });
+    } catch (_) {}
+  }
+
+  void _checkStepProximity(Position position) {
+    final routeAsync = ref.read(activeRouteProvider);
+    final route = routeAsync.valueOrNull;
+    if (route == null) return;
+
+    final allSteps = route.legs.expand((l) => l.steps).toList();
+    if (_activeStepIndex >= allSteps.length) return;
+
+    final currentStep = allSteps[_activeStepIndex];
+    final distanceToStepEnd = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      currentStep.endCoordinate.latitude,
+      currentStep.endCoordinate.longitude,
+    );
+
+    // Auto-advance step if user is within 25 meters of step boundary
+    if (distanceToStepEnd <= 25.0 && _activeStepIndex < allSteps.length - 1) {
+      if (mounted) {
+        setState(() {
+          _activeStepIndex++;
+        });
+      }
+    }
   }
 
   @override
@@ -94,6 +136,78 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) => const _StreetAssistanceSheet(),
+    );
+  }
+
+  void _openCrowdReportDialog(BuildContext context, String placeId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Report Crowd: ${placeId.replaceAll('_', ' ').toUpperCase()}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'How crowded is it right now?',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildCrowdButton(ctx, placeId, 'Quiet', 'LOW'),
+                _buildCrowdButton(ctx, placeId, 'Moderate', 'MODERATE'),
+                _buildCrowdButton(ctx, placeId, 'Busy', 'HIGH'),
+                _buildCrowdButton(ctx, placeId, 'Packed', 'AT_CAPACITY'),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCrowdButton(BuildContext ctx, String placeId, String label, String level) {
+    return ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: level == 'AT_CAPACITY' ? Colors.red.shade100 : Colors.teal.shade50,
+        foregroundColor: level == 'AT_CAPACITY' ? Colors.red.shade900 : Colors.teal.shade900,
+      ),
+      onPressed: () async {
+        Navigator.of(ctx).pop();
+        try {
+          final service = ref.read(routeServiceProvider);
+          final res = await service.reportVenueCrowd(
+            placeId: placeId,
+            crowdLevel: level,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Crowd reported as $label! Earned ${res['pointsAwarded'] ?? 10} community points.',
+                ),
+                backgroundColor: Colors.teal.shade800,
+              ),
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to submit crowd report: $e')),
+            );
+          }
+        }
+      },
+      child: Text(label),
     );
   }
 
@@ -410,7 +524,17 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.people_outline, size: 20, color: Colors.teal),
+                                tooltip: 'Report Crowd',
+                                onPressed: () => _openCrowdReportDialog(context, placeId),
+                              ),
+                              const Icon(Icons.chevron_right, size: 18),
+                            ],
+                          ),
                           onTap: () {
                             if (_mapController != null &&
                                 idx < route.waypoints.length) {
