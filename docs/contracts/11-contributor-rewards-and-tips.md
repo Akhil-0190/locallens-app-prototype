@@ -115,5 +115,76 @@ In alignment with frozen project requirements:
    - Caller cannot inspect another contributor's reward ledger unless granted `ADMIN` or `MODERATOR` role.
 2. **Endpoints:**
    - `initiateTip({ recipientUserId, spotId, amountInr, personalNote?, mode? })`
-   - `settleTipSandbox({ tipId, simulatedOutcome })` (Restricted strictly to `paymentMode === 'SANDBOX'`)
+   - `settleTip({ tipId, simulatedOutcome })` (Server enforces payment environment)
    - `getContributorRewardSummary({ userId? })`
+
+---
+
+## 7. One-on-One Paid Local Guidance Lifecycle (A5-V-01)
+
+### 7.1 Guidance Offering Schema
+```typescript
+interface GuidanceOfferingDocument {
+  offeringId: string;
+  guideUserId: string;
+  neighborhood: string;
+  title: string;
+  description: string;
+  durationMinutes: number; // 15 to 480 mins
+  priceInr: number; // ₹100 to ₹10,000
+  meetingPoint: string;
+  languages: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+### 7.2 Guidance Booking Lifecycle & State Machine
+```
+[Traveler Requests & Pays] ---> REQUESTED (paymentStatus: INITIATED -> COMPLETED)
+                                     |
+              +----------------------+----------------------+
+              |                                             |
+     [Guide Accepts]                                 [Guide Rejects]
+              |                                             |
+              v                                             v
+          CONFIRMED                                      REJECTED
+              |                                     (paymentStatus: FAILED/REFUND)
+    +---------+---------+
+    |                   |
+[Completed]         [Cancelled]
+    |                   |
+    v                   v
+COMPLETED           CANCELLED
+(Escrow credited    (paymentStatus: FAILED/REFUND)
+ to guide ledger)
+```
+
+### 7.3 Financial Escrow, Refund Concurrency & Ledger Invariant
+- Platform Fee: 10%, minimum ₹25 (`priceInr - platformFeeInr = guideNetInr`).
+- Upon `completeGuidanceBooking`, `guideNetInr` is credited to `contributor_rewards/{guideUserId}` inside a Firestore transaction.
+- If `unrecoveredAdjustmentInr > 0`, net earnings offset clawback debt first.
+- Strict invariant enforced:
+  $$\text{totalEarningsInr} + \text{unrecoveredAdjustmentInr} = \text{availableBalanceInr} + \text{withdrawnTotalInr}$$
+- Guide receives +50 reputation points per completed guidance session.
+
+#### Refund Concurrency, Idempotency & Failure Recovery:
+- Rejection and cancellation of paid sessions trigger a genuine payment gateway refund outside the Firestore transaction.
+- **Two-Phase Atomic Refund Locking:**
+  1. *Phase 1 (Transaction):* Asserts authorization and status, derives deterministic idempotency key (`ref_<bookingId>`), checks that no in-flight refund is active, and atomically sets `refundStatus: 'PENDING'`, `refundIdempotencyKey`, and `refundInitiatedAt`. Concurrent requests seeing `PENDING` within the 60s timeout window are blocked.
+  2. *Phase 2 (External Call):* Invokes `paymentAdapter.refundPayment(...)` with `idempotencyKey` outside of any transaction to prevent holding database locks across network operations.
+  3. *Phase 3 (Transaction):* Upon adapter confirmation, atomically finalizes document status (`CANCELLED` or `REJECTED`), `paymentStatus: 'FAILED'`, `refundStatus: 'COMPLETED'`, `refundReference`, and `refundedAt`.
+- If the external refund fails or throws, `refundStatus` is marked `'FAILED'`. Stale or interrupted operations can be safely recovered via retry with the identical idempotency key without issuing duplicate disbursements.
+
+### 7.4 Callables
+- `registerGuidanceOffering`
+- `listGuidanceOfferings`
+- `requestLocalGuidance`
+- `confirmGuidancePayment`
+- `acceptGuidanceRequest`
+- `rejectGuidanceRequest`
+- `cancelGuidanceBooking`
+- `completeGuidanceBooking`
+- `getGuidanceBooking`
+- `listMyGuidanceBookings`

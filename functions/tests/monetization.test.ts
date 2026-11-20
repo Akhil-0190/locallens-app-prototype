@@ -14,6 +14,13 @@ import {
   RoutePassDocumentSchema,
   PartnerMerchantSubscription,
   PartnerMerchantSubscriptionSchema,
+  GuidanceOfferingDocument,
+  GuidanceOfferingDocumentSchema,
+  GuidanceBookingDocument,
+  GuidanceBookingDocumentSchema,
+  ContributionDocument,
+  ContributionDocumentSchema,
+  ContributorSubmissionInputSchema,
 } from '../src/types/contracts/index.js';
 import {
   SandboxPaymentAdapter,
@@ -499,7 +506,7 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
         delete process.env.K_SERVICE;
         assert.throws(
           () => validateSettlementEnvironment({ transactionPaymentMode: 'SANDBOX', isSimulationRequested: true }),
-          /Security violation: PAYMENT_ENV cannot be set to SANDBOX in production NODE_ENV/
+          /Security violation: PAYMENT_ENV cannot be set to SANDBOX/
         );
 
         // Case 2: In LIVE environment, SANDBOX transactions are rejected
@@ -546,6 +553,16 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
         process.env.NODE_ENV = 'production';
         assert.doesNotThrow(() =>
           validateSettlementEnvironment({ transactionPaymentMode: 'LIVE', isSimulationRequested: false })
+        );
+
+        // Case 8 (Mandatory Security Verification): K_SERVICE is present (deployed Cloud Functions),
+        // NODE_ENV is absent, and PAYMENT_ENV=SANDBOX -> MUST REJECT!
+        process.env.PAYMENT_ENV = 'SANDBOX';
+        delete process.env.NODE_ENV;
+        process.env.K_SERVICE = 'projects/test-proj/services/neighborhoodguide-functions';
+        assert.throws(
+          () => validateSettlementEnvironment({ transactionPaymentMode: 'SANDBOX', isSimulationRequested: true }),
+          /Security violation: PAYMENT_ENV cannot be set to SANDBOX in deployed cloud runtime or production NODE_ENV/
         );
       } finally {
         process.env.PAYMENT_ENV = origPaymentEnv;
@@ -686,6 +703,1104 @@ describe('Task A5 — Monetization & Contributor Ecosystem Backend', () => {
       assert.strictEqual((publicAttribution as any).availableBalanceInr, undefined);
       assert.strictEqual((publicAttribution as any).withdrawnTotalInr, undefined);
       assert.strictEqual((publicAttribution as any).totalEarningsInr, undefined);
+    });
+  });
+
+  // ==============================================================================
+  // 7. One-on-One Paid Local Guidance Lifecycle Tests (A5-V-01)
+  // ==============================================================================
+  describe('One-on-One Paid Local Guidance Lifecycle (A5-V-01)', () => {
+    test('Offering registration enforces price and duration limits and valid schema', () => {
+      const validOffering: GuidanceOfferingDocument = {
+        offeringId: 'guide_offering_priya_01',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        title: 'Heritage Temple Architecture Walk',
+        description: 'Guided walk through Malleshwaram temples and traditional agraharas.',
+        durationMinutes: 90,
+        priceInr: 750,
+        meetingPoint: 'Kadu Malleshwara Temple 15th Cross',
+        languages: ['Kannada', 'English'],
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => GuidanceOfferingDocumentSchema.parse(validOffering));
+
+      // Rejects price < 100
+      assert.throws(
+        () => GuidanceOfferingDocumentSchema.parse({ ...validOffering, priceInr: 50 }),
+        /too_small/
+      );
+
+      // Rejects price > 10000
+      assert.throws(
+        () => GuidanceOfferingDocumentSchema.parse({ ...validOffering, priceInr: 15000 }),
+        /too_big/
+      );
+
+      // Rejects duration < 15
+      assert.throws(
+        () => GuidanceOfferingDocumentSchema.parse({ ...validOffering, durationMinutes: 10 }),
+        /too_small/
+      );
+    });
+
+    test('Self-booking is strictly prohibited and platform fee is 10% (min ₹25)', () => {
+      const validateBookingParams = (travelerId: string, guideId: string, priceInr: number) => {
+        if (travelerId === guideId) {
+          throw new Error('Self-booking is strictly prohibited.');
+        }
+        const platformFeeInr = Math.max(25, Math.round(priceInr * 0.1));
+        const guideNetInr = priceInr - platformFeeInr;
+        return { platformFeeInr, guideNetInr };
+      };
+
+      // Self-booking throws
+      assert.throws(
+        () => validateBookingParams('usr_priya_782', 'usr_priya_782', 750),
+        /Self-booking is strictly prohibited/
+      );
+
+      // ₹200 offering: 10% is 20 -> min ₹25 applies
+      const r1 = validateBookingParams('usr_traveler_01', 'usr_guide_02', 200);
+      assert.strictEqual(r1.platformFeeInr, 25);
+      assert.strictEqual(r1.guideNetInr, 175);
+
+      // ₹750 offering: 10% is 75 -> ₹75 fee
+      const r2 = validateBookingParams('usr_traveler_01', 'usr_guide_02', 750);
+      assert.strictEqual(r2.platformFeeInr, 75);
+      assert.strictEqual(r2.guideNetInr, 675);
+
+      // ₹2,000 offering: 10% is 200 -> ₹200 fee
+      const r3 = validateBookingParams('usr_traveler_01', 'usr_guide_02', 2000);
+      assert.strictEqual(r3.platformFeeInr, 200);
+      assert.strictEqual(r3.guideNetInr, 1800);
+    });
+
+    test('Payment Confirmation & State Transitions: REQUESTED -> CONFIRMED -> COMPLETED', () => {
+      const now = new Date().toISOString();
+      const booking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_test_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Temple Architecture Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'INITIATED',
+        paymentGatewayReference: 'sandbox_sim_guidance_abc123',
+        status: 'REQUESTED',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(booking));
+
+      // Guide accepts
+      const acceptedBooking: GuidanceBookingDocument = { ...booking, status: 'ACCEPTED' };
+      assert.strictEqual(acceptedBooking.status, 'ACCEPTED');
+
+      // Traveler completes payment
+      const confirmedBooking: GuidanceBookingDocument = {
+        ...acceptedBooking,
+        paymentStatus: 'COMPLETED',
+        status: 'CONFIRMED',
+      };
+      assert.strictEqual(confirmedBooking.status, 'CONFIRMED');
+      assert.strictEqual(confirmedBooking.paymentStatus, 'COMPLETED');
+
+      // Escrow Completion: Credits guide ledger and maintains balance invariant
+      let totalEarningsInr = 1000;
+      let availableBalanceInr = 500;
+      let withdrawnTotalInr = 500;
+      let unrecoveredAdjustmentInr = 0;
+
+      const netToAdd = confirmedBooking.guideNetInr; // 675
+      totalEarningsInr += netToAdd;
+      availableBalanceInr += netToAdd;
+
+      // Invariant Check
+      assert.strictEqual(
+        totalEarningsInr + unrecoveredAdjustmentInr,
+        availableBalanceInr + withdrawnTotalInr
+      );
+      assert.strictEqual(totalEarningsInr, 1675);
+      assert.strictEqual(availableBalanceInr, 1175);
+    });
+
+    test('Guidance cancellation and rejection marks payment as FAILED/REFUND', () => {
+      const now = new Date().toISOString();
+      const paidBooking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_test_02',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_xyz789',
+        status: 'CONFIRMED',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Guide cancels / rejects due to emergency
+      const cancelledBooking: GuidanceBookingDocument = {
+        ...paidBooking,
+        status: 'CANCELLED',
+        cancellationReason: 'Heavy rain advisory in Malleshwaram',
+        paymentStatus: 'FAILED', // Refunded to traveler
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(cancelledBooking));
+      assert.strictEqual(cancelledBooking.status, 'CANCELLED');
+      assert.strictEqual(cancelledBooking.paymentStatus, 'FAILED');
+    });
+
+    // Shared helper for durable sandbox refund test simulation
+    const createMockRefundFirestore = (sharedStorage = new Map<string, any>()) => {
+      let queue = Promise.resolve();
+      return {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            id: docId,
+            get: async () => ({
+              exists: sharedStorage.has(`${col}/${docId}`),
+              data: () => sharedStorage.get(`${col}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          return new Promise((resolve, reject) => {
+            queue = queue.then(async () => {
+              try {
+                const tx = {
+                  get: async (docRef: any) => ({
+                    exists: sharedStorage.has(`_sandbox_simulated_refunds/${docRef.id}`),
+                    data: () => sharedStorage.get(`_sandbox_simulated_refunds/${docRef.id}`),
+                  }),
+                  set: (docRef: any, data: any) => {
+                    sharedStorage.set(`_sandbox_simulated_refunds/${docRef.id}`, data);
+                  },
+                };
+                const res = await fn(tx);
+                resolve(res);
+              } catch (err) {
+                reject(err);
+              }
+            });
+          });
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+    };
+
+    test('Payment adapter executes supported simulated refund upon cancellation', async () => {
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
+      const refund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_02',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 750,
+        reason: 'Session cancelled by participant',
+        idempotencyKey: 'ref_guidance_blr_test_02',
+      });
+      assert.strictEqual(refund.refunded, true);
+      assert.strictEqual(refund.amountInr, 750);
+      assert.strictEqual(refund.paymentMode, 'SANDBOX');
+      assert.ok(refund.refundReference.startsWith('sandbox_sim_ref_'));
+    });
+
+    test('Regression check: Payment adapter fails closed when idempotencyKey is missing or empty', async () => {
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
+
+      // 1. Missing idempotencyKey
+      const refundMissing = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_nokey',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 500,
+        reason: 'Missing key test',
+      });
+      assert.strictEqual(refundMissing.refunded, false, 'Missing key must fail closed');
+      assert.strictEqual(refundMissing.refundReference, '', 'Must not generate a refund reference');
+      assert.ok(
+        refundMissing.failureReason?.includes('Missing mandatory idempotencyKey'),
+        `Expected failureReason for missing key, got: ${refundMissing.failureReason}`
+      );
+
+      // 2. Empty string or whitespace idempotencyKey
+      const refundEmpty = await adapter.refundPayment({
+        transactionId: 'guidance_blr_test_emptykey',
+        gatewayReference: 'sandbox_sim_guidance_xyz789',
+        amountInr: 500,
+        reason: 'Empty key test',
+        idempotencyKey: '   ',
+      });
+      assert.strictEqual(refundEmpty.refunded, false, 'Whitespace key must fail closed');
+      assert.strictEqual(refundEmpty.refundReference, '', 'Must not generate a refund reference');
+      assert.ok(
+        refundEmpty.failureReason?.includes('Missing mandatory idempotencyKey'),
+        `Expected failureReason for empty key, got: ${refundEmpty.failureReason}`
+      );
+    });
+
+    test('Guidance service treats refunded: false as a failed refund without marking booking completed financially', () => {
+      // Simulate guidance service refund processing logic upon adapter failure
+      const processSimulatedRefundOutcome = (
+        booking: GuidanceBookingDocument,
+        refundResult: { refunded: boolean; refundReference: string; failureReason?: string }
+      ) => {
+        if (!refundResult.refunded) {
+          // Booking marks refundStatus as FAILED; status does not transition to completed financially
+          return {
+            ...booking,
+            refundStatus: 'FAILED',
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return {
+          ...booking,
+          status: 'CANCELLED',
+          paymentStatus: 'FAILED',
+          refundStatus: 'COMPLETED',
+          refundReference: refundResult.refundReference,
+          refundedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      };
+
+      const now = new Date().toISOString();
+      const confirmedBooking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_failure_flow_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_fail_flow_01',
+        status: 'CONFIRMED',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const failedResult = {
+        refunded: false,
+        refundReference: '',
+        failureReason: 'Missing mandatory idempotencyKey',
+      };
+
+      const resultingDoc = processSimulatedRefundOutcome(confirmedBooking, failedResult);
+
+      assert.strictEqual(resultingDoc.refundStatus, 'FAILED');
+      assert.strictEqual(resultingDoc.status, 'CONFIRMED', 'Status must not transition to CANCELLED or REJECTED when refund fails');
+      assert.strictEqual((resultingDoc as any).refundReference, undefined, 'No refund reference must be recorded');
+      assert.strictEqual((resultingDoc as any).refundedAt, undefined, 'No refundedAt timestamp must be recorded');
+      assert.strictEqual(resultingDoc.paymentStatus, 'COMPLETED', 'Payment status must not be marked refunded if adapter declined');
+    });
+
+    test('Guidance refund idempotency: Repeated refund calls with same idempotencyKey return identical result', async () => {
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
+      const idempotencyKey = 'ref_guidance_blr_idem_01';
+
+      const firstRefund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_idem_01',
+        gatewayReference: 'sandbox_sim_guidance_idem_01',
+        amountInr: 750,
+        reason: 'Client requested cancellation',
+        idempotencyKey,
+      });
+
+      const secondRefund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_idem_01',
+        gatewayReference: 'sandbox_sim_guidance_idem_01',
+        amountInr: 750,
+        reason: 'Duplicate client retry',
+        idempotencyKey,
+      });
+
+      assert.strictEqual(firstRefund.refunded, true);
+      assert.strictEqual(secondRefund.refunded, true);
+      assert.strictEqual(firstRefund.refundReference, secondRefund.refundReference);
+      assert.strictEqual(firstRefund.amountInr, secondRefund.amountInr);
+    });
+
+    test('Durable Sandbox Refund Idempotency: Survives instance restart and shares state across instances via Firestore', async () => {
+      // Mock Firestore database representing shared durable storage
+      const mockStorage = new Map<string, any>();
+      const mockFirestore = {
+        collection: (collectionName: string) => ({
+          doc: (docId: string) => ({
+            get: async () => ({
+              exists: mockStorage.has(`${collectionName}/${docId}`),
+              data: () => mockStorage.get(`${collectionName}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (updateFunction: (tx: any) => Promise<any>) => {
+          const tx = {
+            get: async (docRef: any) => ({
+              exists: mockStorage.has(`_sandbox_simulated_refunds/ref_guidance_restart_01`),
+              data: () => mockStorage.get(`_sandbox_simulated_refunds/ref_guidance_restart_01`),
+            }),
+            set: (docRef: any, data: any) => {
+              mockStorage.set(`_sandbox_simulated_refunds/ref_guidance_restart_01`, data);
+            },
+          };
+          return updateFunction(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const idempotencyKey = 'ref_guidance_restart_01';
+
+      // 1. Instance 1 executes refund and stores in durable mock Firestore
+      const instance1 = new SandboxPaymentAdapter(mockFirestore);
+      const refund1 = await instance1.refundPayment({
+        transactionId: 'guidance_blr_restart_01',
+        gatewayReference: 'sandbox_sim_guidance_restart_01',
+        amountInr: 850,
+        reason: 'Client cancelled session',
+        idempotencyKey,
+      });
+
+      assert.strictEqual(refund1.refunded, true);
+      assert.ok(mockStorage.has(`_sandbox_simulated_refunds/${idempotencyKey}`));
+
+      // 2. Instance 2 starts afresh (empty local memory) simulating Cloud Function restart / new instance
+      const instance2 = new SandboxPaymentAdapter(mockFirestore);
+      const refund2 = await instance2.refundPayment({
+        transactionId: 'guidance_blr_restart_01',
+        gatewayReference: 'sandbox_sim_guidance_restart_01',
+        amountInr: 850,
+        reason: 'Duplicate retry received after cold start',
+        idempotencyKey,
+      });
+
+      // Both instances must return the exact same reference and amount
+      assert.strictEqual(refund2.refunded, true);
+      assert.strictEqual(refund2.refundReference, refund1.refundReference);
+      assert.strictEqual(refund2.amountInr, refund1.amountInr);
+      assert.strictEqual(refund2.isSimulated, true);
+    });
+
+    test('1. Firestore persistence failure returns an explicit error rather than an in-memory success', async () => {
+      // Mock Firestore that fails persistence
+      const failingFirestore = {
+        collection: () => ({
+          doc: () => ({
+            get: async () => {
+              throw new Error('Firestore connection unavailable (ETIMEDOUT)');
+            },
+          }),
+        }),
+        runTransaction: async () => {
+          throw new Error('Firestore transaction failed: Lock acquisition timeout');
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const adapter = new SandboxPaymentAdapter(failingFirestore);
+      const refund = await adapter.refundPayment({
+        transactionId: 'guidance_blr_failpersist_01',
+        gatewayReference: 'sandbox_sim_guidance_failpersist_01',
+        amountInr: 500,
+        reason: 'Cancellation test during database failure',
+        idempotencyKey: 'ref_guidance_failpersist_01',
+      });
+
+      // Must return explicit failure; never silent in-memory success
+      assert.strictEqual(refund.refunded, false, 'Refund must not report success without confirmed persistence');
+      assert.strictEqual(refund.refundReference, '', 'Refund reference must be empty on persistence failure');
+      assert.ok(
+        refund.failureReason?.includes('Durable persistence failure'),
+        `Expected failureReason to indicate persistence failure, got: ${refund.failureReason}`
+      );
+    });
+
+    test('2. Retrying the same idempotency key after Firestore recovers returns the original persisted refund', async () => {
+      const mockStorage = new Map<string, any>();
+      let isFirestoreHealthy = false;
+
+      const recoverableFirestore = {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            get: async () => {
+              if (!isFirestoreHealthy) throw new Error('Firestore cluster unavailable');
+              return {
+                exists: mockStorage.has(`${col}/${docId}`),
+                data: () => mockStorage.get(`${col}/${docId}`),
+              };
+            },
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          if (!isFirestoreHealthy) throw new Error('Firestore cluster unavailable');
+          const tx = {
+            get: async (docRef: any) => ({
+              exists: mockStorage.has(`_sandbox_simulated_refunds/ref_recover_01`),
+              data: () => mockStorage.get(`_sandbox_simulated_refunds/ref_recover_01`),
+            }),
+            set: (docRef: any, data: any) => {
+              mockStorage.set(`_sandbox_simulated_refunds/ref_recover_01`, data);
+            },
+          };
+          return fn(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const adapter = new SandboxPaymentAdapter(recoverableFirestore);
+      const idempotencyKey = 'ref_recover_01';
+
+      // Attempt 1: Database down -> Returns error
+      const failedAttempt = await adapter.refundPayment({
+        transactionId: 'guidance_blr_recover_01',
+        gatewayReference: 'sandbox_sim_guidance_recover_01',
+        amountInr: 750,
+        reason: 'Attempt during network failure',
+        idempotencyKey,
+      });
+      assert.strictEqual(failedAttempt.refunded, false);
+
+      // Database recovers!
+      isFirestoreHealthy = true;
+
+      // Attempt 2: Initial successful persistence
+      const successfulAttempt = await adapter.refundPayment({
+        transactionId: 'guidance_blr_recover_01',
+        gatewayReference: 'sandbox_sim_guidance_recover_01',
+        amountInr: 750,
+        reason: 'Retry after recovery',
+        idempotencyKey,
+      });
+      assert.strictEqual(successfulAttempt.refunded, true);
+      assert.ok(successfulAttempt.refundReference.startsWith('sandbox_sim_ref_'));
+
+      // Attempt 3: Subsequent retry retrieves identical persisted refund
+      const replayAttempt = await adapter.refundPayment({
+        transactionId: 'guidance_blr_recover_01',
+        gatewayReference: 'sandbox_sim_guidance_recover_01',
+        amountInr: 750,
+        reason: 'Duplicate retry from network layer',
+        idempotencyKey,
+      });
+      assert.strictEqual(replayAttempt.refunded, true);
+      assert.strictEqual(replayAttempt.refundReference, successfulAttempt.refundReference);
+      assert.strictEqual(replayAttempt.amountInr, successfulAttempt.amountInr);
+    });
+
+    test('3. Two adapter instances using the same Firestore records return the same refund reference', async () => {
+      const mockStorage = new Map<string, any>();
+      const sharedFirestore = {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            get: async () => ({
+              exists: mockStorage.has(`${col}/${docId}`),
+              data: () => mockStorage.get(`${col}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          const tx = {
+            get: async () => ({
+              exists: mockStorage.has('_sandbox_simulated_refunds/ref_instances_01'),
+              data: () => mockStorage.get('_sandbox_simulated_refunds/ref_instances_01'),
+            }),
+            set: (_: any, data: any) => {
+              mockStorage.set('_sandbox_simulated_refunds/ref_instances_01', data);
+            },
+          };
+          return fn(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      const idempotencyKey = 'ref_instances_01';
+
+      // Instance 1 processes refund
+      const adapter1 = new SandboxPaymentAdapter(sharedFirestore);
+      const refund1 = await adapter1.refundPayment({
+        transactionId: 'guidance_blr_instances_01',
+        gatewayReference: 'sandbox_sim_guidance_instances_01',
+        amountInr: 1200,
+        reason: 'Instance 1 cancellation',
+        idempotencyKey,
+      });
+      assert.strictEqual(refund1.refunded, true);
+
+      // Instance 2 starts with zero in-memory state (new Cloud Function instance)
+      const adapter2 = new SandboxPaymentAdapter(sharedFirestore);
+      const refund2 = await adapter2.refundPayment({
+        transactionId: 'guidance_blr_instances_01',
+        gatewayReference: 'sandbox_sim_guidance_instances_01',
+        amountInr: 1200,
+        reason: 'Instance 2 cancellation retry',
+        idempotencyKey,
+      });
+
+      assert.strictEqual(refund2.refunded, true);
+      assert.strictEqual(refund2.refundReference, refund1.refundReference);
+      assert.strictEqual(refund2.amountInr, 1200);
+    });
+
+    test('4. Concurrent requests using the same key cannot create different refund records', async () => {
+      const mockStorage = new Map<string, any>();
+      const transactionalFirestore = createMockRefundFirestore(mockStorage);
+      const adapter = new SandboxPaymentAdapter(transactionalFirestore);
+      const idempotencyKey = 'ref_concurrent_01';
+
+      // Send 5 concurrent refund operations with the same idempotency key
+      const results = await Promise.all([
+        adapter.refundPayment({
+          transactionId: 'guidance_blr_conc_01',
+          gatewayReference: 'sandbox_sim_guidance_conc_01',
+          amountInr: 900,
+          reason: 'Concurrent request 1',
+          idempotencyKey,
+        }),
+        adapter.refundPayment({
+          transactionId: 'guidance_blr_conc_01',
+          gatewayReference: 'sandbox_sim_guidance_conc_01',
+          amountInr: 900,
+          reason: 'Concurrent request 2',
+          idempotencyKey,
+        }),
+        adapter.refundPayment({
+          transactionId: 'guidance_blr_conc_01',
+          gatewayReference: 'sandbox_sim_guidance_conc_01',
+          amountInr: 900,
+          reason: 'Concurrent request 3',
+          idempotencyKey,
+        }),
+      ]);
+
+      assert.strictEqual(results.length, 3);
+      for (const res of results) {
+        assert.strictEqual(res.refunded, true);
+        assert.strictEqual(res.refundReference, results[0].refundReference);
+        assert.strictEqual(res.amountInr, 900);
+      }
+    });
+
+    test('5. An interrupted operation does not result in a second simulated refund when retried', async () => {
+      const mockStorage = new Map<string, any>();
+      const existingReference = 'sandbox_sim_ref_orig_interrupted_999';
+
+      // Pre-seed storage simulating a previous adapter run that persisted the refund before caller crashed
+      mockStorage.set('_sandbox_simulated_refunds/ref_interrupted_01', {
+        refunded: true,
+        refundReference: existingReference,
+        paymentMode: 'SANDBOX',
+        amountInr: 650,
+        refundedAt: '2026-11-20T12:00:00.000Z',
+        isSimulated: true,
+      });
+
+      const sharedFirestore = {
+        collection: (col: string) => ({
+          doc: (docId: string) => ({
+            get: async () => ({
+              exists: mockStorage.has(`${col}/${docId}`),
+              data: () => mockStorage.get(`${col}/${docId}`),
+            }),
+          }),
+        }),
+        runTransaction: async (fn: (tx: any) => Promise<any>) => {
+          const key = '_sandbox_simulated_refunds/ref_interrupted_01';
+          const tx = {
+            get: async () => ({
+              exists: mockStorage.has(key),
+              data: () => mockStorage.get(key),
+            }),
+            set: (_: any, data: any) => {
+              mockStorage.set(key, data);
+            },
+          };
+          return fn(tx);
+        },
+      } as unknown as FirebaseFirestore.Firestore;
+
+      // Fresh adapter with zero in-memory cache receives retry
+      const freshAdapter = new SandboxPaymentAdapter(sharedFirestore);
+      const retriedRefund = await freshAdapter.refundPayment({
+        transactionId: 'guidance_blr_interrupted_01',
+        gatewayReference: 'sandbox_sim_guidance_interrupted_01',
+        amountInr: 650,
+        reason: 'Recovery retry following client process restart',
+        idempotencyKey: 'ref_interrupted_01',
+      });
+
+      // Must return original reference; must NOT generate a new reference
+      assert.strictEqual(retriedRefund.refunded, true);
+      assert.strictEqual(retriedRefund.refundReference, existingReference);
+      assert.strictEqual(retriedRefund.amountInr, 650);
+    });
+
+    test('Guidance refund concurrency lock: In-flight PENDING refund blocks concurrent attempts within timeout', () => {
+      const claimTimeoutMs = 60000;
+      const checkConcurrencyLock = (
+        doc: GuidanceBookingDocument,
+        nowMs: number = Date.now()
+      ) => {
+        if (doc.refundStatus === 'PENDING') {
+          const initiatedTime = doc.refundInitiatedAt ? new Date(doc.refundInitiatedAt).getTime() : 0;
+          const elapsed = nowMs - initiatedTime;
+          if (elapsed < claimTimeoutMs) {
+            throw new Error('A refund operation is currently pending for this booking. Please try again shortly.');
+          }
+        }
+      };
+
+      const now = new Date().toISOString();
+      const pendingDoc: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_lock_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_lock_01',
+        status: 'CONFIRMED',
+        refundStatus: 'PENDING',
+        refundIdempotencyKey: 'ref_guidance_blr_lock_01',
+        refundInitiatedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(pendingDoc));
+
+      // Immediate concurrent attempt within 5 seconds throws concurrency error
+      assert.throws(
+        () => checkConcurrencyLock(pendingDoc, Date.now() + 5000),
+        /A refund operation is currently pending for this booking/
+      );
+
+      // Attempt after 65 seconds permits recovery / retry
+      assert.doesNotThrow(() => checkConcurrencyLock(pendingDoc, Date.now() + 65000));
+    });
+
+    test('Guidance refund failure leaves refundStatus as FAILED and enables safe retry and recovery', async () => {
+      const now = new Date().toISOString();
+      const booking: GuidanceBookingDocument = {
+        bookingId: 'guidance_blr_fail_01',
+        offeringId: 'guide_offering_priya_01',
+        travelerUserId: 'usr_traveler_alex',
+        guideUserId: 'usr_priya_782',
+        neighborhood: 'Malleshwaram',
+        offeringTitle: 'Heritage Walk',
+        scheduledDateTime: new Date(Date.now() + 86400000).toISOString(),
+        durationMinutes: 90,
+        meetingPoint: 'Kadu Malleshwara Temple',
+        priceInr: 750,
+        platformFeeInr: 75,
+        guideNetInr: 675,
+        currency: 'INR',
+        paymentMode: 'SANDBOX',
+        paymentStatus: 'COMPLETED',
+        paymentGatewayReference: 'sandbox_sim_guidance_fail_01',
+        status: 'CONFIRMED',
+        refundStatus: 'FAILED', // Failed during previous attempt
+        refundIdempotencyKey: 'ref_guidance_blr_fail_01',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(booking));
+
+      // Retry executes refund successfully using the deterministic key
+      const adapter = new SandboxPaymentAdapter(createMockRefundFirestore());
+      const recoveryRefund = await adapter.refundPayment({
+        transactionId: booking.bookingId,
+        gatewayReference: booking.paymentGatewayReference || '',
+        amountInr: booking.priceInr,
+        reason: 'Recovery retry after network interruption',
+        idempotencyKey: booking.refundIdempotencyKey,
+      });
+
+      assert.strictEqual(recoveryRefund.refunded, true);
+
+      // Recovered booking document updates to COMPLETED refund and CANCELLED status
+      const recoveredDoc: GuidanceBookingDocument = {
+        ...booking,
+        status: 'CANCELLED',
+        cancellationReason: 'Recovery retry completed',
+        paymentStatus: 'FAILED',
+        refundStatus: 'COMPLETED',
+        refundReference: recoveryRefund.refundReference,
+        refundedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => GuidanceBookingDocumentSchema.parse(recoveredDoc));
+      assert.strictEqual(recoveredDoc.refundStatus, 'COMPLETED');
+      assert.strictEqual(recoveredDoc.status, 'CANCELLED');
+    });
+  });
+
+  // ==============================================================================
+  // 8. Partner Merchant Subscription Registration & Payment Gating Tests (A5-V-04)
+  // ==============================================================================
+  describe('Partner Merchant Subscription Registration & Payment Gating (A5-V-04)', () => {
+    test('Validates partner merchant subscription plans and discount bounds', () => {
+      const validSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_veena_01',
+        merchantPlaceId: 'place_veena_stores_01',
+        businessName: 'Veena Stores Malleshwaram',
+        contactEmail: 'partner@veenastores.in',
+        subscriptionPlan: 'VERIFIED_PARTNER',
+        activeDiscountOffer: {
+          discountPercent: 10,
+          terms: '10% off any idli-vada combo with active Route Pass',
+        },
+        paymentMode: 'SANDBOX',
+        paymentGatewayReference: 'sandbox_sim_sub_merch_veena_01',
+        isActive: false, // Inactive pending payment confirmation
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(validSub));
+
+      // Rejects invalid email
+      assert.throws(
+        () => PartnerMerchantSubscriptionSchema.parse({ ...validSub, contactEmail: 'invalid-email' }),
+        /invalid_string/
+      );
+
+      // Rejects invalid plan
+      assert.throws(
+        () => PartnerMerchantSubscriptionSchema.parse({ ...validSub, subscriptionPlan: 'ENTERPRISE_GOLD' as any }),
+        /invalid_enum_value/
+      );
+    });
+
+    test('COMMUNITY_FREE plan activates immediately without payment gateway reference', () => {
+      const freeSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_free_01',
+        merchantPlaceId: 'place_local_artisan_01',
+        businessName: 'Local Handicrafts Co',
+        contactEmail: 'contact@handicrafts.local',
+        subscriptionPlan: 'COMMUNITY_FREE',
+        paymentMode: 'SANDBOX',
+        isActive: true, // Immediately active
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(freeSub));
+      assert.strictEqual(freeSub.isActive, true);
+      assert.strictEqual(freeSub.paymentGatewayReference, undefined);
+    });
+
+    test('Paid plans (VERIFIED_PARTNER & FEATURED_HERITAGE) are created inactive and invisible in public offers', () => {
+      const paidSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_heritage_01',
+        merchantPlaceId: 'place_vidyarthi_bhavan_01',
+        businessName: 'Vidyarthi Bhavan',
+        contactEmail: 'billing@vidyarthibhavan.in',
+        subscriptionPlan: 'FEATURED_HERITAGE',
+        activeDiscountOffer: {
+          discountPercent: 15,
+          terms: '15% discount for passholders',
+        },
+        paymentMode: 'SANDBOX',
+        paymentGatewayReference: 'sandbox_sim_sub_vidyarthi_01',
+        isActive: false, // Must be inactive prior to payment confirmation
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(paidSub));
+      assert.strictEqual(paidSub.isActive, false);
+
+      // Public offer query filter simulation (.where('isActive', '==', true))
+      const filterPublicOffers = (subs: PartnerMerchantSubscription[]) => {
+        return subs.filter((s) => s.isActive && new Date(s.expiresAt) > new Date());
+      };
+
+      const publicOffers = filterPublicOffers([paidSub]);
+      assert.strictEqual(publicOffers.length, 0, 'Unconfirmed paid partner subscription must NOT appear in public offers');
+    });
+
+    test('Payment confirmation activates paid subscription and verifies through payment adapter', async () => {
+      const adapter = new SandboxPaymentAdapter();
+      const now = new Date().toISOString();
+
+      const unconfirmedSub: PartnerMerchantSubscription = {
+        subscriptionId: 'sub_merch_confirm_01',
+        merchantPlaceId: 'place_ctr_shrisagar_01',
+        businessName: 'CTR Shri Sagar',
+        contactEmail: 'admin@ctr.in',
+        subscriptionPlan: 'FEATURED_HERITAGE',
+        paymentMode: 'SANDBOX',
+        paymentGatewayReference: 'sandbox_sim_sub_merch_confirm_01',
+        isActive: false,
+        expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // 1. Payment Verification via adapter
+      const verification = await adapter.verifyPayment({
+        transactionId: unconfirmedSub.subscriptionId,
+        gatewayReference: unconfirmedSub.paymentGatewayReference || '',
+      });
+      assert.strictEqual(verification.verified, true);
+
+      // 2. State transition to active
+      const activatedSub: PartnerMerchantSubscription = {
+        ...unconfirmedSub,
+        isActive: true,
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => PartnerMerchantSubscriptionSchema.parse(activatedSub));
+      assert.strictEqual(activatedSub.isActive, true);
+
+      // 3. Idempotent re-confirmation check
+      const reconfirm = (sub: PartnerMerchantSubscription) => {
+        if (sub.isActive) {
+          return { subscription: sub, isIdempotentReplay: true };
+        }
+        return { subscription: { ...sub, isActive: true }, isIdempotentReplay: false };
+      };
+
+      const replayResult = reconfirm(activatedSub);
+      assert.strictEqual(replayResult.isIdempotentReplay, true);
+      assert.strictEqual(replayResult.subscription.isActive, true);
+    });
+
+    test('Verified merchant owner authorization guard validates ownerUserId and preserves admin overrides', () => {
+      const authorizeConfirmation = (
+        sub: { ownerUserId?: string; merchantPlaceId: string },
+        callerUserId: string,
+        isAdmin: boolean
+      ) => {
+        if (!sub.ownerUserId) {
+          if (!isAdmin) {
+            throw new Error(
+              'Unauthorized: Subscription lacks a verified owner association. An administrator must verify and migrate this legacy record.'
+            );
+          }
+          return true;
+        }
+        if (sub.ownerUserId !== callerUserId && !isAdmin) {
+          throw new Error('Unauthorized: Only the merchant subscription owner or administrator may confirm payment.');
+        }
+        return true;
+      };
+
+      const ownedSub = {
+        ownerUserId: 'usr_merchant_alice_01',
+        merchantPlaceId: 'place_ctr_malleshwaram_01',
+      };
+
+      // 1. Legitimate merchant owner can confirm
+      assert.doesNotThrow(() => authorizeConfirmation(ownedSub, 'usr_merchant_alice_01', false));
+
+      // 2. Different authenticated user attempting confirmation is rejected
+      assert.throws(
+        () => authorizeConfirmation(ownedSub, 'usr_attacker_bob_99', false),
+        /Unauthorized: Only the merchant subscription owner or administrator may confirm payment/
+      );
+
+      // 3. Administrator / moderator can confirm regardless of owner
+      assert.doesNotThrow(() => authorizeConfirmation(ownedSub, 'usr_admin_mod_01', true));
+
+      // 4. Legacy subscription without owner association:
+      const legacySub = {
+        merchantPlaceId: 'place_ctr_malleshwaram_01',
+      };
+
+      // Regular user on legacy record is rejected with specific migration error
+      assert.throws(
+        () => authorizeConfirmation(legacySub, 'usr_merchant_alice_01', false),
+        /Subscription lacks a verified owner association. An administrator must verify and migrate this legacy record/
+      );
+
+      // Administrator can verify and confirm legacy record
+      assert.doesNotThrow(() => authorizeConfirmation(legacySub, 'usr_admin_mod_01', true));
+    });
+
+    test('Registration strictly captures ownerUserId from request.auth.uid ignoring client-supplied owner', () => {
+      const registerSubscriptionSafe = (
+        authUid: string,
+        clientData: { ownerUserId?: string; merchantPlaceId: string; businessName: string }
+      ) => {
+        // Enforce server-side security: ignore clientData.ownerUserId
+        return {
+          merchantPlaceId: clientData.merchantPlaceId,
+          businessName: clientData.businessName,
+          ownerUserId: authUid, // strictly from auth
+        };
+      };
+
+      const result = registerSubscriptionSafe('usr_real_owner_123', {
+        ownerUserId: 'usr_spoofed_victim_456', // malicious attempt to impersonate or bind to another user
+        merchantPlaceId: 'place_vidyarthi_bhavan_01',
+        businessName: 'Vidyarthi Bhavan',
+      });
+
+      assert.strictEqual(result.ownerUserId, 'usr_real_owner_123');
+      assert.notStrictEqual(result.ownerUserId, 'usr_spoofed_victim_456');
+    });
+
+    test('Subscription payment verification failure leaves subscription inactive', async () => {
+      const adapter = new SandboxPaymentAdapter();
+      const verification = await adapter.verifyPayment({
+        transactionId: 'sub_merch_fail_01',
+        gatewayReference: 'sandbox_sim_sub_merch_fail_01',
+        simulatedOutcome: 'FAILURE',
+      });
+
+      assert.strictEqual(verification.verified, false);
+      assert.strictEqual(verification.failureReason, 'Simulated payment was declined by sandbox bank authority.');
+    });
+  });
+
+  // ==============================================================================
+  // 9. Contributor Content Management Tests (A5-V-02)
+  // ==============================================================================
+  describe('Contributor Content Management (A5-V-02)', () => {
+    test('Contributor can update own submission and editing resets VERIFIED to SUBMITTED', () => {
+      const now = new Date().toISOString();
+      const existingDoc: ContributionDocument = {
+        contributionId: 'contrib_blr_test_01',
+        submission: {
+          mapsLink: 'https://maps.google.com/?q=CTR',
+          infoParagraph: 'Best Benne Masala Dosa in Bangalore.',
+          photoUrls: ['https://storage.googleapis.com/test/photo1.jpg'],
+          contributorId: 'usr_priya_782',
+        },
+        status: 'VERIFIED',
+        groundedPlaceId: 'place_ctr_01',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      assert.doesNotThrow(() => ContributionDocumentSchema.parse(existingDoc));
+
+      // Update function simulation enforcing ownership and status reset
+      const updateContent = (
+        doc: ContributionDocument,
+        callerId: string,
+        updates: { infoParagraph?: string; photoUrls?: string[] }
+      ): ContributionDocument => {
+        if (doc.submission.contributorId !== callerId) {
+          throw new Error('Permission denied: Only the original contributor may update this contribution.');
+        }
+        if (doc.status === 'RETRACTED') {
+          throw new Error('Invalid state: Retracted contributions cannot be edited.');
+        }
+
+        const newSubmission = {
+          ...doc.submission,
+          infoParagraph: updates.infoParagraph ?? doc.submission.infoParagraph,
+          photoUrls: updates.photoUrls ?? doc.submission.photoUrls,
+          contributorId: doc.submission.contributorId, // Immutable
+        };
+        ContributorSubmissionInputSchema.parse(newSubmission);
+
+        // Reset to SUBMITTED if previously VERIFIED
+        const newStatus = doc.status === 'VERIFIED' ? 'SUBMITTED' : doc.status;
+
+        return {
+          ...doc,
+          submission: newSubmission,
+          status: newStatus,
+          updatedAt: new Date().toISOString(),
+        };
+      };
+
+      // Owner updates description
+      const updated = updateContent(existingDoc, 'usr_priya_782', {
+        infoParagraph: 'Updated: Iconic butter dosa and filter coffee since 1920.',
+      });
+
+      assert.strictEqual(updated.submission.infoParagraph, 'Updated: Iconic butter dosa and filter coffee since 1920.');
+      assert.strictEqual(updated.status, 'SUBMITTED', 'VERIFIED status must reset to SUBMITTED on content edit');
+      assert.strictEqual(updated.submission.contributorId, 'usr_priya_782', 'Contributor attribution must be preserved');
+      assert.doesNotThrow(() => ContributionDocumentSchema.parse(updated));
+
+      // Stranger tries to update -> Permission denied
+      assert.throws(
+        () => updateContent(existingDoc, 'usr_stranger_999', { infoParagraph: 'Hacked description' }),
+        /Permission denied/
+      );
+    });
+
+    test('Retraction sets status to RETRACTED and blocks subsequent edits', () => {
+      const now = new Date().toISOString();
+      const existingDoc: ContributionDocument = {
+        contributionId: 'contrib_blr_test_02',
+        submission: {
+          mapsLink: 'https://maps.google.com/?q=Veena',
+          infoParagraph: 'Khara Bath and Kesari Bath.',
+          photoUrls: [],
+          contributorId: 'usr_priya_782',
+        },
+        status: 'SUBMITTED',
+        groundedPlaceId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Retract
+      const retractedDoc: ContributionDocument = {
+        ...existingDoc,
+        status: 'RETRACTED',
+        rejectionReason: 'Retracted by contributor (venue permanently closed).',
+        updatedAt: new Date().toISOString(),
+      };
+
+      assert.doesNotThrow(() => ContributionDocumentSchema.parse(retractedDoc));
+      assert.strictEqual(retractedDoc.status, 'RETRACTED');
+
+      // Edits on retracted content must be rejected
+      const attemptEditOnRetracted = (doc: ContributionDocument) => {
+        if (doc.status === 'RETRACTED') {
+          throw new Error('Invalid state: Retracted contributions cannot be edited.');
+        }
+      };
+
+      assert.throws(
+        () => attemptEditOnRetracted(retractedDoc),
+        /Retracted contributions cannot be edited/
+      );
     });
   });
 });

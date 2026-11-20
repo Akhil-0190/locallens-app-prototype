@@ -1,0 +1,14 @@
+{
+  "offeringId": "guide_offering_usr_guide_priya_01",
+  "guideUserId": "usr_priya_782",
+  "neighborhood": "Malleshwaram",
+  "title": "Heritage Temple Architecture & Traditional Filter Coffee Walk",
+  "description": "An immersive 90-minute walking tour through 17th-century temples, silk weaver lanes, and iconic heritage tiffin rooms in Malleshwaram.",
+  "durationMinutes": 90,
+  "priceInr": 750,
+  "meetingPoint": "Main entrance of Kadu Malleshwara Temple, 15th Cross Road",
+  "languages": ["Kannada", "English", "Tamil"],
+  "isActive": true,
+  "createdAt": "2026-11-20T10:00:00.000Z",
+  "updatedAt": "2026-11-20T10:00:00.000Z"
+}

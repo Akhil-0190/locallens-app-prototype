@@ -28,6 +28,9 @@ import {
   RoutePassDocumentSchema,
   PartnerMerchantSubscriptionSchema,
   ScheduledVisitDocumentSchema,
+  GuidanceOfferingDocumentSchema,
+  GuidanceBookingDocumentSchema,
+  ContributionStatusSchema,
 } from '../src/types/contracts/index';
 
 
@@ -231,6 +234,34 @@ describe('Task A2 — Canonical Shared Contracts Validation (All 12 Domains)', (
     assert.throws(() =>
       ContributorRewardLedgerSchema.parse({ ...sample, availableBalanceInr: -100 })
     );
+  });
+
+  test('Domain 11: Guidance Offering sample validates', () => {
+    const sample = loadSampleJson('11-guidance-offering.sample.json');
+    const validated = GuidanceOfferingDocumentSchema.parse(sample);
+    assert.strictEqual(validated.offeringId, 'guide_offering_usr_guide_priya_01');
+    assert.strictEqual(validated.neighborhood, 'Malleshwaram');
+    assert.strictEqual(validated.priceInr, 750);
+    assert.strictEqual(validated.durationMinutes, 90);
+    assert.strictEqual(validated.isActive, true);
+  });
+
+  test('Domain 11: Guidance Booking sample validates', () => {
+    const sample = loadSampleJson('11-guidance-booking.sample.json');
+    const validated = GuidanceBookingDocumentSchema.parse(sample);
+    assert.strictEqual(validated.bookingId, 'guidance_blr_1732147200000_abc123');
+    assert.strictEqual(validated.travelerUserId, 'usr_traveler_alex_888');
+    assert.strictEqual(validated.guideUserId, 'usr_priya_782');
+    assert.strictEqual(validated.priceInr, 750);
+    assert.strictEqual(validated.platformFeeInr, 75);
+    assert.strictEqual(validated.guideNetInr, 675);
+    assert.strictEqual(validated.status, 'CONFIRMED');
+    assert.strictEqual(validated.paymentStatus, 'COMPLETED');
+  });
+
+  test('Domain 03: ContributionStatusSchema accepts RETRACTED and canonical progression', () => {
+    assert.strictEqual(ContributionStatusSchema.parse('RETRACTED'), 'RETRACTED');
+    assert.strictEqual(ContributionStatusSchema.parse('SUBMITTED'), 'SUBMITTED');
   });
 
   // Domain 12: Route Passes, Payments & Subscriptions

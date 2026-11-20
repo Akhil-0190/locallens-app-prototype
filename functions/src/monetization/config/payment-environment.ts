@@ -44,10 +44,11 @@ export function validateSettlementEnvironment(params: SettlementValidationParams
 
   // 2. Explicit SANDBOX environment check
   if (rawPaymentEnv === 'SANDBOX') {
-    // Fail closed: In a deployed production runtime, PAYMENT_ENV cannot be set to SANDBOX
-    if (rawNodeEnv === 'production') {
+    // Fail closed: In a deployed cloud runtime (K_SERVICE, etc.) or production NODE_ENV,
+    // PAYMENT_ENV cannot be set to SANDBOX (fail-closed). Do not rely solely on NODE_ENV.
+    if (rawNodeEnv === 'production' || isCloudRuntime) {
       throw new Error(
-        'Security violation: PAYMENT_ENV cannot be set to SANDBOX in production NODE_ENV (fail-closed).'
+        'Security violation: PAYMENT_ENV cannot be set to SANDBOX in deployed cloud runtime or production NODE_ENV (fail-closed).'
       );
     }
     if (params.transactionPaymentMode !== 'SANDBOX') {
