@@ -1,0 +1,16 @@
+{
+  "subscriptionId": "sub_merch_ctr_9812",
+  "merchantPlaceId": "place_ctr_malleshwaram_01",
+  "businessName": "Central Tiffin Room (Shri Sagar)",
+  "contactEmail": "owner@ctr-bangalore.in",
+  "subscriptionPlan": "FEATURED_HERITAGE",
+  "activeDiscountOffer": {
+    "discountPercent": 10,
+    "terms": "10% off any breakfast thali when presenting active Neighborhood Pass"
+  },
+  "paymentMode": "SANDBOX",
+  "isActive": true,
+  "expiresAt": "2027-11-20T00:00:00.000Z",
+  "createdAt": "2026-11-20T08:00:00.000Z",
+  "updatedAt": "2026-11-20T08:00:00.000Z"
+}

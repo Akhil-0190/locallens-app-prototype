@@ -1,48 +1,119 @@
 # Domain 11: Contributor Rewards, Tips & Guidance
 
-**Contract Reference:** `docs/contracts/11-contributor-rewards-and-tips.md`
-**Firestore Collections:** `tips/{tipId}`, `contributor_rewards/{userId}`
-**Primary Stakeholders:** Developer A (Backend Payments & Gamification), Developer D (Flutter Tip Sheet)
-**Sample Payload:** [docs/contracts/samples/11-contributor-reward-tip.sample.json](file:///d:/Judah/Projects/Hackthon/Google/BuildathonNew/neighborhoodguideapp/docs/contracts/samples/11-contributor-reward-tip.sample.json)
+**Contract Reference:** `docs/contracts/11-contributor-rewards-and-tips.md`  
+**Firestore Collections:** `tips/{tipId}`, `contributor_rewards/{userId}`  
+**Primary Stakeholders:** Developer A (Backend Monetization & Accounting), Developer D (Flutter Tip Sheet & Reward Dashboard)  
+**Sample Payloads:** 
+- [docs/contracts/samples/11-contributor-reward-tip.sample.json](file:///d:/Judah/Projects/Hackthon/Google/BuildathonNew/neighborhoodguideapp/docs/contracts/samples/11-contributor-reward-tip.sample.json)
+- [docs/contracts/samples/11-contributor-reward-ledger.sample.json](file:///d:/Judah/Projects/Hackthon/Google/BuildathonNew/neighborhoodguideapp/docs/contracts/samples/11-contributor-reward-ledger.sample.json)
 
 ---
 
 ## 1. Scope & Ownership
-Enables grateful travelers to send micro-tips directly to local contributors whose insider spots they visited, and tracks community guidance rewards.
+Enables grateful travelers to send micro-tips directly to local community contributors whose curated spots they visited, and tracks community guidance rewards, earnings, and withdrawal balances.
 
 ---
 
-## 2. Canonical TypeScript Interface
+## 2. Canonical TypeScript Interfaces
 
 ```typescript
+export type PaymentMode = 'SANDBOX' | 'LIVE';
 export type TipPaymentStatus = 'INITIATED' | 'COMPLETED' | 'FAILED' | 'DISBURSED';
 
 export interface ContributorTipDocument {
-  tipId: string;                        // Unique tip UUID
-  payerUserId: string;                  // Traveler UID
-  recipientUserId: string;              // Local Contributor UID
-  spotId: string;                       // Related spot ID
+  tipId: string;                        // Unique tip UUID (prefix: tip_)
+  payerUserId: string;                  // Traveler UID (authenticated sender)
+  recipientUserId: string;              // Local Contributor UID (recipient)
+  spotId: string;                       // Related spot ID (Domain 06 canonical placeId)
   spotName: string;                     // For receipt & UI display
-  amountInr: number;                    // Tip amount in INR (e.g. 50, 100, 200)
-  platformFeeInr: number;               // Transparent nominal fee
-  contributorNetInr: number;            // amountInr - platformFeeInr
+  amountInr: number;                    // Tip amount in INR (positive integer/float, e.g. 50, 100, 200)
+  platformFeeInr: number;               // Nominal fee (e.g. 5% or fixed INR, non-negative)
+  contributorNetInr: number;            // Net amount: amountInr - platformFeeInr (positive)
   currency: string;                     // "INR"
-  paymentStatus: TipPaymentStatus;
-  paymentGatewayReference?: string;     // UPI / Payment Gateway Transaction ID
-  personalNote?: string;                // Traveler thank-you note
+  paymentMode: PaymentMode;             // 'SANDBOX' or 'LIVE'
+  paymentStatus: TipPaymentStatus;      // State machine status
+  paymentGatewayReference?: string;     // Gateway transaction ref (sandbox: "sandbox_sim_upi_...")
+  personalNote?: string;                // Traveler thank-you note (max 500 chars)
   createdAt: string;                    // ISO 8601 UTC
-  settledAt?: string;                   // ISO 8601 UTC
+  settledAt?: string;                   // ISO 8601 UTC (present when COMPLETED)
 }
 
 export interface ContributorRewardLedger {
-  userId: string;
-  totalEarningsInr: number;
-  availableBalanceInr: number;
-  withdrawnTotalInr: number;
-  payoutUpiId?: string;                 // Encrypted contributor payout UPI ID
-  reputationPoints: number;
+  userId: string;                       // Contributor UID (document ID)
+  totalEarningsInr: number;             // Cumulative historical earnings (INR >= 0)
+  availableBalanceInr: number;          // Current withdrawable balance (INR >= 0)
+  withdrawnTotalInr: number;            // Total previously disbursed/withdrawn (INR >= 0)
+  unrecoveredAdjustmentInr: number;     // Negative debt balance from refunds exceeding available funds (INR >= 0)
+  payoutUpiId?: string;                 // Contributor payout UPI ID (e.g. name@bank)
+  reputationPoints: number;             // Gamified points earned per approved contribution & tip
   guidanceRank: string;                 // e.g. "Malleshwaram Heritage Master"
-  lastPayoutAt?: string;
-  updatedAt: string;
+  lastPayoutAt?: string;                // ISO 8601 UTC
+  updatedAt: string;                    // ISO 8601 UTC
 }
 ```
+
+---
+
+## 3. Agreed Accounting Model: Transactional Event-Log & Materialized Balance
+
+Rather than imposing an over-engineered multi-entity double-entry ledger for simple micro-payments, the agreed accounting model is a **Transactional Event-Log & Materialized Balance Model**:
+
+1. **Source of Truth (Transaction Event Log):**  
+   Every tip transaction is stored as an immutable document in `tips/{tipId}`.
+2. **Materialized Summary Document:**  
+   `contributor_rewards/{userId}` maintains the active balance and cumulative figures.
+3. **Strict Invariants:**  
+   - $\text{totalEarningsInr} + \text{unrecoveredAdjustmentInr} = \text{availableBalanceInr} + \text{withdrawnTotalInr}$
+   - $\text{availableBalanceInr} \ge 0$ (negative available balances are strictly prohibited)
+   - $\text{withdrawnTotalInr} \ge 0, \quad \text{unrecoveredAdjustmentInr} \ge 0$
+   - $\text{contributorNetInr} = \text{amountInr} - \text{platformFeeInr} > 0$
+4. **Refund & Reversal Accounting:**
+   - If a tip is refunded when funds remain in available balance ($\text{availableBalanceInr} \ge \text{contributorNetInr}$):
+     - $\text{availableBalanceInr} \leftarrow \text{availableBalanceInr} - \text{contributorNetInr}$
+     - $\text{totalEarningsInr} \leftarrow \text{totalEarningsInr} - \text{contributorNetInr}$
+   - If a tip is refunded after funds have already been withdrawn ($\text{availableBalanceInr} < \text{contributorNetInr}$):
+     - Funds cannot be withdrawn backwards from the contributor's bank account.
+     - Available balance is capped at $0$ (preserving $\text{availableBalanceInr} \ge 0$).
+     - The unrecovered delta is recorded in $\text{unrecoveredAdjustmentInr} \leftarrow \text{unrecoveredAdjustmentInr} + (\text{contributorNetInr} - \text{availableBalanceInr})$.
+     - $\text{totalEarningsInr} \leftarrow \text{totalEarningsInr} - \text{contributorNetInr}$.
+     - When subsequent tips arrive, $\text{unrecoveredAdjustmentInr}$ is automatically offset and paid down first before any funds are credited to $\text{availableBalanceInr}$.
+     - In all cases, the identity $\text{totalEarningsInr} + \text{unrecoveredAdjustmentInr} = \text{availableBalanceInr} + \text{withdrawnTotalInr}$ remains mathematically exact.
+4. **Atomic State Mutations:**  
+   When a tip transitions to `'COMPLETED'`, Firestore transactions atomically update `tips/{tipId}` and increment `contributor_rewards/{recipientUserId}` (`totalEarningsInr += net`, `availableBalanceInr += net`).
+5. **Idempotency Protection:**  
+   If a tip is already in `'COMPLETED'` or `'FAILED'`, re-settlement attempts are strictly rejected to prevent double crediting.
+
+---
+
+## 4. Sandbox Payment Simulation vs. Real Payment Isolation
+
+1. **Strict Mode Separation:**  
+   All transactions explicitly carry `paymentMode: 'SANDBOX' | 'LIVE'`.
+2. **Deterministic Gateway References:**  
+   In sandbox mode, gateway references MUST use the explicit prefix `sandbox_sim_...` (e.g., `sandbox_sim_upi_987213892`).
+3. **No False Representation:**  
+   Simulated UPI intents or mock settlement outcomes must never be represented to the user or logged as real banking transactions.
+4. **Future Gateway Extensibility:**  
+   The `PaymentGatewayAdapter` interface cleanly isolates gateway interaction so that when live credentials (e.g. Razorpay/Cashfree) are provisioned, live calls route through the real provider without modifying data structures.
+
+---
+
+## 5. Contributor Attribution & No Residency Tracking
+
+In alignment with frozen project requirements:
+- Contributor credibility is established through **curation quality, approved submissions, traveler tips, and accuracy metrics**.
+- **No residency tracking, geofence surveillance, or identity documentation checks** are introduced.
+
+---
+
+## 6. Callable API & Security Architecture
+
+1. **Independent Server-Side Authorization:**  
+   Cloud Functions do NOT rely solely on Firestore security rules. Every callable verifies:
+   - `request.auth != null` (Caller must be authenticated).
+   - `request.auth.uid !== recipientUserId` (Users cannot tip themselves).
+   - Caller cannot inspect another contributor's reward ledger unless granted `ADMIN` or `MODERATOR` role.
+2. **Endpoints:**
+   - `initiateTip({ recipientUserId, spotId, amountInr, personalNote?, mode? })`
+   - `settleTipSandbox({ tipId, simulatedOutcome })` (Restricted strictly to `paymentMode === 'SANDBOX'`)
+   - `getContributorRewardSummary({ userId? })`

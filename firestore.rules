@@ -50,6 +50,17 @@ service cloud.firestore {
       // Only Admin SDK creates/deletes user documents.
       allow create: if false;
       allow delete: if false;
+
+      // -----------------------------------------------------------------------
+      // users/{userId}/contributor_profile (Domain 05 Public Attribution)
+      // -----------------------------------------------------------------------
+      // - Read: Any authenticated user (to render badges and attribution on spot cards).
+      // - Write: Admin SDK only via Cloud Functions (gamification & moderation).
+      // -----------------------------------------------------------------------
+      match /contributor_profile/{docId} {
+        allow read: if isAuthenticated();
+        allow write: if false;
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -116,6 +127,69 @@ service cloud.firestore {
         request.auth.uid in resource.data.memberUserIds ||
         isModerator()
       );
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // tips/{tipId} (Domain 11 Contributor Micro-Tips)
+    // -----------------------------------------------------------------------
+    // - Read: Payer (traveler who sent tip), recipient (contributor), or moderator.
+    // - Write: STRICTLY DENIED for clients. Cloud Functions Admin SDK handles
+    //          initiation, validation, and settlement.
+    // -----------------------------------------------------------------------
+
+    match /tips/{tipId} {
+      allow read: if isAuthenticated() && (
+        resource.data.payerUserId == request.auth.uid ||
+        resource.data.recipientUserId == request.auth.uid ||
+        isModerator()
+      );
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // contributor_rewards/{userId} (Domain 11 Contributor Reward Balance)
+    // -----------------------------------------------------------------------
+    // - Read: Owner of the earnings or moderator/admin.
+    // - Write: STRICTLY DENIED for clients. All balance mutations must occur
+    //          inside Firestore transactions via Cloud Functions.
+    // -----------------------------------------------------------------------
+
+    match /contributor_rewards/{userId} {
+      allow read: if isOwner(userId) || isModerator();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // passes/{passId} (Domain 12 Route Passes)
+    // -----------------------------------------------------------------------
+    // - Read: Buyer of the pass (userId) or moderator/admin.
+    // - Write: STRICTLY DENIED for clients. Pass purchasing and provisioning
+    //          is handled via Cloud Functions.
+    // -----------------------------------------------------------------------
+
+    match /passes/{passId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        isModerator()
+      );
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // subscriptions/{subscriptionId} (Domain 12 Merchant Partner Subscriptions)
+    // -----------------------------------------------------------------------
+    // - Read: STRICTLY RESTRICTED to moderators/admins. Private merchant contact emails,
+    //         billing references, and account details MUST NOT be readable directly
+    //         by general client queries.
+    // - Public Perks: Travelers access sanitized discount perk terms exclusively via
+    //         the getPublicPartnerMerchantOffer Cloud Function, which strips confidential
+    //         billing and email metadata.
+    // - Write: Admin SDK only via Cloud Functions.
+    // -----------------------------------------------------------------------
+
+    match /subscriptions/{subscriptionId} {
+      allow read: if isModerator();
       allow create, update, delete: if false;
     }
 

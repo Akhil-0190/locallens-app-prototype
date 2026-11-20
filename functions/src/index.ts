@@ -45,3 +45,8 @@ export * as Contributions from "./contributions/index.js";
 export * as Preferences from "./preferences/index.js";
 export * as Groups from "./groups/index.js";
 export * as Capacity from "./capacity/index.js";
+
+/**
+ * Export Contributor Ecosystem and Monetization functions (Task A5).
+ */
+export * as Monetization from "./monetization/index.js";

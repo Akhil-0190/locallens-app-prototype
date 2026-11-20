@@ -465,6 +465,9 @@ export type OfflinePackManifestDocument = z.infer<typeof OfflinePackManifestDocu
 // 11. Contributor Rewards, Tips & Guidance (Domain 11)
 // ==============================================================================
 
+export const PaymentModeSchema = z.enum(['SANDBOX', 'LIVE']);
+export type PaymentMode = z.infer<typeof PaymentModeSchema>;
+
 export const TipPaymentStatusSchema = z.enum(['INITIATED', 'COMPLETED', 'FAILED', 'DISBURSED']);
 
 export const ContributorTipDocumentSchema = z.object({
@@ -477,15 +480,31 @@ export const ContributorTipDocumentSchema = z.object({
   platformFeeInr: z.number().min(0),
   contributorNetInr: z.number().positive(),
   currency: z.string().default('INR'),
+  paymentMode: PaymentModeSchema.default('SANDBOX'),
   paymentStatus: TipPaymentStatusSchema.default('INITIATED'),
   paymentGatewayReference: z.string().optional(),
-  personalNote: z.string().optional(),
+  personalNote: z.string().max(500).optional(),
   createdAt: z.string(),
   settledAt: z.string().optional(),
 });
 
 export type TipPaymentStatus = z.infer<typeof TipPaymentStatusSchema>;
 export type ContributorTipDocument = z.infer<typeof ContributorTipDocumentSchema>;
+
+export const ContributorRewardLedgerSchema = z.object({
+  userId: z.string().min(1),
+  totalEarningsInr: z.number().min(0).default(0),
+  availableBalanceInr: z.number().min(0).default(0),
+  withdrawnTotalInr: z.number().min(0).default(0),
+  unrecoveredAdjustmentInr: z.number().min(0).default(0),
+  payoutUpiId: z.string().optional(),
+  reputationPoints: z.number().min(0).default(0),
+  guidanceRank: z.string().default('Community Scout'),
+  lastPayoutAt: z.string().optional(),
+  updatedAt: z.string(),
+});
+
+export type ContributorRewardLedger = z.infer<typeof ContributorRewardLedgerSchema>;
 
 // ==============================================================================
 // 12. Route Passes, Payments & Subscriptions (Domain 12)
@@ -497,7 +516,7 @@ export const PassTierSchema = z.enum([
   'ANNUAL_EXPLORER',
 ]);
 
-export const PassStatusSchema = z.enum(['ACTIVE', 'EXPIRED', 'REVOKED']);
+export const PassStatusSchema = z.enum(['PENDING', 'ACTIVE', 'EXPIRED', 'REVOKED']);
 
 export const RoutePassDocumentSchema = z.object({
   passId: z.string().min(1),
@@ -507,7 +526,9 @@ export const RoutePassDocumentSchema = z.object({
   accessibleRouteIds: z.array(z.string()).default([]),
   pricePaidInr: z.number().min(0),
   currency: z.string().default('INR'),
-  status: PassStatusSchema.default('ACTIVE'),
+  paymentMode: PaymentModeSchema.default('SANDBOX'),
+  paymentGatewayReference: z.string().optional(),
+  status: PassStatusSchema.default('PENDING'),
   perksIncluded: z.object({
     audioGuidanceUnlocked: z.boolean().default(true),
     offlinePackUnlocked: z.boolean().default(true),
@@ -521,6 +542,32 @@ export const RoutePassDocumentSchema = z.object({
 export type PassTier = z.infer<typeof PassTierSchema>;
 export type PassStatus = z.infer<typeof PassStatusSchema>;
 export type RoutePassDocument = z.infer<typeof RoutePassDocumentSchema>;
+
+export const MerchantPlanTierSchema = z.enum([
+  'COMMUNITY_FREE',
+  'VERIFIED_PARTNER',
+  'FEATURED_HERITAGE',
+]);
+
+export const PartnerMerchantSubscriptionSchema = z.object({
+  subscriptionId: z.string().min(1),
+  merchantPlaceId: z.string().min(1),
+  businessName: z.string().min(1),
+  contactEmail: z.string().email(),
+  subscriptionPlan: MerchantPlanTierSchema.default('COMMUNITY_FREE'),
+  activeDiscountOffer: z.object({
+    discountPercent: z.number().min(0).max(100),
+    terms: z.string().min(1),
+  }).optional(),
+  paymentMode: PaymentModeSchema.default('SANDBOX'),
+  isActive: z.boolean().default(true),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type MerchantPlanTier = z.infer<typeof MerchantPlanTierSchema>;
+export type PartnerMerchantSubscription = z.infer<typeof PartnerMerchantSubscriptionSchema>;
 
 // ==============================================================================
 // Standard API Envelopes
@@ -620,8 +667,16 @@ export function validateContributorTip(data: unknown): ContributorTipDocument {
   return ContributorTipDocumentSchema.parse(data);
 }
 
+export function validateContributorRewardLedger(data: unknown): ContributorRewardLedger {
+  return ContributorRewardLedgerSchema.parse(data);
+}
+
 export function validateRoutePass(data: unknown): RoutePassDocument {
   return RoutePassDocumentSchema.parse(data);
+}
+
+export function validatePartnerMerchantSubscription(data: unknown): PartnerMerchantSubscription {
+  return PartnerMerchantSubscriptionSchema.parse(data);
 }
 
 export function validateApiSuccessEnvelope(data: unknown): ApiSuccessResponse {
