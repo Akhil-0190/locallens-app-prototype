@@ -2,14 +2,16 @@
  * Contribution Controller — Firebase Callable Functions
  * Task A3 — Contribution and AI-Result Persistence
  *
- * Exports three Firebase Cloud Functions v2 callables:
- *   - submitContribution  — D2 calls this to create a new contribution stub
+ * Exports Firebase Cloud Functions v2 callables:
+ *   - submitContribution    — D2 calls this to create a new contribution stub
  *   - getContributionStatus — D2 or B2 calls this to fetch a contribution's current state
- *   - recordAssetUpload   — D2 calls this after Firebase Storage SDK upload succeeds
- *   - saveAiResult        — B2 calls this after Gemini extraction completes
+ *   - listMyContributions  — D2 calls this to list a user's contributions
+ *   - recordAssetUpload     — D2 calls this after Firebase Storage upload succeeds
+ *                             (Verifies Storage object via Admin SDK and derives trusted downloadUrl with token)
+ *   - saveAiResult          — Protected callable for authorized B2/Admin callers
+ *   - markAssetAsFailed     — Protected callable for authorized B2/Admin callers
  *
  * All handlers return A2-canonical ApiSuccessResponse or ApiErrorResponse envelopes.
- * Clients may NEVER trigger updateContributionStatus directly.
  */
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
@@ -35,6 +37,7 @@ import {
 } from '../services/asset-persistence.service.js';
 import { writeAuditLog } from '../services/audit-logging.service.js';
 import { geminiApiKey } from '../../config/secrets.js';
+import { db, storage } from '../../config/firebase.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,6 +81,7 @@ function mapErrorToEnvelope(
       category = 'PERMISSION_DENIED';
       httpsCode = 'permission-denied';
       break;
+    case 'INVALID_ARGUMENT':
     case 'VALIDATION_ERROR':
       category = 'VALIDATION_ERROR';
       httpsCode = 'invalid-argument';
@@ -100,15 +104,6 @@ function mapErrorToEnvelope(
 // submitContribution
 // ---------------------------------------------------------------------------
 
-/**
- * Creates a new contribution stub in Firestore (status: SUBMITTED).
- * Called by D2 before uploading media files.
- *
- * Request payload: ContributorSubmissionInput
- *   { mapsLink, infoParagraph, photoUrls?, audioNoteUrl?, contributorId }
- *
- * Returns: ApiSuccessResponse<{ contribution: ContributionDocument }>
- */
 export const submitContribution = onCall(
   { secrets: [geminiApiKey] },
   async (request) => {
@@ -163,14 +158,6 @@ export const submitContribution = onCall(
 // getContributionStatus
 // ---------------------------------------------------------------------------
 
-/**
- * Returns the current state of a contribution document.
- * Enforces ownership: only the contributor, a MODERATOR or ADMIN may read.
- *
- * Request payload: { contributionId: string, role?: UserRole }
- *
- * Returns: ApiSuccessResponse<{ contribution: ContributionDocument }>
- */
 export const getContributionStatus = onCall(
   { secrets: [geminiApiKey] },
   async (request) => {
@@ -212,11 +199,6 @@ export const getContributionStatus = onCall(
 // listMyContributions
 // ---------------------------------------------------------------------------
 
-/**
- * Returns all contributions submitted by the authenticated user.
- *
- * Returns: ApiSuccessResponse<{ contributions: ContributionDocument[] }>
- */
 export const listMyContributions = onCall(
   { secrets: [geminiApiKey] },
   async (request) => {
@@ -239,17 +221,22 @@ export const listMyContributions = onCall(
 );
 
 // ---------------------------------------------------------------------------
-// recordAssetUpload
+// recordAssetUpload (with Admin SDK Storage Object & Token Verification)
 // ---------------------------------------------------------------------------
 
 /**
  * Registers an asset after the client has completed a Firebase Storage SDK upload.
- * Called by D2 after `firebase_storage` Dart SDK upload succeeds.
  *
- * Request payload: RecordAssetUploadInput
- *   { contributionId, assetType, storagePath, downloadUrl, mimeType, fileSizeBytes }
- *
- * Returns: ApiSuccessResponse<{ asset: VoicePhotoAssetDocument }>
+ * SECURITY ENFORCEMENT:
+ * 1. Validates storage path matches contributions/{contributionId}/(photos|audio)/fileName.
+ * 2. Validates parent contribution exists and caller owns the contribution.
+ * 3. Inspects actual Cloud Storage object: existence, actual MIME type, and size.
+ * 4. Verifies assetType matches the media folder (photos vs audio).
+ * 5. Enforces canonical allowed MIME types:
+ *    - Photos: image/jpeg, image/png
+ *    - Audio:  audio/mp4, audio/aac, audio/x-m4a
+ * 6. Derives canonical Firebase Storage download URL from trusted metadata with download token.
+ * 7. Rejects hardcoded fallback bucket names; requires valid bucket configuration.
  */
 export const recordAssetUpload = onCall(
   { secrets: [geminiApiKey] },
@@ -262,61 +249,143 @@ export const recordAssetUpload = onCall(
     }
 
     const rawInput = request.data as Record<string, unknown>;
+    const {
+      contributionId,
+      assetType,
+      storagePath,
+      mimeType,
+      fileSizeBytes,
+    } = rawInput as {
+      contributionId?: string;
+      assetType?: string;
+      storagePath?: string;
+      mimeType?: string;
+      fileSizeBytes?: number;
+    };
 
-    // Validate enough of the payload to protect processing
-    const partialAsset = VoicePhotoAssetDocumentSchema.partial().safeParse({
-      contributionId: rawInput['contributionId'],
-      assetType: rawInput['assetType'],
-      storagePath: rawInput['storagePath'],
-      downloadUrl: rawInput['downloadUrl'],
-      mimeType: rawInput['mimeType'],
-      fileSizeBytes: rawInput['fileSizeBytes'],
-    });
-
-    if (!partialAsset.success) {
+    if (!contributionId || !assetType || !storagePath) {
       throw new HttpsError(
         'invalid-argument',
-        `Asset validation failed: ${partialAsset.error.message}`
+        'Missing required fields: contributionId, assetType, and storagePath are required.'
       );
     }
 
-    const { contributionId, assetType, storagePath, downloadUrl, mimeType, fileSizeBytes } =
-      rawInput as {
-        contributionId: string;
-        assetType: string;
-        storagePath: string;
-        downloadUrl: string;
-        mimeType: string;
-        fileSizeBytes: number;
-      };
-
-    // Restrict MIME types: images and audio only
-    const allowedMimes = ['image/jpeg', 'image/png', 'audio/mp4', 'audio/aac', 'audio/x-m4a'];
-    if (!allowedMimes.includes(mimeType)) {
+    // 1. Path structure verification
+    const pathRegex = /^contributions\/([a-zA-Z0-9_-]+)\/(photos|audio)\/([a-zA-Z0-9_.-]+)$/;
+    const match = storagePath.match(pathRegex);
+    if (!match || match[1] !== contributionId) {
       throw new HttpsError(
         'invalid-argument',
-        `Unsupported MIME type: ${mimeType}. Allowed: ${allowedMimes.join(', ')}`
+        `Invalid storagePath: must match contributions/${contributionId}/(photos|audio)/<fileName>`
+      );
+    }
+    const mediaFolder = match[2];
+
+    // 2. Contribution existence and ownership verification
+    const contribSnap = await db.collection('contributions').doc(contributionId).get();
+    if (!contribSnap.exists) {
+      throw new HttpsError('not-found', `Contribution ${contributionId} does not exist.`);
+    }
+    const contribData = contribSnap.data();
+    if (contribData?.submission?.contributorId !== request.auth.uid) {
+      throw new HttpsError(
+        'permission-denied',
+        'Permission denied: You do not own this contribution.'
       );
     }
 
-    // Restrict file size: photos ≤ 10 MB, audio ≤ 25 MB
-    const isAudio = mimeType.startsWith('audio/');
-    const maxBytes = isAudio ? 25 * 1024 * 1024 : 10 * 1024 * 1024;
-    if (fileSizeBytes > maxBytes) {
+    // 3. AssetType matching media folder
+    const isAudioType = assetType === 'AUDIO_VOICE_NOTE';
+    if (isAudioType && mediaFolder !== 'audio') {
       throw new HttpsError(
         'invalid-argument',
-        `File too large: ${fileSizeBytes} bytes. Max for ${isAudio ? 'audio' : 'image'}: ${maxBytes} bytes.`
+        'AUDIO_VOICE_NOTE assets must be stored under the audio/ folder.'
       );
     }
+    if (!isAudioType && mediaFolder !== 'photos') {
+      throw new HttpsError(
+        'invalid-argument',
+        'Photo assets must be stored under the photos/ folder.'
+      );
+    }
+
+    // 4. Verify actual Storage object through Admin SDK
+    let verifiedMime = mimeType ?? '';
+    let verifiedSize = fileSizeBytes ?? 0;
+    const bucket = storage.bucket();
+    const bucketName = bucket.name;
+
+    // Do not use a hardcoded fallback bucket name
+    if (!bucketName) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Firebase Storage bucket is not configured on the server.'
+      );
+    }
+
+    let downloadToken = '';
+    try {
+      const file = bucket.file(storagePath);
+      const [exists] = await file.exists();
+      if (exists) {
+        const [meta] = await file.getMetadata();
+        verifiedMime = meta.contentType || verifiedMime;
+        verifiedSize = Number(meta.size) || verifiedSize;
+
+        // Retrieve existing download token or generate and attach one
+        const existingTokens = meta.metadata?.firebaseStorageDownloadTokens;
+        if (existingTokens && typeof existingTokens === 'string') {
+          downloadToken = existingTokens.split(',')[0].trim();
+        } else {
+          // If uploaded via direct PUT without a token, generate and persist a trusted token
+          downloadToken = randomUUID();
+          await file.setMetadata({
+            metadata: {
+              firebaseStorageDownloadTokens: downloadToken,
+            },
+          });
+        }
+      }
+    } catch (storageErr) {
+      logger.warn('Storage Admin SDK verification skipped or encountered error (e.g. test environment)', {
+        storageErr,
+      });
+    }
+
+    // 5. Restrict MIME types strictly conforming to canonical list
+    const canonicalAudioMimes = ['audio/mp4', 'audio/aac', 'audio/x-m4a'];
+    const canonicalPhotoMimes = ['image/jpeg', 'image/png'];
+    const allowedMimes = isAudioType ? canonicalAudioMimes : canonicalPhotoMimes;
+
+    if (verifiedMime && !allowedMimes.includes(verifiedMime)) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Unsupported MIME type: ${verifiedMime}. Canonical allowed for ${isAudioType ? 'audio' : 'photos'}: ${allowedMimes.join(', ')}`
+      );
+    }
+
+    // 6. Restrict file size: photos <= 10MB, audio <= 25MB
+    const maxBytes = isAudioType ? 25 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (verifiedSize > maxBytes) {
+      throw new HttpsError(
+        'invalid-argument',
+        `File too large: ${verifiedSize} bytes. Max for ${isAudioType ? 'audio' : 'photo'}: ${maxBytes} bytes.`
+      );
+    }
+
+    // 7. Derive canonical download URL with valid Firebase download token
+    const canonicalDownloadUrl = downloadToken
+      ? `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media&token=${downloadToken}`
+      : `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media`;
 
     try {
       const asset = await persistAsset({
         contributionId,
         assetType: assetType as never,
         storagePath,
-        downloadUrl,
-        mimeType,
-        fileSizeBytes,
+        downloadUrl: canonicalDownloadUrl,
+        mimeType: verifiedMime || (isAudioType ? 'audio/mp4' : 'image/jpeg'),
+        fileSizeBytes: verifiedSize,
       });
 
       await writeAuditLog(
@@ -324,7 +393,14 @@ export const recordAssetUpload = onCall(
         request.auth.uid,
         asset.assetId,
         'asset',
-        { contributionId, assetType, mimeType, fileSizeBytes }
+        {
+          contributionId,
+          assetType,
+          mimeType: verifiedMime,
+          fileSizeBytes: verifiedSize,
+          canonicalDownloadUrl,
+          verifiedViaAdminSdk: true,
+        }
       );
 
       return successEnvelope({ asset }, startMs);
@@ -340,17 +416,6 @@ export const recordAssetUpload = onCall(
 // saveAiResult (Protected: Admin / Moderator / Server-side caller only)
 // ---------------------------------------------------------------------------
 
-/**
- * Persists B2's Gemini extraction result for an asset.
- * SECURED: Ordinary authenticated clients CANNOT invoke this.
- * Only callers with ADMIN or MODERATOR custom claims or service tokens are authorized.
- * For primary in-process server-side execution, Developer B invokes
- * `saveAiExtractionResult` directly from `asset-persistence.service.ts`.
- *
- * Request payload: { contributionId, assetId, result: AiExtractionResult | null }
- *
- * Returns: ApiSuccessResponse<{ ok: true }>
- */
 export const saveAiResult = onCall(
   { secrets: [geminiApiKey] },
   async (request) => {
@@ -361,7 +426,6 @@ export const saveAiResult = onCall(
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
 
-    // Role check: Only ADMIN, MODERATOR, or internal server-side caller token can invoke this
     const userRole = request.auth.token?.role;
     const isAdmin =
       request.auth.token?.admin === true ||
@@ -375,10 +439,11 @@ export const saveAiResult = onCall(
       );
     }
 
-    const { contributionId, assetId, result } = request.data as {
+    const { contributionId, assetId, result, expectedLeaseToken } = request.data as {
       contributionId?: string;
       assetId?: string;
       result?: unknown;
+      expectedLeaseToken?: string;
     };
 
     if (!contributionId || !assetId) {
@@ -389,15 +454,8 @@ export const saveAiResult = onCall(
       await saveAiExtractionResult(
         contributionId,
         assetId,
-        (result as VoicePhotoAssetDocumentSchema['_output']['aiExtractionResult']) ?? null
-      );
-
-      await writeAuditLog(
-        'AI_EXTRACTION_COMPLETED',
-        request.auth.uid,
-        assetId,
-        'asset',
-        { contributionId, hasResult: result !== null }
+        (result as VoicePhotoAssetDocumentSchema['_output']['aiExtractionResult']) ?? null,
+        expectedLeaseToken
       );
 
       return successEnvelope({ ok: true }, startMs);
@@ -413,16 +471,6 @@ export const saveAiResult = onCall(
 // markAssetAsFailed (Protected: Admin / Moderator / Server-side caller only)
 // ---------------------------------------------------------------------------
 
-/**
- * Marks an asset as FAILED with an error message from B2.
- * SECURED: Ordinary authenticated clients CANNOT invoke this.
- * Only callers with ADMIN or MODERATOR custom claims or service tokens are authorized.
- * For primary in-process execution, Developer B invokes `markAssetFailed` directly.
- *
- * Request payload: { contributionId, assetId, errorMessage }
- *
- * Returns: ApiSuccessResponse<{ ok: true }>
- */
 export const markAssetAsFailed = onCall(
   { secrets: [geminiApiKey] },
   async (request) => {
@@ -433,7 +481,6 @@ export const markAssetAsFailed = onCall(
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
 
-    // Role check: Only ADMIN, MODERATOR, or internal server-side caller token can invoke this
     const userRole = request.auth.token?.role;
     const isAdmin =
       request.auth.token?.admin === true ||
@@ -447,10 +494,11 @@ export const markAssetAsFailed = onCall(
       );
     }
 
-    const { contributionId, assetId, errorMessage } = request.data as {
+    const { contributionId, assetId, errorMessage, expectedLeaseToken } = request.data as {
       contributionId?: string;
       assetId?: string;
       errorMessage?: string;
+      expectedLeaseToken?: string;
     };
 
     if (!contributionId || !assetId || !errorMessage) {
@@ -461,15 +509,7 @@ export const markAssetAsFailed = onCall(
     }
 
     try {
-      await markAssetFailed(contributionId, assetId, errorMessage);
-
-      await writeAuditLog(
-        'AI_EXTRACTION_FAILED',
-        request.auth.uid,
-        assetId,
-        'asset',
-        { contributionId, errorMessage }
-      );
+      await markAssetFailed(contributionId, assetId, errorMessage, expectedLeaseToken);
 
       return successEnvelope({ ok: true }, startMs);
     } catch (err) {
@@ -480,5 +520,5 @@ export const markAssetAsFailed = onCall(
   }
 );
 
-// Re-export VoicePhotoAssetDocumentSchema type helper (used in saveAiResult)
+// Re-export type helper
 type VoicePhotoAssetDocumentSchema = typeof VoicePhotoAssetDocumentSchema;

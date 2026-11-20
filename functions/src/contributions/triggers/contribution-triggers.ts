@@ -6,12 +6,31 @@
  *   - onContributionCreated: Fires when a new contribution document is created.
  *     Logs audit record and sets up pipeline state.
  *   - onAssetCreated: Fires when a new asset document is created in the subcollection.
- *     Signals that media is ready for Developer B's B2 AI extraction pass.
+ *     ACTUALLY INVOKES Developer B's merged B2 extraction services:
+ *       - extractVoiceNoteDetails (for AUDIO_VOICE_NOTE)
+ *       - extractPhotoDetails (for STREET_PHOTO, STOREFRONT_PHOTO, MENU_PHOTO)
+ *     Uses Firestore transaction with a fencing lease token to claim status from
+ *     UPLOADED -> PROCESSING, preventing duplicate Gemini execution.
+ *     Includes stale lease timeout (5 min) for crash recovery, fencing out stale
+ *     invocations, and auto-reversion to UPLOADED on temporary download failures.
+ *     Persists results via A3's saveAiExtractionResult / markAssetFailed.
  */
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import * as logger from 'firebase-functions/logger';
+import { randomUUID } from 'node:crypto';
+import { db, storage } from '../../config/firebase.js';
+import { VoicePhotoAssetDocument } from '../../types/contracts/index.js';
 import { writeAuditLog } from '../services/audit-logging.service.js';
+import {
+  saveAiExtractionResult,
+  markAssetFailed,
+} from '../services/asset-persistence.service.js';
+import { extractVoiceNoteDetails } from '../../ai/services/voice-extraction-service.js';
+import { extractPhotoDetails } from '../../ai/services/photo-extraction-service.js';
+
+/** Stale lease timeout: 5 minutes. If a function crashes after claiming, retries can re-claim. */
+const PROCESSING_LEASE_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Fires when a new contribution document is created in Firestore.
@@ -58,9 +77,17 @@ export const onContributionCreated = onDocumentCreated(
  * Fires when a new media asset document is created under a contribution.
  * Trigger path: contributions/{contributionId}/assets/{assetId}
  *
- * This is the reactive event hook for B2 ingestion. When D2 completes
- * `recordAssetUpload`, this trigger fires, indicating that media is in Storage
- * and ready for Gemini multimodal extraction.
+ * ACTUAL B2 PROCESSING INTEGRATION & FENCING LEASE RECOVERY STRATEGY:
+ * 1. Checks if asset is in 'UPLOADED' status or has a stale 'PROCESSING' lease (> 5 minutes).
+ * 2. Uses Firestore transaction to atomically claim state to 'PROCESSING' with a unique lease token.
+ *    - Concurrent deliveries: Only 1 instance succeeds; others see fresh 'PROCESSING' and exit.
+ *    - Crashed executions: If lease expired (> 5 min), re-claims and generates a new lease token.
+ * 3. Downloads media buffer from Cloud Storage via Admin SDK.
+ *    - Temporary download failure: Reverts state to 'UPLOADED' and re-throws, allowing
+ *      Cloud Functions exponential backoff retry to pick it up immediately.
+ * 4. Invokes B2's extractVoiceNoteDetails or extractPhotoDetails.
+ * 5. Persists the extraction result via saveAiExtractionResult with fencing token:
+ *    - Expired invocations are fenced out and cannot overwrite newer invocations.
  */
 export const onAssetCreated = onDocumentCreated(
   'contributions/{contributionId}/assets/{assetId}',
@@ -72,31 +99,143 @@ export const onAssetCreated = onDocumentCreated(
     }
 
     const { contributionId, assetId } = event.params;
-    const data = snap.data();
+    const assetRef = db
+      .collection('contributions')
+      .doc(contributionId)
+      .collection('assets')
+      .doc(assetId);
 
-    logger.info('onAssetCreated trigger fired — asset ready for AI extraction', {
+    // Generate a unique fencing lease token for this execution
+    const leaseToken = randomUUID();
+
+    // Atomically claim the asset using a transaction with crash-lease recovery & fencing
+    let claimed = false;
+    try {
+      claimed = await db.runTransaction(async (tx) => {
+        const doc = await tx.get(assetRef);
+        if (!doc.exists) return false;
+
+        const data = doc.data() as VoicePhotoAssetDocument;
+        const currentStatus = data.processingStatus;
+        const updatedAtTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+        const isStaleLease =
+          currentStatus === 'PROCESSING' &&
+          Date.now() - updatedAtTime > PROCESSING_LEASE_TIMEOUT_MS;
+
+        // Can only claim if newly uploaded or lease has expired after a crash/timeout
+        const canClaim = currentStatus === 'UPLOADED' || isStaleLease;
+        if (!canClaim) {
+          return false;
+        }
+
+        tx.update(assetRef, {
+          processingStatus: 'PROCESSING',
+          processingToken: leaseToken, // Fencing token assigned
+          updatedAt: new Date().toISOString(),
+        });
+        return true;
+      });
+    } catch (claimErr) {
+      logger.warn('Failed to claim asset for processing in transaction', { claimErr, assetId });
+      return;
+    }
+
+    if (!claimed) {
+      logger.info('onAssetCreated: asset already claimed, completed, or failed. Exiting.', {
+        assetId,
+      });
+      return;
+    }
+
+    // Refresh current asset document snapshot after claim
+    const freshSnap = await assetRef.get();
+    const assetData = freshSnap.data() as VoicePhotoAssetDocument;
+
+    logger.info('onAssetCreated: claimed asset, invoking B2 extraction', {
       contributionId,
       assetId,
-      assetType: data?.assetType,
-      processingStatus: data?.processingStatus,
-      storagePath: data?.storagePath,
+      assetType: assetData.assetType,
+      leaseToken,
     });
 
+    // Attempt to download media bytes from Cloud Storage using Admin SDK
+    let mediaBuffer: Buffer | null = null;
     try {
-      await writeAuditLog(
-        'ASSET_UPLOADED',
-        'system-trigger',
-        assetId,
-        'asset',
-        {
-          trigger: 'onAssetCreated',
+      const file = storage.bucket().file(assetData.storagePath);
+      const [exists] = await file.exists();
+      if (exists) {
+        const [buf] = await file.download();
+        mediaBuffer = buf;
+      }
+    } catch (storageErr) {
+      logger.error('Temporary storage download failure, reverting to UPLOADED for retry', {
+        storageErr,
+        path: assetData.storagePath,
+      });
+      // Revert status to UPLOADED so Cloud Functions automatic retry can immediately re-claim
+      try {
+        await assetRef.update({
+          processingStatus: 'UPLOADED',
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (revertErr) {
+        logger.error('Failed to revert status to UPLOADED', { revertErr, assetId });
+      }
+      throw storageErr; // Re-throw triggers Cloud Functions v2 retry
+    }
+
+    try {
+      if (assetData.assetType === 'AUDIO_VOICE_NOTE') {
+        const output = await extractVoiceNoteDetails({
+          assetId,
           contributionId,
-          assetType: data?.assetType,
-          processingStatus: data?.processingStatus,
+          contributorId: 'contributor',
+          media: mediaBuffer
+            ? {
+                base64Data: mediaBuffer.toString('base64'),
+                mimeType: assetData.mimeType,
+              }
+            : undefined,
+        });
+
+        if (output.processingStatus === 'COMPLETED' && output.aiExtractionResult) {
+          await saveAiExtractionResult(contributionId, assetId, output.aiExtractionResult, leaseToken);
+        } else {
+          await markAssetFailed(
+            contributionId,
+            assetId,
+            output.errorMessage || 'Voice note extraction failed.',
+            leaseToken
+          );
         }
-      );
+      } else {
+        const output = await extractPhotoDetails({
+          assetId,
+          contributionId,
+          assetType: assetData.assetType,
+          media: mediaBuffer
+            ? {
+                base64Data: mediaBuffer.toString('base64'),
+                mimeType: assetData.mimeType,
+              }
+            : undefined,
+        });
+
+        if (output.processingStatus === 'COMPLETED' && output.aiExtractionResult) {
+          await saveAiExtractionResult(contributionId, assetId, output.aiExtractionResult, leaseToken);
+        } else {
+          await markAssetFailed(
+            contributionId,
+            assetId,
+            output.errorMessage || 'Photo extraction failed.',
+            leaseToken
+          );
+        }
+      }
     } catch (err) {
-      logger.error('Failed to write audit log in onAssetCreated', { err, assetId });
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error('Error during B2 extraction in onAssetCreated', { err, assetId });
+      await markAssetFailed(contributionId, assetId, errorMessage, leaseToken);
     }
   }
 );

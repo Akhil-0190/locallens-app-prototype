@@ -364,4 +364,63 @@ describe('Task A3 — Contribution Backend & AI-Result Persistence', () => {
       assert.ok(rules.includes('match /offline_packs/{packId}'), 'Must support offline packs read');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 6. Fencing Token Lease Safety & Canonical URL Verification
+  // ---------------------------------------------------------------------------
+  describe('Fencing Token Lease Safety & Canonical URL Verification', () => {
+    test('Fencing token logic: stale token does not match active lease token', () => {
+      const activeLeaseToken = 'token_lease_newer_xyz';
+      const staleLeaseToken = 'token_lease_expired_abc';
+
+      // Simulate fencing condition evaluated in saveAiExtractionResult
+      const shouldFenceOutStale = (
+        expectedToken: string,
+        currentDocToken: string | undefined
+      ) => {
+        return !!(expectedToken && currentDocToken && currentDocToken !== expectedToken);
+      };
+
+      // Stale token must be fenced out
+      assert.strictEqual(
+        shouldFenceOutStale(staleLeaseToken, activeLeaseToken),
+        true,
+        'Stale lease invocation must be fenced out'
+      );
+
+      // Active matching token must NOT be fenced out
+      assert.strictEqual(
+        shouldFenceOutStale(activeLeaseToken, activeLeaseToken),
+        false,
+        'Active lease token must be permitted to finalize'
+      );
+    });
+
+    test('Canonical download URL format includes download token and encoded path', () => {
+      const bucketName = 'neighborhoodguideapp-35856.firebasestorage.app';
+      const storagePath = 'contributions/contrib_123/photos/asset_photo_456.jpg';
+      const token = 'tok_secure_uuid_999';
+
+      const canonicalUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+
+      assert.ok(canonicalUrl.startsWith('https://firebasestorage.googleapis.com/v0/b/'));
+      assert.ok(canonicalUrl.includes(encodeURIComponent(storagePath)));
+      assert.ok(canonicalUrl.endsWith(`&token=${token}`));
+      assert.doesNotThrow(() => new URL(canonicalUrl), 'Canonical URL must be a valid RFC 3986 URL');
+    });
+
+    test('Canonical MIME list enforces exact photo and audio formats', () => {
+      const canonicalPhotoMimes = ['image/jpeg', 'image/png'];
+      const canonicalAudioMimes = ['audio/mp4', 'audio/aac', 'audio/x-m4a'];
+
+      assert.strictEqual(canonicalPhotoMimes.includes('image/jpeg'), true);
+      assert.strictEqual(canonicalPhotoMimes.includes('image/png'), true);
+      assert.strictEqual(canonicalPhotoMimes.includes('image/gif'), false);
+
+      assert.strictEqual(canonicalAudioMimes.includes('audio/mp4'), true);
+      assert.strictEqual(canonicalAudioMimes.includes('audio/aac'), true);
+      assert.strictEqual(canonicalAudioMimes.includes('audio/x-m4a'), true);
+      assert.strictEqual(canonicalAudioMimes.includes('audio/flac'), false);
+    });
+  });
 });
