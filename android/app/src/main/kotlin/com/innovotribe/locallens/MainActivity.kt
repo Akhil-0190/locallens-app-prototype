@@ -8,6 +8,9 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.StatFs
 import androidx.annotation.NonNull
+import com.google.mlkit.genai.common.FeatureStatus
+import com.google.mlkit.genai.prompt.Generation
+import com.google.mlkit.genai.prompt.GenerativeModel
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -15,87 +18,160 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
-import com.google.mlkit.genai.common.FeatureStatus
 
 class MainActivity : FlutterActivity() {
+
     private val DEVICE_CHANNEL = "com.innovotribe.locallens/device_info"
     private val NATIVE_AI_CHANNEL = "com.innovotribe.locallens/native_ai"
 
-    private var generativeModel: com.google.mlkit.genai.prompt.GenerativeModel? = null
+    private var generativeModel: GenerativeModel? = null
 
-    private fun getMlKitModel(): com.google.mlkit.genai.prompt.GenerativeModel {
+    private fun getMlKitModel(): GenerativeModel {
         if (generativeModel == null) {
-            generativeModel = com.google.mlkit.genai.prompt.Generation.getClient()
+            generativeModel = Generation.getClient()
         }
         return generativeModel!!
+    }
+
+    /**
+     * Supports both model filenames used by the existing B6 implementations.
+     * A file being present does not, by itself, establish that inference works.
+     */
+    private fun getGemmaModelFile(customPath: String? = null): File {
+        if (!customPath.isNullOrBlank()) {
+            return File(customPath)
+        }
+
+        val modelsDirectory = File(context.filesDir, "models")
+
+        val preferredFile = File(modelsDirectory, "gemma-4-e2b.gguf")
+        val legacyFile = File(modelsDirectory, "gemma-4-E2B-it-Q4_K_M.gguf")
+
+        return when {
+            preferredFile.exists() && preferredFile.length() > 0 -> preferredFile
+            legacyFile.exists() && legacyFile.length() > 0 -> legacyFile
+            else -> preferredFile
+        }
+    }
+
+    private fun isAICoreInstalled(): Boolean {
+        return try {
+            context.packageManager.getPackageInfo(
+                "com.google.android.aicore",
+                0
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // 1. Device Info & Storage Channel
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL).setMethodCallHandler { call, result ->
+        // ---------------------------------------------------------
+        // 1. DEVICE INFORMATION AND STORAGE CHANNEL
+        // ---------------------------------------------------------
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DEVICE_CHANNEL
+        ).setMethodCallHandler { call, result ->
+
             when (call.method) {
+
                 "getAvailableDiskSpaceBytes" -> {
                     try {
                         val statFs = StatFs(context.filesDir.absolutePath)
-                        val availableBytes = statFs.availableBytes
-                        result.success(availableBytes)
+                        result.success(statFs.availableBytes)
                     } catch (e: Exception) {
                         result.error("STORAGE_ERROR", e.message, null)
                     }
                 }
+
                 "getNetworkStatus" -> {
                     try {
-                        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                        val connectivityManager =
+                            context.getSystemService(Context.CONNECTIVITY_SERVICE)
+                                    as ConnectivityManager
+
                         val activeNetwork = connectivityManager.activeNetwork
-                        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+                        val capabilities =
+                            connectivityManager.getNetworkCapabilities(activeNetwork)
+
                         val status = when {
                             capabilities == null -> "OFFLINE"
-                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
-                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
+
+                            capabilities.hasTransport(
+                                NetworkCapabilities.TRANSPORT_WIFI
+                            ) -> "WIFI"
+
+                            capabilities.hasTransport(
+                                NetworkCapabilities.TRANSPORT_CELLULAR
+                            ) -> "CELLULAR"
+
+                            capabilities.hasTransport(
+                                NetworkCapabilities.TRANSPORT_ETHERNET
+                            ) -> "ETHERNET"
+
                             else -> "CONNECTED"
                         }
+
                         result.success(status)
+
                     } catch (e: Exception) {
                         result.error("NETWORK_ERROR", e.message, null)
                     }
                 }
+
                 else -> result.notImplemented()
             }
         }
 
-        // 2. Native AI Bridge Channel (Domain: On-Device AI / B6 integration)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NATIVE_AI_CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "checkAICoreAvailability" -> {
-                    val apiLevel = Build.VERSION.SDK_INT
-                    var isPackageInstalled = false
-                    try {
-                        context.packageManager.getPackageInfo("com.google.android.aicore", 0)
-                        isPackageInstalled = true
-                    } catch (_: PackageManager.NameNotFoundException) {
-                        isPackageInstalled = false
-                    }
+        // ---------------------------------------------------------
+        // 2. NATIVE AI BRIDGE
+        // ---------------------------------------------------------
 
-                    if (apiLevel < 26) {
-                        result.success(mapOf(
-                            "isAvailable" to false,
-                            "apiLevel" to apiLevel,
-                            "featureStatus" to "UNAVAILABLE",
-                            "isSupportedDevice" to false,
-                            "aicorePackageInstalled" to isPackageInstalled,
-                            "statusMessage" to "UNSUPPORTED_DEVICE: Requires Android API 26+. Current API: $apiLevel"
-                        ))
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            NATIVE_AI_CHANNEL
+        ).setMethodCallHandler { call, result ->
+
+            when (call.method) {
+
+                // -------------------------------------------------
+                // A. GEMINI NANO / AICORE AVAILABILITY
+                // -------------------------------------------------
+
+                "checkAICoreAvailability" -> {
+
+                    val apiLevel = Build.VERSION.SDK_INT
+                    val aicoreInstalled = isAICoreInstalled()
+
+                    if (apiLevel < 34) {
+                        result.success(
+                            mapOf(
+                                "isAvailable" to false,
+                                "apiLevel" to apiLevel,
+                                "featureStatus" to "UNAVAILABLE",
+                                "isSupportedDevice" to false,
+                                "aicorePackageInstalled" to aicoreInstalled,
+                                "statusMessage" to
+                                    "UNSUPPORTED_DEVICE: Gemini Nano requires Android API 34+."
+                            )
+                        )
                         return@setMethodCallHandler
                     }
 
                     CoroutineScope(Dispatchers.IO).launch {
+
                         try {
                             val model = getMlKitModel()
                             val statusInt = model.checkStatus()
-                            val isReady = (statusInt == FeatureStatus.AVAILABLE)
+
+                            val isReady =
+                                statusInt == FeatureStatus.AVAILABLE
+
                             val statusName = when (statusInt) {
                                 FeatureStatus.AVAILABLE -> "AVAILABLE"
                                 FeatureStatus.DOWNLOADABLE -> "DOWNLOADABLE"
@@ -104,289 +180,651 @@ class MainActivity : FlutterActivity() {
                             }
 
                             val message = when (statusInt) {
-                                FeatureStatus.AVAILABLE -> "AICORE_AVAILABLE: Gemini Nano is ready"
-                                FeatureStatus.DOWNLOADABLE -> "MODEL_NOT_DOWNLOADED: Gemini Nano supported but not downloaded"
-                                FeatureStatus.DOWNLOADING -> "MODEL_DOWNLOADING: Gemini Nano download in progress"
-                                else -> "UNSUPPORTED_DEVICE: Gemini Nano not available on this device"
+                                FeatureStatus.AVAILABLE ->
+                                    "AICORE_AVAILABLE: Gemini Nano is ready."
+
+                                FeatureStatus.DOWNLOADABLE ->
+                                    "MODEL_NOT_DOWNLOADED: Gemini Nano is supported but not downloaded."
+
+                                FeatureStatus.DOWNLOADING ->
+                                    "MODEL_DOWNLOADING: Gemini Nano download is in progress."
+
+                                else ->
+                                    "AICORE_UNAVAILABLE: Gemini Nano is not currently available."
                             }
 
                             launch(Dispatchers.Main) {
-                                result.success(mapOf(
-                                    "isAvailable" to isReady,
-                                    "apiLevel" to apiLevel,
-                                    "featureStatus" to statusName,
-                                    "isSupportedDevice" to (statusInt != FeatureStatus.UNAVAILABLE),
-                                    "aicorePackageInstalled" to isPackageInstalled,
-                                    "statusMessage" to message
-                                ))
+                                result.success(
+                                    mapOf(
+                                        "isAvailable" to isReady,
+                                        "apiLevel" to apiLevel,
+                                        "featureStatus" to statusName,
+                                        "isSupportedDevice" to
+                                            (statusInt != FeatureStatus.UNAVAILABLE),
+                                        "aicorePackageInstalled" to aicoreInstalled,
+                                        "statusMessage" to message
+                                    )
+                                )
                             }
+
                         } catch (e: Exception) {
+
                             launch(Dispatchers.Main) {
-                                result.success(mapOf(
-                                    "isAvailable" to false,
-                                    "apiLevel" to apiLevel,
-                                    "featureStatus" to "UNAVAILABLE",
-                                    "isSupportedDevice" to (apiLevel >= 34),
-                                    "aicorePackageInstalled" to isPackageInstalled,
-                                    "statusMessage" to "AICore error: ${e.message}"
-                                ))
+                                result.success(
+                                    mapOf(
+                                        "isAvailable" to false,
+                                        "apiLevel" to apiLevel,
+                                        "featureStatus" to "UNAVAILABLE",
+                                        "isSupportedDevice" to false,
+                                        "aicorePackageInstalled" to aicoreInstalled,
+                                        "statusMessage" to
+                                            "AICore error: ${e.message}"
+                                    )
+                                )
                             }
                         }
                     }
                 }
 
-                "getDeviceAICapabilities" -> {
-                    val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                    val memInfo = ActivityManager.MemoryInfo()
-                    actManager.getMemoryInfo(memInfo)
+                // -------------------------------------------------
+                // B. DEVICE CAPABILITIES
+                // -------------------------------------------------
 
-                    val availRamMb = memInfo.availMem / (1024 * 1024)
-                    val totalRamMb = memInfo.totalMem / (1024 * 1024)
+                "getDeviceAICapabilities" -> {
+
+                    val activityManager =
+                        context.getSystemService(Context.ACTIVITY_SERVICE)
+                                as ActivityManager
+
+                    val memoryInfo = ActivityManager.MemoryInfo()
+                    activityManager.getMemoryInfo(memoryInfo)
+
+                    val availableRamMb =
+                        memoryInfo.availMem / (1024 * 1024)
+
+                    val totalRamMb =
+                        memoryInfo.totalMem / (1024 * 1024)
+
                     val apiLevel = Build.VERSION.SDK_INT
 
-                    var aicoreInstalled = false
                     var aicoreVersion = 0
+
                     try {
-                        val pInfo = context.packageManager.getPackageInfo("com.google.android.aicore", 0)
-                        aicoreInstalled = true
-                        aicoreVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                            pInfo.longVersionCode.toInt()
-                        } else {
-                            @Suppress("DEPRECATION")
-                            pInfo.versionCode
-                        }
-                    } catch (_: Exception) {}
+                        val packageInfo =
+                            context.packageManager.getPackageInfo(
+                                "com.google.android.aicore",
+                                0
+                            )
+
+                        aicoreVersion =
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                packageInfo.longVersionCode.toInt()
+                            } else {
+                                @Suppress("DEPRECATION")
+                                packageInfo.versionCode
+                            }
+
+                    } catch (_: Exception) {
+                        // AICore is not installed.
+                    }
+
+                    val aicoreInstalled = isAICoreInstalled()
 
                     val supportedFeatures = mutableListOf<String>()
+
                     if (apiLevel >= 34 && aicoreInstalled) {
                         supportedFeatures.add("AICORE_GEMINI_NANO")
                     }
-                    if (availRamMb >= 3500 && totalRamMb >= 8192) {
+
+                    // This is a hardware eligibility estimate, not proof
+                    // that the GGUF runtime or model is installed.
+                    if (availableRamMb >= 3500 && totalRamMb >= 8192) {
                         supportedFeatures.add("LLAMA_CPP_GEMMA4_GGUF")
                     }
 
-                    val response = mapOf(
-                        "hasNpu" to false,
-                        "ramAvailableMb" to availRamMb,
-                        "aicoreVersion" to aicoreVersion,
-                        "supportedFeatures" to supportedFeatures,
-                        "apiLevel" to apiLevel,
-                        "totalRamMb" to totalRamMb,
-                        "aicoreInstalled" to aicoreInstalled
+                    result.success(
+                        mapOf(
+                            "hasNpu" to false,
+                            "ramAvailableMb" to availableRamMb,
+                            "aicoreVersion" to aicoreVersion,
+                            "supportedFeatures" to supportedFeatures,
+                            "apiLevel" to apiLevel,
+                            "totalRamMb" to totalRamMb,
+                            "aicoreInstalled" to aicoreInstalled
+                        )
                     )
-                    result.success(response)
                 }
 
-                "getNativeAiStatus" -> {
-                    val apiLevel = Build.VERSION.SDK_INT
-                    val customPath = call.argument<String>("modelPath")
-                    val gemmaFile = if (!customPath.isNullOrEmpty()) {
-                        File(customPath)
-                    } else {
-                        File(context.filesDir, "models/gemma-4-E2B-it-Q4_K_M.gguf")
-                    }
+                // -------------------------------------------------
+                // C. NATIVE AI STATUS
+                // -------------------------------------------------
 
-                    if (gemmaFile.exists() && LlamaBridge.isLoaded()) {
+                "getNativeAiStatus" -> {
+
+                    val apiLevel = Build.VERSION.SDK_INT
+
+                    val customPath = call.argument<String>("modelPath")
+                    val gemmaFile = getGemmaModelFile(customPath)
+
+                    val gemmaFilePresent =
+                        gemmaFile.exists() && gemmaFile.length() > 0
+
+                    if (gemmaFilePresent && LlamaBridge.isLoaded()) {
                         result.success("LLAMA_CPP_RUNTIME_READY")
                         return@setMethodCallHandler
                     }
 
+                    if (gemmaFilePresent) {
+                        result.success("GEMMA_MODEL_FILE_PRESENT")
+                        return@setMethodCallHandler
+                    }
+
+                    if (apiLevel < 34) {
+                        result.success("UNSUPPORTED_DEVICE")
+                        return@setMethodCallHandler
+                    }
+
                     CoroutineScope(Dispatchers.IO).launch {
+
                         try {
                             val model = getMlKitModel()
                             val statusInt = model.checkStatus()
+
                             val state = when (statusInt) {
-                                FeatureStatus.AVAILABLE -> "INFERENCE_ACTIVE"
-                                FeatureStatus.DOWNLOADING -> "MODEL_DOWNLOADING"
-                                FeatureStatus.DOWNLOADABLE -> "MODEL_NOT_DOWNLOADED"
-                                else -> if (apiLevel < 26) "UNSUPPORTED_DEVICE" else "AICORE_NOT_INSTALLED"
+                                FeatureStatus.AVAILABLE ->
+                                    "INFERENCE_ACTIVE"
+
+                                FeatureStatus.DOWNLOADING ->
+                                    "MODEL_DOWNLOADING"
+
+                                FeatureStatus.DOWNLOADABLE ->
+                                    "MODEL_NOT_DOWNLOADED"
+
+                                else ->
+                                    "AICORE_NOT_INSTALLED"
                             }
+
                             launch(Dispatchers.Main) {
                                 result.success(state)
                             }
+
                         } catch (_: Exception) {
+
                             launch(Dispatchers.Main) {
-                                result.success(if (apiLevel < 26) "UNSUPPORTED_DEVICE" else "MODEL_NOT_DOWNLOADED")
+                                result.success("MODEL_NOT_AVAILABLE")
                             }
                         }
                     }
                 }
 
-                "summarizeOfflineNote" -> {
-                    val noteText = call.argument<String>("noteText") ?: ""
-                    val spotName = call.argument<String>("spotName") ?: ""
-                    val language = call.argument<String>("language") ?: "en"
+                // -------------------------------------------------
+                // D. MODEL PROVISIONING STATUS
+                // -------------------------------------------------
 
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val model = getMlKitModel()
-                            val statusInt = model.checkStatus()
-                            if (statusInt == FeatureStatus.AVAILABLE) {
-                                val prompt = "Summarize these travel notes about $spotName in 2 concise sentences:\n$noteText"
-                                val genResult = model.generateContent(prompt)
-                                val text = genResult.candidates.firstOrNull()?.text ?: ""
-                                launch(Dispatchers.Main) {
-                                    result.success(mapOf(
-                                        "success" to true,
-                                        "summary" to text,
-                                        "keyHighlights" to listOf("Local authenticity", "Verified spot"),
-                                        "isLocalInference" to true,
-                                        "modelUsed" to "GEMINI_NANO_LOCAL",
-                                        "code" to "OK",
-                                        "message" to "Summarized on-device via Gemini Nano"
-                                    ))
-                                }
-                                return@launch
+                "checkModelProvisioning" -> {
+
+                    val engine =
+                        call.argument<String>("engine") ?: "GEMMA_GGUF"
+
+                    val gemmaFile = getGemmaModelFile()
+
+                    val gemmaFilePresent =
+                        gemmaFile.exists() && gemmaFile.length() > 0
+
+                    val aicoreInstalled = isAICoreInstalled()
+                    val apiLevel = Build.VERSION.SDK_INT
+
+                    result.success(
+                        mapOf(
+                            "engine" to engine,
+                            "gemmaModelDownloaded" to gemmaFilePresent,
+                            "gemmaModelPath" to
+                                if (gemmaFilePresent) gemmaFile.absolutePath else null,
+                            "gemmaSizeBytes" to
+                                if (gemmaFilePresent) gemmaFile.length() else 0L,
+                            "aicoreInstalled" to aicoreInstalled,
+                            "apiLevel" to apiLevel,
+
+                            // Provisioning status only.
+                            // This does not claim successful inference.
+                            "isProvisioned" to when (engine) {
+                                "AICORE", "GEMINI_NANO" ->
+                                    aicoreInstalled && apiLevel >= 34
+
+                                "GEMMA_GGUF", "LLAMA_CPP_GGUF",
+                                "GEMMA", "LLAMA_CPP" ->
+                                    gemmaFilePresent
+
+                                else -> false
                             }
-                        } catch (_: Exception) {}
+                        )
+                    )
+                }
 
-                        launch(Dispatchers.Main) {
-                            result.success(mapOf(
+                // -------------------------------------------------
+                // E. OFFLINE NOTE SUMMARIZATION
+                // -------------------------------------------------
+
+                "summarizeOfflineNote" -> {
+
+                    val noteText =
+                        call.argument<String>("noteText") ?: ""
+
+                    val spotName =
+                        call.argument<String>("spotName") ?: ""
+
+                    val language =
+                        call.argument<String>("language") ?: "en"
+
+                    if (noteText.isBlank()) {
+                        result.success(
+                            mapOf(
+                                "success" to false,
                                 "summary" to "",
                                 "keyHighlights" to emptyList<String>(),
                                 "isLocalInference" to false,
-                                "modelUsed" to "NONE (Unassisted Fallback)",
-                                "success" to false,
-                                "code" to "MODEL_NOT_DOWNLOADED",
-                                "message" to "On-device model pending. Running in unassisted mode.",
-                                "spotName" to spotName,
-                                "language" to language,
-                                "noteLength" to noteText.length
-                            ))
-                        }
+                                "modelUsed" to "NONE",
+                                "code" to "EMPTY_INPUT",
+                                "message" to "No note text was provided."
+                            )
+                        )
+                        return@setMethodCallHandler
                     }
-                }
-
-                "extractOfflineKeywords" -> {
-                    val text = call.argument<String>("text") ?: ""
 
                     CoroutineScope(Dispatchers.IO).launch {
+
                         try {
                             val model = getMlKitModel()
                             val statusInt = model.checkStatus()
+
                             if (statusInt == FeatureStatus.AVAILABLE) {
-                                val prompt = "Extract 3-5 comma-separated keywords from this text:\n$text"
-                                val genResult = model.generateContent(prompt)
-                                val candidateText = genResult.candidates.firstOrNull()?.text ?: ""
-                                val keywords = candidateText.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                                launch(Dispatchers.Main) {
-                                    result.success(mapOf(
-                                        "success" to true,
-                                        "keywords" to keywords,
-                                        "isLocalInference" to true,
-                                        "modelUsed" to "GEMINI_NANO_LOCAL",
-                                        "code" to "OK",
-                                        "message" to "Extracted keywords on-device via Gemini Nano"
-                                    ))
+
+                                val prompt =
+                                    "Summarize these travel notes about $spotName " +
+                                    "in 2 concise sentences. " +
+                                    "Use language code $language:\n$noteText"
+
+                                val generatedResult =
+                                    model.generateContent(prompt)
+
+                                val generatedText =
+                                    generatedResult.candidates
+                                        .firstOrNull()
+                                        ?.text
+                                        ?: ""
+
+                                if (generatedText.isNotBlank()) {
+
+                                    launch(Dispatchers.Main) {
+                                        result.success(
+                                            mapOf(
+                                                "success" to true,
+                                                "summary" to generatedText,
+                                                "keyHighlights" to emptyList<String>(),
+                                                "isLocalInference" to true,
+                                                "modelUsed" to "GEMINI_NANO_LOCAL",
+                                                "engine" to "AICORE",
+                                                "code" to "OK",
+                                                "message" to
+                                                    "Summarized on-device via Gemini Nano."
+                                            )
+                                        )
+                                    }
+
+                                    return@launch
                                 }
-                                return@launch
                             }
-                        } catch (_: Exception) {}
+
+                        } catch (_: Exception) {
+                            // Return an explicit failure below.
+                        }
 
                         launch(Dispatchers.Main) {
-                            result.success(mapOf(
-                                "keywords" to emptyList<String>(),
-                                "isLocalInference" to false,
-                                "modelUsed" to "NONE (Unassisted Fallback)",
-                                "success" to false,
-                                "code" to "MODEL_NOT_DOWNLOADED",
-                                "message" to "On-device keyword extraction model binary pending. Running in unassisted mode.",
-                                "inputLength" to text.length
-                            ))
+                            result.success(
+                                mapOf(
+                                    "success" to false,
+                                    "summary" to "",
+                                    "keyHighlights" to emptyList<String>(),
+                                    "isLocalInference" to false,
+                                    "modelUsed" to "NONE",
+                                    "code" to "MODEL_NOT_DOWNLOADED",
+                                    "message" to
+                                        "On-device model unavailable. Running in unassisted mode.",
+                                    "spotName" to spotName,
+                                    "language" to language,
+                                    "noteLength" to noteText.length
+                                )
+                            )
                         }
                     }
                 }
 
-                "executeOfflineInference" -> {
-                    val prompt = call.argument<String>("prompt") ?: ""
-                    val engine = call.argument<String>("engine") ?: "AICORE"
+                // -------------------------------------------------
+                // F. OFFLINE KEYWORD EXTRACTION
+                // -------------------------------------------------
+
+                "extractOfflineKeywords" -> {
+
+                    val text = call.argument<String>("text") ?: ""
+
+                    if (text.isBlank()) {
+                        result.success(
+                            mapOf(
+                                "success" to false,
+                                "keywords" to emptyList<String>(),
+                                "isLocalInference" to false,
+                                "modelUsed" to "NONE",
+                                "code" to "EMPTY_INPUT"
+                            )
+                        )
+                        return@setMethodCallHandler
+                    }
 
                     CoroutineScope(Dispatchers.IO).launch {
-                        if (engine == "AICORE") {
+
+                        try {
+                            val model = getMlKitModel()
+                            val statusInt = model.checkStatus()
+
+                            if (statusInt == FeatureStatus.AVAILABLE) {
+
+                                val prompt =
+                                    "Extract 3-5 important keywords from this text. " +
+                                    "Return only comma-separated keywords:\n$text"
+
+                                val generatedResult =
+                                    model.generateContent(prompt)
+
+                                val candidateText =
+                                    generatedResult.candidates
+                                        .firstOrNull()
+                                        ?.text
+                                        ?: ""
+
+                                val keywords = candidateText
+                                    .split(",")
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() }
+                                    .distinct()
+                                    .take(5)
+
+                                if (keywords.isNotEmpty()) {
+
+                                    launch(Dispatchers.Main) {
+                                        result.success(
+                                            mapOf(
+                                                "success" to true,
+                                                "keywords" to keywords,
+                                                "isLocalInference" to true,
+                                                "modelUsed" to "GEMINI_NANO_LOCAL",
+                                                "engine" to "AICORE",
+                                                "code" to "OK",
+                                                "message" to
+                                                    "Extracted keywords on-device via Gemini Nano."
+                                            )
+                                        )
+                                    }
+
+                                    return@launch
+                                }
+                            }
+
+                        } catch (_: Exception) {
+                            // Return an explicit failure below.
+                        }
+
+                        launch(Dispatchers.Main) {
+                            result.success(
+                                mapOf(
+                                    "success" to false,
+                                    "keywords" to emptyList<String>(),
+                                    "isLocalInference" to false,
+                                    "modelUsed" to "NONE",
+                                    "code" to "MODEL_NOT_DOWNLOADED",
+                                    "message" to
+                                        "On-device keyword extraction is unavailable.",
+                                    "inputLength" to text.length
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // -------------------------------------------------
+                // G. GENERIC ON-DEVICE INFERENCE
+                // -------------------------------------------------
+
+                "executeOfflineInference" -> {
+
+                    val prompt =
+                        call.argument<String>("prompt") ?: ""
+
+                    val engine =
+                        call.argument<String>("engine") ?: "AICORE"
+
+                    val customPath =
+                        call.argument<String>("modelPath")
+
+                    if (prompt.isBlank()) {
+                        result.success(
+                            mapOf(
+                                "success" to false,
+                                "isLocalInference" to false,
+                                "code" to "EMPTY_PROMPT",
+                                "engine" to engine,
+                                "output" to ""
+                            )
+                        )
+                        return@setMethodCallHandler
+                    }
+
+                    CoroutineScope(Dispatchers.IO).launch {
+
+                        // -----------------------------------------
+                        // GEMINI NANO / AICORE
+                        // -----------------------------------------
+
+                        if (
+                            engine == "AICORE" ||
+                            engine == "GEMINI_NANO"
+                        ) {
+
                             try {
+                                if (Build.VERSION.SDK_INT < 34) {
+                                    throw IllegalStateException(
+                                        "Gemini Nano requires Android API 34+."
+                                    )
+                                }
+
                                 val model = getMlKitModel()
                                 val statusInt = model.checkStatus()
-                                if (statusInt == FeatureStatus.AVAILABLE) {
-                                    val response = model.generateContent(prompt)
-                                    val text = response.candidates.firstOrNull()?.text ?: ""
-                                    launch(Dispatchers.Main) {
-                                        result.success(mapOf(
+
+                                if (statusInt != FeatureStatus.AVAILABLE) {
+                                    throw IllegalStateException(
+                                        "Gemini Nano model is not available. Status: $statusInt"
+                                    )
+                                }
+
+                                val generatedResult =
+                                    model.generateContent(prompt)
+
+                                val output =
+                                    generatedResult.candidates
+                                        .firstOrNull()
+                                        ?.text
+                                        ?: ""
+
+                                if (output.isBlank()) {
+                                    throw IllegalStateException(
+                                        "Gemini Nano returned empty output."
+                                    )
+                                }
+
+                                launch(Dispatchers.Main) {
+                                    result.success(
+                                        mapOf(
                                             "success" to true,
                                             "isLocalInference" to true,
                                             "code" to "OK",
                                             "engine" to "AICORE",
-                                            "output" to text,
+                                            "output" to output,
                                             "modelUsed" to "GEMINI_NANO_LOCAL",
-                                            "message" to "Inference completed on-device via Android AICore."
-                                        ))
-                                    }
-                                    return@launch
+                                            "message" to
+                                                "Inference completed on-device via Android AICore."
+                                        )
+                                    )
                                 }
+
+                                return@launch
+
                             } catch (e: Exception) {
+
                                 launch(Dispatchers.Main) {
-                                    result.success(mapOf(
-                                        "success" to false,
-                                        "isLocalInference" to false,
-                                        "code" to "INFERENCE_FAILED",
-                                        "engine" to "AICORE",
-                                        "output" to "",
-                                        "message" to "Inference failed: ${e.message}"
-                                    ))
+                                    result.success(
+                                        mapOf(
+                                            "success" to false,
+                                            "isLocalInference" to false,
+                                            "code" to "INFERENCE_FAILED",
+                                            "engine" to "AICORE",
+                                            "output" to "",
+                                            "message" to
+                                                "Gemini Nano inference failed: ${e.message}"
+                                        )
+                                    )
                                 }
+
                                 return@launch
                             }
-                        } else if (engine == "LLAMA_CPP") {
-                            val customPath = call.argument<String>("modelPath")
-                            val gemmaFile = if (!customPath.isNullOrEmpty()) {
-                                File(customPath)
-                            } else {
-                                File(context.filesDir, "models/gemma-4-E2B-it-Q4_K_M.gguf")
+                        }
+
+                        // -----------------------------------------
+                        // GEMMA 4 E2B / LLAMA.CPP
+                        // -----------------------------------------
+
+                        if (
+                            engine == "LLAMA_CPP" ||
+                            engine == "GEMMA_GGUF" ||
+                            engine == "LLAMA_CPP_GGUF" ||
+                            engine == "GEMMA"
+                        ) {
+
+                            val gemmaFile =
+                                getGemmaModelFile(customPath)
+
+                            if (
+                                !gemmaFile.exists() ||
+                                gemmaFile.length() <= 0
+                            ) {
+                                launch(Dispatchers.Main) {
+                                    result.success(
+                                        mapOf(
+                                            "success" to false,
+                                            "isLocalInference" to false,
+                                            "code" to "MODEL_NOT_DOWNLOADED",
+                                            "engine" to engine,
+                                            "output" to "",
+                                            "message" to
+                                                "Gemma GGUF model file not found or empty. Provisioning required.",
+                                            "modelPath" to gemmaFile.absolutePath
+                                        )
+                                    )
+                                }
+
+                                return@launch
                             }
-                            if (gemmaFile.exists() && LlamaBridge.isLoaded()) {
-                                try {
-                                    val bridge = LlamaBridge()
-                                    val handle = bridge.nativeInit(gemmaFile.absolutePath, 4, 512)
-                                    val output = bridge.nativeGenerate(handle, prompt, 128)
-                                    bridge.nativeFree(handle)
-                                    launch(Dispatchers.Main) {
-                                        result.success(mapOf(
+
+                            var bridge: LlamaBridge? = null
+                            var handle: Long? = null
+
+                            try {
+                                if (!LlamaBridge.isLoaded()) {
+                                    throw IllegalStateException(
+                                        "llama.cpp native runtime is not loaded."
+                                    )
+                                }
+
+                                bridge = LlamaBridge()
+
+                                handle = bridge.nativeInit(
+                                    gemmaFile.absolutePath,
+                                    4,
+                                    512
+                                )
+
+                                val output = bridge.nativeGenerate(
+                                    handle,
+                                    prompt,
+                                    128
+                                )
+
+                                if (output.isBlank()) {
+                                    throw IllegalStateException(
+                                        "llama.cpp returned empty output."
+                                    )
+                                }
+
+                                launch(Dispatchers.Main) {
+                                    result.success(
+                                        mapOf(
                                             "success" to true,
                                             "isLocalInference" to true,
                                             "code" to "OK",
                                             "engine" to "LLAMA_CPP",
                                             "output" to output,
                                             "modelUsed" to "GEMMA_LOCAL",
-                                            "message" to "Inference completed on-device via llama.cpp Gemma 4 E2B."
-                                        ))
-                                    }
-                                    return@launch
-                                } catch (e: Exception) {
-                                    launch(Dispatchers.Main) {
-                                        result.success(mapOf(
+                                            "message" to
+                                                "Inference completed on-device via llama.cpp Gemma 4 E2B."
+                                        )
+                                    )
+                                }
+
+                                return@launch
+
+                            } catch (e: Exception) {
+
+                                launch(Dispatchers.Main) {
+                                    result.success(
+                                        mapOf(
                                             "success" to false,
                                             "isLocalInference" to false,
                                             "code" to "INFERENCE_FAILED",
                                             "engine" to "LLAMA_CPP",
                                             "output" to "",
-                                            "message" to "llama.cpp error: ${e.message}"
-                                        ))
+                                            "message" to
+                                                "llama.cpp inference failed: ${e.message}"
+                                        )
+                                    )
+                                }
+
+                                return@launch
+
+                            } finally {
+                                if (handle != null && bridge != null) {
+                                    try {
+                                        bridge.nativeFree(handle)
+                                    } catch (_: Exception) {
+                                        // Cleanup must not crash the channel.
                                     }
-                                    return@launch
                                 }
                             }
                         }
 
-                        // Fail-closed fallback
+                        // -----------------------------------------
+                        // UNKNOWN ENGINE
+                        // -----------------------------------------
+
                         launch(Dispatchers.Main) {
-                            result.success(mapOf(
-                                "success" to false,
-                                "isLocalInference" to false,
-                                "code" to "MODEL_NOT_DOWNLOADED",
-                                "engine" to engine,
-                                "output" to "",
-                                "message" to "Model not ready on device. Running in unassisted mode.",
-                                "promptLength" to prompt.length
-                            ))
+                            result.success(
+                                mapOf(
+                                    "success" to false,
+                                    "isLocalInference" to false,
+                                    "code" to "UNKNOWN_ENGINE",
+                                    "engine" to engine,
+                                    "output" to "",
+                                    "message" to
+                                        "Unsupported on-device inference engine: $engine"
+                                )
+                            )
                         }
                     }
                 }

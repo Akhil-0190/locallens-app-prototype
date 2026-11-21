@@ -19,7 +19,6 @@ import * as logger from 'firebase-functions/logger';
 import { randomUUID } from 'node:crypto';
 import {
   ContributorSubmissionInputSchema,
-  UserRoleSchema,
   UserRole,
   VoicePhotoAssetDocumentSchema,
   ApiSuccessResponse,
@@ -70,27 +69,30 @@ function mapErrorToEnvelope(
   const code = (err as NodeJS.ErrnoException).code ?? '';
   let category: ErrorCategory = 'TRANSIENT_SERVER_ERROR';
   let httpsCode: HttpsError['code'] = 'internal';
-  let message = 'An unexpected error occurred.';
+  let message = 'An unexpected server error occurred. Please try again.';
   let retryable = false;
-
-  if (err instanceof Error) message = err.message;
 
   switch (code) {
     case 'NOT_FOUND':
       category = 'NOT_FOUND';
       httpsCode = 'not-found';
+      if (err instanceof Error) message = err.message;
       break;
     case 'PERMISSION_DENIED':
       category = 'PERMISSION_DENIED';
       httpsCode = 'permission-denied';
+      if (err instanceof Error) message = err.message;
       break;
     case 'INVALID_ARGUMENT':
     case 'VALIDATION_ERROR':
       category = 'VALIDATION_ERROR';
       httpsCode = 'invalid-argument';
+      if (err instanceof Error) message = err.message;
       break;
     default:
       retryable = true;
+      // Sanitize unexpected internal/DB errors to prevent leaking internal stack/query details
+      message = 'An unexpected server error occurred. Please try again.';
   }
 
   return {
@@ -171,17 +173,18 @@ export const getContributionStatus = onCall(
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
 
-    const { contributionId, role } = request.data as {
-      contributionId?: string;
-      role?: unknown;
-    };
+    const { contributionId } = (request.data as Record<string, unknown>) || {};
 
     if (!contributionId || typeof contributionId !== 'string') {
       throw new HttpsError('invalid-argument', 'contributionId is required.');
     }
 
-    const parsedRole = UserRoleSchema.safeParse(role);
-    const userRole = parsedRole.success ? parsedRole.data : 'TRAVELER';
+    // Security: Derive role strictly from trusted Firebase custom claims; never trust client payload
+    const tokenRole = String(request.auth.token?.role || '').toUpperCase();
+    const userRole: UserRole =
+      tokenRole === 'ADMIN' || tokenRole === 'MODERATOR' || tokenRole === 'CONTRIBUTOR'
+        ? (tokenRole as UserRole)
+        : 'TRAVELER';
 
     try {
       const contribution = await getContribution(

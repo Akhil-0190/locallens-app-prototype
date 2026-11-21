@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/walking_route.dart';
 import '../providers/route_providers.dart';
+import '../services/offline_tile_provider.dart';
 import '../services/native_platform_service.dart';
 import '../services/on_device_ai_service.dart';
 import '../services/street_assistance_service.dart';
@@ -29,12 +30,14 @@ class WalkingRouteScreen extends ConsumerStatefulWidget {
   const WalkingRouteScreen({super.key});
 
   @override
-  ConsumerState<WalkingRouteScreen> createState() => _WalkingRouteScreenState();
+  ConsumerState<WalkingRouteScreen> createState() =>
+      _WalkingRouteScreenState();
 }
 
 class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   GoogleMapController? _mapController;
   int _activeStepIndex = 0;
+  bool _isOfflineMapMode = false;
   late final StreetAssistanceService _streetAssistanceService;
   DeviceNetworkStatus _networkStatus = DeviceNetworkStatus.wifi;
   Stream<Position>? _positionStream;
@@ -64,7 +67,8 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       );
-      _positionStream = Geolocator.getPositionStream(locationSettings: settings);
+      _positionStream =
+          Geolocator.getPositionStream(locationSettings: settings);
       _positionStream?.listen((position) {
         _checkStepProximity(position);
       });
@@ -87,8 +91,9 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
       currentStep.endCoordinate.longitude,
     );
 
-    // Auto-advance step if user is within 25 meters of step boundary
-    if (distanceToStepEnd <= 25.0 && _activeStepIndex < allSteps.length - 1) {
+    // Auto-advance step if user is within 25 meters of step boundary.
+    if (distanceToStepEnd <= 25.0 &&
+        _activeStepIndex < allSteps.length - 1) {
       if (mounted) {
         setState(() {
           _activeStepIndex++;
@@ -140,11 +145,14 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     );
   }
 
+  // D-B6: Community crowd reporting.
   void _openCrowdReportDialog(BuildContext context, String placeId) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Report Crowd: ${placeId.replaceAll('_', ' ').toUpperCase()}'),
+        title: Text(
+          'Report Crowd: ${placeId.replaceAll('_', ' ').toUpperCase()}',
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -176,11 +184,20 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     );
   }
 
-  Widget _buildCrowdButton(BuildContext ctx, String placeId, String label, String level) {
+  Widget _buildCrowdButton(
+    BuildContext ctx,
+    String placeId,
+    String label,
+    String level,
+  ) {
     return ElevatedButton(
       style: ElevatedButton.styleFrom(
-        backgroundColor: level == 'AT_CAPACITY' ? Colors.red.shade100 : Colors.teal.shade50,
-        foregroundColor: level == 'AT_CAPACITY' ? Colors.red.shade900 : Colors.teal.shade900,
+        backgroundColor: level == 'AT_CAPACITY'
+            ? Colors.red.shade100
+            : Colors.teal.shade50,
+        foregroundColor: level == 'AT_CAPACITY'
+            ? Colors.red.shade900
+            : Colors.teal.shade900,
       ),
       onPressed: () async {
         Navigator.of(ctx).pop();
@@ -194,7 +211,8 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'Crowd reported as $label! Earned ${res['pointsAwarded'] ?? 10} community points.',
+                  'Crowd reported as $label! Earned '
+                  '${res['pointsAwarded'] ?? 10} community points.',
                 ),
                 backgroundColor: Colors.teal.shade800,
               ),
@@ -212,7 +230,12 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     );
   }
 
-  void _openLocalAiTipModal(BuildContext context, String placeId, String neighborhood) {
+  // D-B6: On-device AI venue guidance.
+  void _openLocalAiTipModal(
+    BuildContext context,
+    String placeId,
+    String neighborhood,
+  ) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -232,7 +255,9 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 child: Center(child: CircularProgressIndicator()),
               );
             }
+
             final tip = snapshot.data;
+
             return Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -245,11 +270,17 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                       Expanded(
                         child: Text(
                           cleanName,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.amber.shade100,
                           borderRadius: BorderRadius.circular(12),
@@ -269,17 +300,25 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                   const SizedBox(height: 12),
                   Text(
                     'Greeting: ${tip?.greetingCard ?? "Namaskara!"}',
-                    style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.teal),
+                    style: const TextStyle(
+                      fontStyle: FontStyle.italic,
+                      color: Colors.teal,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    tip?.practicalTips ?? 'Visit early for the best experience.',
+                    tip?.practicalTips ??
+                        'Visit early for the best experience.',
                     style: const TextStyle(fontSize: 13),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Recommended timing: ${tip?.recommendedTiming ?? "Morning"}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    'Recommended timing: '
+                    '${tip?.recommendedTiming ?? "Morning"}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -296,6 +335,20 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
         );
       },
     );
+  }
+
+  // Main: Offline OpenStreetMap raster tile overlays.
+  Set<TileOverlay> _buildTileOverlays(WalkingRoute route) {
+    if (!_isOfflineMapMode) return {};
+
+    return {
+      TileOverlay(
+        tileOverlayId: const TileOverlayId('offline_osm_raster_tiles'),
+        tileProvider: const LocalOfflineTileProvider(
+          packId: 'pack_malleshwaram_v1',
+        ),
+      ),
+    };
   }
 
   Set<Polyline> _buildPolylines(WalkingRoute route) {
@@ -315,17 +368,19 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   Set<Marker> _buildMarkers(WalkingRoute route) {
     final markers = <Marker>{};
 
-    // Origin
+    // Origin.
     markers.add(
       Marker(
         markerId: const MarkerId('origin'),
         position: LatLng(route.origin.latitude, route.origin.longitude),
         infoWindow: InfoWindow(title: 'Start: ${route.title}'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          BitmapDescriptor.hueGreen,
+        ),
       ),
     );
 
-    // Waypoints
+    // Waypoints.
     for (int i = 0; i < route.waypoints.length; i++) {
       final wp = route.waypoints[i];
       markers.add(
@@ -338,18 +393,25 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 ? route.waypointPlaceIds[i]
                 : null,
           ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueAzure,
+          ),
         ),
       );
     }
 
-    // Destination
+    // Destination.
     markers.add(
       Marker(
         markerId: const MarkerId('destination'),
-        position: LatLng(route.destination.latitude, route.destination.longitude),
+        position: LatLng(
+          route.destination.latitude,
+          route.destination.longitude,
+        ),
         infoWindow: const InfoWindow(title: 'Destination'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          BitmapDescriptor.hueRed,
+        ),
       ),
     );
 
@@ -390,8 +452,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
               ref.read(activeRouteProvider.notifier).loadDefaultRoute(),
         ),
         data: (route) {
-          final allSteps =
-              route.legs.expand((leg) => leg.steps).toList();
+          final allSteps = route.legs.expand((leg) => leg.steps).toList();
           final currentStep = allSteps.isNotEmpty &&
                   _activeStepIndex < allSteps.length
               ? allSteps[_activeStepIndex]
@@ -399,15 +460,20 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
 
           return Column(
             children: [
-              // 1. Route Overview & Sample Disclosure Banner
+              // 1. Route Overview & Sample Disclosure Banner.
               Container(
                 color: Colors.amber.shade50,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline,
-                        size: 16, color: Colors.amber.shade900),
+                    Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: Colors.amber.shade900,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -423,7 +489,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 ),
               ),
 
-              // 2. Interactive Adaptive Route Map (GoogleMap when online, flutter_map when offline)
+              // 2. Interactive Adaptive Route Map.
               SizedBox(
                 height: 230,
                 child: Stack(
@@ -440,20 +506,25 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                       ),
                       polylines: _buildPolylines(route),
                       markers: _buildMarkers(route),
-                      networkStatus: _networkStatus,
+                      tileOverlays: _buildTileOverlays(route),
+                      myLocationButtonEnabled: false,
+                      zoomControlsEnabled: true,
                     ),
                     Positioned(
                       top: 10,
                       left: 10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black87,
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Text(
-                          '${route.formattedDistance} • ${route.formattedDuration}',
+                          '${route.formattedDistance} • '
+                          '${route.formattedDuration}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
@@ -462,14 +533,84 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                         ),
                       ),
                     ),
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _isOfflineMapMode = !_isOfflineMapMode;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _isOfflineMapMode
+                                ? Colors.deepOrange.shade800
+                                : Colors.black87,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isOfflineMapMode
+                                    ? Icons.offline_pin
+                                    : Icons.cloud_done,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _isOfflineMapMode
+                                    ? 'Offline Tiles'
+                                    : 'Online Map',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_isOfflineMapMode)
+                      Positioned(
+                        bottom: 4,
+                        right: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.85),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            LocalOfflineTileProvider.osmAttribution,
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.black87,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
 
-              // 3. Domain 07 Venue Disruption & Plan-B Banner
+              // 3. Domain 07 Venue Disruption & Plan-B Banner.
               disruptionsAsync.when(
                 data: (disruptions) {
                   if (disruptions.isEmpty) return const SizedBox.shrink();
+
                   final alert = disruptions.first;
                   return Container(
                     margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -484,8 +625,11 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.warning_amber_rounded,
-                                color: Colors.red.shade800, size: 20),
+                            Icon(
+                              Icons.warning_amber_rounded,
+                              color: Colors.red.shade800,
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -529,12 +673,11 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 error: (e, _) => const SizedBox.shrink(),
               ),
 
-              // 4. Ordered Stop Sequence & Turn-by-Turn Steps
+              // 4. Ordered Stop Sequence & Turn-by-Turn Steps.
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    // Route Summary Title
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -556,7 +699,6 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    // Stops Header
                     Text(
                       'Ordered Stops (${route.waypointPlaceIds.length})',
                       style: const TextStyle(
@@ -567,7 +709,6 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                     ),
                     const SizedBox(height: 8),
 
-                    // Stop Cards List
                     ...List.generate(route.waypointPlaceIds.length, (idx) {
                       final placeId = route.waypointPlaceIds[idx];
                       final isConstrained =
@@ -615,14 +756,27 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                icon: const Icon(Icons.tips_and_updates_outlined, size: 20, color: Colors.amber),
+                                icon: const Icon(
+                                  Icons.tips_and_updates_outlined,
+                                  size: 20,
+                                  color: Colors.amber,
+                                ),
                                 tooltip: 'Local AI Tip',
-                                onPressed: () => _openLocalAiTipModal(context, placeId, route.neighborhood),
+                                onPressed: () => _openLocalAiTipModal(
+                                  context,
+                                  placeId,
+                                  route.neighborhood,
+                                ),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.people_outline, size: 20, color: Colors.teal),
+                                icon: const Icon(
+                                  Icons.people_outline,
+                                  size: 20,
+                                  color: Colors.teal,
+                                ),
                                 tooltip: 'Report Crowd',
-                                onPressed: () => _openCrowdReportDialog(context, placeId),
+                                onPressed: () =>
+                                    _openCrowdReportDialog(context, placeId),
                               ),
                               const Icon(Icons.chevron_right, size: 18),
                             ],
@@ -643,7 +797,6 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                     }),
 
                     const SizedBox(height: 16),
-                    // Turn-by-Turn Instruction Stepper
                     const Text(
                       'Turn-by-Turn Walking Prompts',
                       style: TextStyle(
@@ -702,7 +855,8 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                       ),
                                     ),
                                     Text(
-                                      '${step.distanceMeters} m • ${step.durationSeconds < 60 ? "< 1 min" : "~${step.durationSeconds ~/ 60} min"}',
+                                      '${step.distanceMeters} m • '
+                                      '${step.durationSeconds < 60 ? "< 1 min" : "~${step.durationSeconds ~/ 60} min"}',
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey.shade600,
@@ -727,10 +881,12 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 ),
               ),
 
-              // 5. Audio Guidance Bottom Bar
+              // 5. Audio Guidance Bottom Bar.
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.teal.shade900,
                   boxShadow: const [
@@ -805,7 +961,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   }
 }
 
-/// Street Assistance Bottom Sheet: Greetings, Vendor Q&A & Camera Translation
+/// Street Assistance Bottom Sheet: Greetings, Vendor Q&A & Camera Translation.
 class _StreetAssistanceSheet extends ConsumerStatefulWidget {
   const _StreetAssistanceSheet();
 
@@ -870,7 +1026,9 @@ class _StreetAssistanceSheetState
 
       final file = await _picker.pickImage(source: source);
       if (file == null) {
-        if (mounted) setState(() => _isTranslatingCamera = false);
+        if (mounted) {
+          setState(() => _isTranslatingCamera = false);
+        }
         return;
       }
 
@@ -941,7 +1099,7 @@ class _StreetAssistanceSheetState
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  // Tab 1: Regional Greetings & Food Ordering
+                  // Tab 1: Regional Greetings & Food Ordering.
                   ListView.builder(
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
@@ -995,11 +1153,14 @@ class _StreetAssistanceSheetState
                                     ),
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.volume_up,
-                                        size: 18),
+                                    icon: const Icon(
+                                      Icons.volume_up,
+                                      size: 18,
+                                    ),
                                     onPressed: () {
                                       assistanceService.speakAudioPrompt(
-                                          card.phraseRegional);
+                                        card.phraseRegional,
+                                      );
                                     },
                                   ),
                                 ],
@@ -1011,7 +1172,7 @@ class _StreetAssistanceSheetState
                     },
                   ),
 
-                  // Tab 2: Conversational Guide Q&A (Simulated B5)
+                  // Tab 2: Conversational Guide Q&A (Simulated B5).
                   ListView(
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
@@ -1026,8 +1187,11 @@ class _StreetAssistanceSheetState
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.smart_toy_outlined,
-                                size: 16, color: Colors.blue.shade800),
+                            Icon(
+                              Icons.smart_toy_outlined,
+                              size: 16,
+                              color: Colors.blue.shade800,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -1048,17 +1212,21 @@ class _StreetAssistanceSheetState
                             child: TextField(
                               controller: _queryController,
                               decoration: const InputDecoration(
-                                hintText: 'Ask about stalls, coffee, etiquette...',
+                                hintText:
+                                    'Ask about stalls, coffee, etiquette...',
                                 border: OutlineInputBorder(),
                                 contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 10),
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
                               ),
                               onSubmitted: (_) => _askLocalGuide(),
                             ),
                           ),
                           const SizedBox(width: 8),
                           FilledButton(
-                            onPressed: _isAskingAI ? null : _askLocalGuide,
+                            onPressed:
+                                _isAskingAI ? null : _askLocalGuide,
                             child: _isAskingAI
                                 ? const SizedBox(
                                     width: 16,
@@ -1087,23 +1255,27 @@ class _StreetAssistanceSheetState
                         const SizedBox(height: 8),
                         OutlinedButton.icon(
                           icon: const Icon(Icons.open_in_new, size: 16),
-                          label: const Text('Continue in Gemini (Deep Link Handoff)'),
+                          label: const Text(
+                            'Continue in Gemini (Deep Link Handoff)',
+                          ),
                           onPressed: () {
                             final prompt = _queryController.text.trim();
-                            ref.read(streetAssistanceServiceProvider).launchGeminiHandoff(
-                              contextPrompt: prompt.isNotEmpty
-                                  ? prompt
-                                  : 'Help me navigate Malleshwaram street food and culture.',
-                              neighborhood: 'Malleshwaram',
-                              currentStop: 'CTR (Shri Sagar)',
-                            );
+                            ref
+                                .read(streetAssistanceServiceProvider)
+                                .launchGeminiHandoff(
+                                  contextPrompt: prompt.isNotEmpty
+                                      ? prompt
+                                      : 'Help me navigate Malleshwaram street food and culture.',
+                                  neighborhood: 'Malleshwaram',
+                                  currentStop: 'CTR (Shri Sagar)',
+                                );
                           },
                         ),
                       ],
                     ],
                   ),
 
-                  // Tab 3: Camera Street Sign Translation (Simulated B5)
+                  // Tab 3: Camera Street Sign Translation (Simulated B5).
                   ListView(
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
@@ -1118,8 +1290,11 @@ class _StreetAssistanceSheetState
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.camera_alt_outlined,
-                                size: 16, color: Colors.blue.shade800),
+                            Icon(
+                              Icons.camera_alt_outlined,
+                              size: 16,
+                              color: Colors.blue.shade800,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -1140,8 +1315,9 @@ class _StreetAssistanceSheetState
                             child: OutlinedButton.icon(
                               onPressed: _isTranslatingCamera
                                   ? null
-                                  : () =>
-                                      _captureAndTranslate(ImageSource.camera),
+                                  : () => _captureAndTranslate(
+                                        ImageSource.camera,
+                                      ),
                               icon: const Icon(Icons.camera_alt),
                               label: const Text('Capture Sign'),
                             ),
@@ -1151,8 +1327,9 @@ class _StreetAssistanceSheetState
                             child: OutlinedButton.icon(
                               onPressed: _isTranslatingCamera
                                   ? null
-                                  : () =>
-                                      _captureAndTranslate(ImageSource.gallery),
+                                  : () => _captureAndTranslate(
+                                        ImageSource.gallery,
+                                      ),
                               icon: const Icon(Icons.photo_library),
                               label: const Text('Select Photo'),
                             ),
@@ -1201,7 +1378,8 @@ class _StreetAssistanceSheetState
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'Translation: ${_cameraResult!.translatedText}',
+                                  'Translation: '
+                                  '${_cameraResult!.translatedText}',
                                   style: const TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
@@ -1210,7 +1388,8 @@ class _StreetAssistanceSheetState
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Context: ${_cameraResult!.culturalContext}',
+                                  'Context: '
+                                  '${_cameraResult!.culturalContext}',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: Colors.grey.shade700,

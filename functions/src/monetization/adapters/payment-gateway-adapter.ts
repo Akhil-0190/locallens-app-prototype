@@ -19,7 +19,8 @@ export interface CreatePaymentIntentParams {
 }
 
 export interface PaymentIntentResult {
-  gatewayReference: string;
+  gatewayReference: string; // Genuine Razorpay order_id (e.g. 'order_...')
+  orderId?: string; // Direct provider order ID for mobile Checkout SDK
   paymentMode: PaymentMode;
   intentUrl?: string;
   qrPayload?: string;
@@ -31,6 +32,10 @@ export interface VerifyPaymentParams {
   transactionId: string;
   gatewayReference: string;
   simulatedOutcome?: 'SUCCESS' | 'FAILURE';
+  providerPaymentId?: string;
+  providerSignature?: string;
+  webhookPayload?: Record<string, unknown>;
+  webhookSignature?: string;
 }
 
 export interface PaymentVerificationResult {

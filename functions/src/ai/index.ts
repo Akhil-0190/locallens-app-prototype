@@ -11,3 +11,6 @@ export * from './schemas/types.js';
 export * from './utils/validator.js';
 export * from './services/model-orchestrator.js';
 export * from './services/ai-service.js';
+export * from './schemas/local-ai-schemas.js';
+export * from './services/local-ai-service.js';
+export * from './controllers/local-ai-controller.js';
