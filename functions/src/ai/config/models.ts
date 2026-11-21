@@ -230,24 +230,24 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client on Android 14+. Device-constrained to supported hardware (Pixel 8+, Galaxy S24+). Developer B defines prompt contracts; Android Kotlin implementation owned by Developer D.',
+    notes: 'NOT A CLOUD API MODEL ID. Integrates via Android system service (com.google.android.aicore) and Google ML Kit GenAI client (com.google.mlkit:genai-prompt:1.0.0-beta4, minSdk 26+). Support is evaluated dynamically via ML Kit GenAI status checks (FeatureStatus: AVAILABLE, DOWNLOADABLE, DOWNLOADING, UNAVAILABLE). Requires feature-specific readiness checks (Direct model, Summarization, Rewrite, Vision), foreground execution, and supported language (English-first). Developer B defines AI schemas and capability contracts; Android Kotlin bridge owned by Developer D.',
   },
 
-  // Corrected: Gemma 4 E2B edge runtime artifact
+  // Corrected: Gemma 4 E2B edge runtime artifact via llama.cpp
   GEMMA_LOCAL_INFERENCE: {
     apiModelId: 'gemma-4-e2b',
-    displayName: 'Gemma 4 E2B (Edge Runtime Model Artifact)',
+    displayName: 'Gemma 4 E2B (Unsloth GGUF via llama.cpp Android Runtime)',
     alias: 'Gemma 4 E2B',
-    primaryUse: 'Cross-platform offline inference on devices without Android AICore, tested via MediaPipe LLM Inference or LiteRT',
+    primaryUse: 'Cross-platform offline inference on devices without Android AICore, executed via llama.cpp Android native runtime',
     availability: 'LOCAL_RUNTIME',
     testStatus: 'DOCUMENTED_EDGE_SPEC',
     contextWindow: {
-      inputTokens: 2048,
+      inputTokens: 4096,
       outputTokens: 1024,
     },
     capabilities: {
       structuredOutput: true,
-      multimodalInput: false,
+      multimodalInput: false, // Text-only on device; multimodal vision/audio requires mmproj-BF16.gguf and is not needed for B6
       audioOutput: false,
       embeddings: false,
       localOnDevice: true,
@@ -260,7 +260,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: Infinity,
       },
     },
-    notes: 'Edge open-weights model artifact (Gemma 4 E2B, e.g. .task / .bin) for MediaPipe LLM Inference / LiteRT runtime. Not a server-side @google/genai API endpoint. Requires ~1.8GB-2.2GB RAM on device. Untested local artifact; client runtime integration owned by Developer D.',
+    notes: 'NOT A CLOUD API MODEL ID. Edge open-weights instruction-tuned artifact: unsloth/gemma-4-E2B-it-GGUF pinned at commit SHA 90f9618340396838ee7ff5b0ba2da27da62953d3 (canonical artifact gemma-4-E2B-it-Q4_K_M.gguf, ~3.11GB, SHA-256: 740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8; alternative gemma-4-E2B-it-Q8_0.gguf, ~5.05GB) executed via llama.cpp native runtime (libllama.so on arm64-v8a). Provisional dynamic available RAM requirement >= 3,500 MB (device total RAM >= 8,192 MB recommended; static totalRamMb >= 3000 is insufficient). Licensed under Apache License 2.0 as declared in repository metadata and model card at pinned revision 90f96183. Untested on physical ARM64 hardware; client platform bridge owned by Developer D.',
   },
 };
 
