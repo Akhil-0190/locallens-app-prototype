@@ -33,7 +33,13 @@ export {
 
 export {
   synthesizeSpotCard,
+  synthesizeSpotCardWithGrounding,
   SpotCardSynthesisInput,
+  GroundingExecutionOptions,
+  GroundedSpotCardSynthesisResult,
+  ProvenanceBadge,
+  buildGroundingToolsConfig,
+  determineProvenanceBadge,
 } from './spot-card-synthesis-service.js';
 
 export {
