@@ -63,5 +63,31 @@ void main() {
       expect(directInference['isLocalInference'], isFalse);
       expect(directInference['code'], 'MODEL_NOT_DOWNLOADED');
     });
+
+    test('OfflineModelManager and NativePlatformService model-path consistency', () async {
+      final tempDir = await Directory.systemTemp.createTemp('b6_path_test_');
+      final manager = OfflineModelManager(baseDirectory: tempDir);
+
+      final modelFile = await manager.getModelFile();
+      final modelPath = await manager.getModelPath();
+
+      // Path consistency checks
+      expect(modelPath, equals(modelFile.path));
+      expect(modelFile.path, endsWith('models/gemma-4-E2B-it-Q4_K_M.gguf'));
+      expect(modelFile.parent.existsSync(), isTrue);
+      expect(modelFile.parent.path, endsWith('models'));
+
+      // Verify NativePlatformService can receive the validated path
+      final service = NativePlatformService(isTestMode: true);
+      final inferenceResult = await service.executeOfflineInference(
+        prompt: 'Test prompt',
+        engine: 'LLAMA_CPP',
+        modelPath: modelPath,
+      );
+      expect(inferenceResult['isLocalInference'], isFalse);
+      expect(inferenceResult['code'], 'MODEL_NOT_DOWNLOADED');
+
+      await tempDir.delete(recursive: true);
+    });
   });
 }

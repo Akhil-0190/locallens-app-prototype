@@ -179,7 +179,12 @@ class MainActivity : FlutterActivity() {
 
                 "getNativeAiStatus" -> {
                     val apiLevel = Build.VERSION.SDK_INT
-                    val gemmaFile = File(context.filesDir, "models/gemma-4-E2B-it-Q4_K_M.gguf")
+                    val customPath = call.argument<String>("modelPath")
+                    val gemmaFile = if (!customPath.isNullOrEmpty()) {
+                        File(customPath)
+                    } else {
+                        File(context.filesDir, "models/gemma-4-E2B-it-Q4_K_M.gguf")
+                    }
 
                     if (gemmaFile.exists() && LlamaBridge.isLoaded()) {
                         result.success("LLAMA_CPP_RUNTIME_READY")
@@ -331,7 +336,12 @@ class MainActivity : FlutterActivity() {
                                 return@launch
                             }
                         } else if (engine == "LLAMA_CPP") {
-                            val gemmaFile = File(context.filesDir, "models/gemma-4-E2B-it-Q4_K_M.gguf")
+                            val customPath = call.argument<String>("modelPath")
+                            val gemmaFile = if (!customPath.isNullOrEmpty()) {
+                                File(customPath)
+                            } else {
+                                File(context.filesDir, "models/gemma-4-E2B-it-Q4_K_M.gguf")
+                            }
                             if (gemmaFile.exists() && LlamaBridge.isLoaded()) {
                                 try {
                                     val bridge = LlamaBridge()

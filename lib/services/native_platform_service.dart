@@ -212,13 +212,15 @@ class NativePlatformService {
   }
 
   /// Returns the current discrete state of native on-device AI.
-  Future<NativeAiStatus> getNativeAiStatus() async {
+  Future<NativeAiStatus> getNativeAiStatus({String? modelPath}) async {
     if (_isTestMode) {
       return NativeAiStatus.aicoreNotInstalled;
     }
     try {
       final statusStr =
-          await _aiChannel.invokeMethod<String>('getNativeAiStatus');
+          await _aiChannel.invokeMethod<String>('getNativeAiStatus', {
+        ...?modelPath == null ? null : {'modelPath': modelPath},
+      });
       switch (statusStr) {
         case 'UNSUPPORTED_DEVICE':
           return NativeAiStatus.unsupportedDevice;
@@ -246,6 +248,7 @@ class NativePlatformService {
     required String noteText,
     required String spotName,
     String language = 'en',
+    String? modelPath,
   }) async {
     if (_isTestMode) {
       return {
@@ -268,6 +271,7 @@ class NativePlatformService {
           'noteText': noteText,
           'spotName': spotName,
           'language': language,
+          ...?modelPath == null ? null : {'modelPath': modelPath},
         },
       );
       if (result != null) {
@@ -287,6 +291,7 @@ class NativePlatformService {
   /// Returns structured unassisted response until model binary is provided by Developer B.
   Future<Map<String, dynamic>> extractOfflineKeywords({
     required String text,
+    String? modelPath,
   }) async {
     if (_isTestMode) {
       return {
@@ -302,7 +307,10 @@ class NativePlatformService {
     try {
       final result = await _aiChannel.invokeMethod<Map<dynamic, dynamic>>(
         'extractOfflineKeywords',
-        {'text': text},
+        {
+          'text': text,
+          ...?modelPath == null ? null : {'modelPath': modelPath},
+        },
       );
       if (result != null) {
         return Map<String, dynamic>.from(result);
@@ -323,6 +331,7 @@ class NativePlatformService {
   Future<Map<String, dynamic>> executeOfflineInference({
     required String prompt,
     String engine = 'AICORE',
+    String? modelPath,
   }) async {
     if (_isTestMode) {
       return {
@@ -336,7 +345,11 @@ class NativePlatformService {
     try {
       final result = await _aiChannel.invokeMethod<Map<dynamic, dynamic>>(
         'executeOfflineInference',
-        {'prompt': prompt, 'engine': engine},
+        {
+          'prompt': prompt,
+          'engine': engine,
+          ...?modelPath == null ? null : {'modelPath': modelPath},
+        },
       );
       if (result != null) {
         return Map<String, dynamic>.from(result);

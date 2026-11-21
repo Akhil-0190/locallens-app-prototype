@@ -50,22 +50,32 @@ class OfflineModelManager {
 
   final NativePlatformService _platformService;
   final HttpClient _httpClient;
+  final Directory? baseDirectory;
   bool _isCancelled = false;
 
   OfflineModelManager({
     NativePlatformService? platformService,
     HttpClient? httpClient,
+    this.baseDirectory,
   })  : _platformService = platformService ?? NativePlatformService(),
         _httpClient = httpClient ?? HttpClient();
 
   /// Gets the absolute File handle where the model is or will be stored.
+  /// Uses getApplicationDocumentsDirectory() (context.filesDir on Android)
+  /// and standardizes the models directory path.
   Future<File> getModelFile() async {
-    final docsDir = await getApplicationDocumentsDirectory();
+    final docsDir = baseDirectory ?? await getApplicationDocumentsDirectory();
     final modelsDir = Directory('${docsDir.path}/models');
     if (!modelsDir.existsSync()) {
       modelsDir.createSync(recursive: true);
     }
     return File('${modelsDir.path}/$modelFileName');
+  }
+
+  /// Gets the verified absolute path of the model file.
+  Future<String> getModelPath() async {
+    final file = await getModelFile();
+    return file.absolute.path;
   }
 
   /// Checks if the model file is downloaded and matches the SHA-256 checksum.
