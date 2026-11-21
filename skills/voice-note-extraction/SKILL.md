@@ -72,3 +72,53 @@ This skill is invoked during the spot contribution lifecycle (`Task A3 / B2 / D2
   - `isMissingPricing`: boolean
   - `isLowConfidence`: boolean
   - `detectedUncertainties`: string[]
+
+---
+
+## 5. Representative Examples
+
+### Example 1: Successful Regional Extraction (Kannada Audio Note)
+* **Input:** Audio memo recorded in Kannada (`kn-IN`) describing Shri Sagar (CTR):
+  `ಇಲ್ಲಿ ಮಲ್ಲೇಶ್ವರಂನಲ್ಲಿರೋ ಶ್ರೀ ಸಾಗರ್ ಸಿಟಿಆರ್ ಬೆಣ್ಣೆ ದೋಸೆ ತುಂಬಾ ಫೇಮಸ್. ಬೆಳಗ್ಗೆ 7:30 ರಿಂದ 12:30 ವರೆಗೆ ಇರುತ್ತೆ. ಒಂದು ದೋಸೆಗೆ 80 ರೂಪಾಯಿ, ಕಾರ್ಡ್ ತಗಳಲ್ಲ, ಕ್ಯಾಶ್ ಅಥವಾ ಯುಪಿಐ ಮಾತ್ರ.`
+* **Output:**
+  - `placeNameSuggested`: `"Shri Sagar (CTR)"`
+  - `vernacularTranscription`: `"ಇಲ್ಲಿ ಮಲ್ಲೇಶ್ವರಂನಲ್ಲಿರೋ ಶ್ರೀ ಸಾಗರ್ ಸಿಟಿಆರ್ ಬೆಣ್ಣೆ ದೋಸೆ ತುಂಬಾ ಫೇಮಸ್..."`
+  - `translatedEnglish`: `"Here in Malleshwaram, Shri Sagar CTR butter dose is very famous. Open morning 7:30 AM to 12:30 PM. 80 rupees per dose. No cards accepted, only cash or UPI."`
+  - `openingHoursMentioned`: `"7:30 AM - 12:30 PM"` (FACT)
+  - `priceLevelNote`: `"₹80 per dose (Budget)"` (FACT)
+  - `cashOnlyWarning`: `true` (FACT)
+  - `recommendedDishesOrItems`: `["Benne Masala Dose", "Filter Coffee"]`
+  - `dietaryCuesIdentified`: `["PURE_VEG"]`
+
+### Example 2: Edge Case — Incomplete / Omitted Opening Hours (Zero Hallucination)
+* **Input:** Audio memo describing Brahmin Coffee Bar without stating opening or closing hours.
+* **Output:**
+  - `placeNameSuggested`: `"Brahmin Coffee Bar"`
+  - `openingHoursMentioned`: `undefined` (Never fabricated)
+  - `uncertaintyReport.isMissingOpeningHours`: `true`
+  - `uncertaintyReport.detectedUncertainties`: `["Opening hours were not mentioned in audio note"]`
+
+### Example 3: Unsuccessful / Corrupted Input Case
+* **Input:** Contribution payload lacking both audio stream and storefront photo.
+* **Output:**
+  - `success`: `false`
+  - `isLowQualityOrNoisy`: `true`
+  - `detectedUncertainties`: `["Input contains neither audio nor photo payload"]`
+
+---
+
+## 6. Facts vs. Inferences vs. Unavailable Invariants
+
+| Attribute | Classification Rule | System Behavior |
+| :--- | :--- | :--- |
+| **Directly Spoken Details** | `FACT` | Directly mapped to canonical fields (e.g. "open 7am to 1pm", "costs ₹80"). |
+| **Contextual Derivations** | `INFERENCE` | Labeled with confidence (e.g. "darshini" implies counter service). |
+| **Omitted Details** | `UNAVAILABLE` | Strictly left `undefined`. Never populated from web search or generalized training priors. |
+
+---
+
+## 7. Execution Engine & Programmatic Service
+
+* **TypeScript Implementation:** `functions/src/ai/skills/skill-voice-extraction.ts`
+* **Firebase Callable:** `Skills-executeVoiceNoteExtraction`
+* **Test Verification:** Verified via deterministic tests in `functions/test/test-b7-agent-skills.ts` (Suite 1).
