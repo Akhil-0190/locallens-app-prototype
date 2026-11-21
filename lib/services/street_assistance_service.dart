@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -134,7 +136,24 @@ class StreetAssistanceService {
 
   /// Simulated conversational Q&A adapter adhering to anticipated B5 dialogue schema.
   Future<String> askStreetCopilot(String query) async {
-    await Future.delayed(const Duration(milliseconds: 350));
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('Assistance-askStreetCopilot');
+      final result = await callable.call<Map<String, dynamic>>({
+        'query': query,
+        'neighborhood': 'Malleshwaram',
+        'currentLatitude': 12.9982,
+        'currentLongitude': 77.5709,
+      });
+      final data = Map<String, dynamic>.from(result.data);
+      if (data.containsKey('answer') && data['answer'] != null) {
+        return data['answer'] as String;
+      } else if (data.containsKey('data') && data['data'] is Map) {
+        final subData = Map<String, dynamic>.from(data['data'] as Map);
+        if (subData.containsKey('answer')) return subData['answer'] as String;
+      }
+    } catch (_) {}
+
     final q = query.toLowerCase();
 
     if (q.contains('coffee') || q.contains('ctr') || q.contains('benne')) {
@@ -145,7 +164,7 @@ class StreetAssistanceService {
       return '[Sample AI: Simulated B5 response] During heavy rains, 8th Cross Flower Market alley can be slippery. Divert via 7th Cross Margosa Road for covered pedestrian pathways.';
     }
 
-    return '[Sample AI: Simulated B5 response] You are on 8th Cross Road in Malleshwaram. The street is known for fresh jasmine garlands, heritage tiffin stalls, and artisan bronze vessels.';
+    return '[Sample AI: Simulated B5 response] You are exploring Malleshwaram. The neighborhood is known for fresh morning jasmine garlands, century-old tiffin counters, and quiet temple courtyards.';
   }
 
   /// Visual translation adapter for captured street signage.
@@ -230,6 +249,9 @@ class StreetAssistanceService {
       buffer.write('Currently at $currentStop. ');
     }
     buffer.write(contextPrompt);
+
+    // Copy formatted context prompt to clipboard for 1-tap paste
+    await Clipboard.setData(ClipboardData(text: buffer.toString()));
 
     final encodedPrompt = Uri.encodeComponent(buffer.toString());
     final uri = Uri.parse('https://gemini.google.com/app?prompt=$encodedPrompt');

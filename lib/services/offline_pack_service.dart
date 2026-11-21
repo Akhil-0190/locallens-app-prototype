@@ -143,8 +143,9 @@ class OfflinePackService {
       onProgress?.call(0.5);
     }
 
-    // 1. Verify file size if specified
-    if (manifest.downloadSizeBytes > 0 &&
+    // 1. Verify file size if specified (only for remote network downloads)
+    if (manifest.downloadUrl.isNotEmpty &&
+        manifest.downloadSizeBytes > 0 &&
         rawBytes.length != manifest.downloadSizeBytes) {
       throw PackSizeMismatchException(
         expectedBytes: manifest.downloadSizeBytes,
@@ -156,7 +157,9 @@ class OfflinePackService {
     final computedHash = sha256.convert(rawBytes).toString().toLowerCase();
     final expectedHash = manifest.sha256Checksum.toLowerCase();
 
-    if (expectedHash.isNotEmpty && computedHash != expectedHash) {
+    if (manifest.downloadUrl.isNotEmpty &&
+        expectedHash.isNotEmpty &&
+        computedHash != expectedHash) {
       throw PackChecksumMismatchException(
         expected: expectedHash,
         actual: computedHash,

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
 import '../providers/spot_providers.dart';
 import '../widgets/app_async_states.dart';
@@ -19,6 +18,18 @@ class PocketGuideScreen extends ConsumerStatefulWidget {
 
 class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
   final FlutterTts _tts = FlutterTts();
+  String? _playingSpotId;
+
+  @override
+  void initState() {
+    super.initState();
+    _tts.setCompletionHandler(() {
+      if (mounted) setState(() => _playingSpotId = null);
+    });
+    _tts.setCancelHandler(() {
+      if (mounted) setState(() => _playingSpotId = null);
+    });
+  }
 
   @override
   void dispose() {
@@ -36,20 +47,14 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
     return '${trimmed.substring(0, maxLength)}...';
   }
 
-  Future<void> _openMapsLink(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-
-    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open Google Maps link.')),
-      );
+  Future<void> _toggleAudioCue(SpotCard spot) async {
+    if (_playingSpotId == spot.id) {
+      await _tts.stop();
+      if (mounted) setState(() => _playingSpotId = null);
+      return;
     }
-  }
-
-  Future<void> _playAudioCue(SpotCard spot) async {
     await _tts.stop();
+    setState(() => _playingSpotId = spot.id);
     final cueText =
         '${_safeText(spot.spotName, maxLength: 80)}. ${_safeText(spot.infoParagraph, maxLength: 250)} ${_safeText(spot.practicalTips, maxLength: 150)}';
     await _tts.speak(cueText);
@@ -116,15 +121,14 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
                 spot: spot,
                 statusText: '${spot.currentVisitors}/${spot.hourlyLimit}',
                 actions: [
-                  FilledButton.icon(
-                    onPressed: () => _openMapsLink(spot.mapsLink),
-                    icon: const Icon(Icons.directions, size: 18),
-                    label: const Text('Open in Maps'),
-                  ),
                   OutlinedButton.icon(
-                    onPressed: () => _playAudioCue(spot),
-                    icon: const Icon(Icons.headphones, size: 18),
-                    label: const Text('Audio Cue'),
+                    onPressed: () => _toggleAudioCue(spot),
+                    icon: Icon(
+                      _playingSpotId == spot.id ? Icons.stop : Icons.headphones,
+                      size: 18,
+                      color: _playingSpotId == spot.id ? Colors.red : null,
+                    ),
+                    label: Text(_playingSpotId == spot.id ? 'Stop Audio' : 'Audio Cue'),
                   ),
                   OutlinedButton.icon(
                     onPressed: () {

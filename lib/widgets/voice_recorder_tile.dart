@@ -37,6 +37,15 @@ class _VoiceRecorderTileState extends State<VoiceRecorderTile> {
   @override
   void initState() {
     super.initState();
+    _audioPlayer.setAudioContext(AudioContext(
+      android: const AudioContextAndroid(
+        isSpeakerphoneOn: true,
+        stayAwake: false,
+        contentType: AndroidContentType.music,
+        usageType: AndroidUsageType.media,
+        audioFocus: AndroidAudioFocus.gain,
+      ),
+    ));
     _audioPlayer.onPlayerComplete.listen((_) {
       if (mounted) {
         setState(() => _state = RecordingState.recorded);

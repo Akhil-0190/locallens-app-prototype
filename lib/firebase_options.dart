@@ -53,10 +53,10 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyACiGFCMvW2NdojtoGTtHOEIrmJdsojrBQ',
-    appId: '1:952229212408:android:128399402de3cbe7dfcb0d',
-    messagingSenderId: '952229212408',
-    projectId: 'neighborhoodguideapp',
-    storageBucket: 'neighborhoodguideapp.firebasestorage.app',
+    apiKey: 'AIzaSyB-MW_jie2-HeUzWD9i-58R2EV30bbS0pk',
+    appId: '1:754026540296:android:fe77dbeb21c821c33590bd',
+    messagingSenderId: '754026540296',
+    projectId: 'neighborhoodguideapp-35856',
+    storageBucket: 'neighborhoodguideapp-35856.firebasestorage.app',
   );
 }
