@@ -1,278 +1,109 @@
 # LocalLens 🧭
 
 > **AI-Powered, Crowd-Throttled Neighborhood Discovery & Street-Ready Co-Pilot**  
-> *Developed for Startup Buildathon India 2026 by **Team InnovoTribe***
+> *Built for Startup Buildathon India 2026 by **Team InnovoTribe***
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
-[![Dart](https://img.shields.io/badge/Dart-3.x-0175C2?style=for-the-badge&logo=dart&logoColor=white)](https://dart.dev)
-[![Firebase](https://img.shields.io/badge/Firebase-Functions%20v2%20%7C%20Firestore-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)](https://firebase.google.com)
-[![Google Gemini](https://img.shields.io/badge/AI-Google%20GenAI%20SDK%20(Gemini)-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev)
-[![Google Maps](https://img.shields.io/badge/Maps-Google%20Maps%20Platform-34A853?style=for-the-badge&logo=googlemaps&logoColor=white)](https://developers.google.com/maps)
-[![Tests](https://img.shields.io/badge/Tests-318%20Backend%20%7C%2066%20Flutter%20Pass-brightgreen?style=for-the-badge)](#testing--verification)
-[![Release](https://img.shields.io/badge/Release-v1.0.5%20APK-blue?style=for-the-badge)](https://github.com/Akhil-0190/locallens-app-prototype/releases/tag/v1.0.5)
+[![Release v1.0.5](https://img.shields.io/badge/Release-v1.0.5%20APK-blue?style=flat-square)](https://github.com/Akhil-0190/locallens-app-prototype/releases/tag/v1.0.5)
+[![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?style=flat-square&logo=flutter&logoColor=white)](https://flutter.dev)
+[![Dart](https://img.shields.io/badge/Dart-3.x-0175C2?style=flat-square&logo=dart&logoColor=white)](https://dart.dev)
+[![Firebase](https://img.shields.io/badge/Firebase-Functions%20%7C%20Firestore-FFCA28?style=flat-square&logo=firebase&logoColor=black)](https://firebase.google.com)
+[![Google Gemini](https://img.shields.io/badge/AI-Google%20GenAI%20SDK-4285F4?style=flat-square&logo=google&logoColor=white)](https://ai.google.dev)
+[![Google Maps](https://img.shields.io/badge/Maps-Google%20Maps%20Platform-34A853?style=flat-square&logo=googlemaps&logoColor=white)](https://developers.google.com/maps)
+[![Tests](https://img.shields.io/badge/Tests-384%20Passing%20(100%25)-brightgreen?style=flat-square)](#tests--verification)
 
 ---
 
-## 📱 Quick Download (Android Prototype APK)
+## 📱 Download Android APK
 
-Download the verified Android APK directly from GitHub Releases:
 * 🚀 **[Download LocalLens-Prototype-v1.0.5.apk](https://github.com/Akhil-0190/locallens-app-prototype/releases/download/v1.0.5/LocalLens-Prototype-v1.0.5.apk)**
-* 📦 **[View GitHub Release v1.0.5](https://github.com/Akhil-0190/locallens-app-prototype/releases/tag/v1.0.5)**
+* 📦 **[GitHub Releases Page](https://github.com/Akhil-0190/locallens-app-prototype/releases/tag/v1.0.5)**
 
 ---
 
-## 🎯 Executive Summary & Problem Statement
+## 💡 Overview
 
-Modern city travelers face three compounding challenges when exploring historic and vibrant urban neighborhoods:
+Travelers visiting historic neighborhoods often encounter crowded tourist traps, narrow alleys without English signage, and rigid generic itineraries. Meanwhile, family-run stalls and residents receive little benefit from tourist footfall.
 
-1. **The Oversaturation Trap**: Social media algorithms and static travel blogs herd thousands of tourists to the exact same 5 spots. This produces suffocating 60-minute queues, degraded experiences, inflated prices, and cultural fatigue for local residents.
-2. **Language & Narrow-Alley Barriers**: Historic neighborhoods like Bengaluru's Malleshwaram, Basavanagudi, and Indiranagar have their finest culinary gems and artisan workshops tucked away inside narrow alleys. They lack English storefronts, have unindexed Google Maps listings, and require regional language interactions to order.
-3. **Zero Community Revenue Share**: Commercial travel bloggers monetize eyeballs via advertisements, leaving family-run stalls, heritage keepers, and everyday locals with zero economic benefit from tourist footfall.
+**LocalLens** connects travelers with vetted everyday locals who share regional voice-and-photo notes. Grounded with Google Maps reviews and real-time venue capacity limits, it generates personalized, uncrowded walking routes and step-by-step street guidance.
 
-### The LocalLens Solution (Pitch Deck Slide 4)
+---
 
-**LocalLens** is an AI-powered, crowd-throttled neighborhood discovery platform where vetted everyday locals share casual regional voice-and-photo notes, grounded with real-time Google Maps reviews and cultural data, to build personalized, uncrowded walking routes.
+## ⚡ Core Features
+
+* **🎙️ 2-Minute Local Voice Curation**: Residents record casual voice memos and street photos in Kannada/English with zero technical friction.
+* **🧭 Taste & Group Matchmaking**: Pairs solo travelers or groups (`Solo`, `2–3`, `4–5`, `6–7`, `7+`) with itineraries matching their budget, pace, and cultural palate (`#ScenicCruiser`, `#CurryConnoisseur`, `#HiddenGemHunter`, `#SunsetChaser`).
+* **🚦 Crowd Throttling & Trap Filtering**: Venue hourly capacity gauges (`4/12 visitors`), authenticity scores, and warnings that filter out overcrowded tourist traps.
+* **🎧 Street-Ready Co-Pilot**:
+  * **Audio Cues**: Earphone walk-by cues with play/pause/stop controls.
+  * **Vendor Order Cards**: Local phrases (e.g., Kannada greetings & ordering) with text-to-speech pronunciation.
+  * **1-Tap Plan B**: Instantly swaps crowded spots with uncrowded alternatives nearby.
+  * **Offline Edge Mode**: Pre-cached SQLite neighborhood packs for zero-connectivity alleys.
+* **🤝 Direct Community Tipping**: Instant micro-tipping directly to everyday residents and family-run stalls.
+* **✨ AI Multi-Day Trip Planner**: Auto-detects GPS coordinates, provides transit guidance from user location, builds 1–7 day custom itineraries, and syncs directly into the walking tour.
+
+---
+
+## 🛠️ Architecture & Tech Stack
 
 ```mermaid
 flowchart LR
-    A["Everyday Locals\n(2-Min Voice & Photo Memos)"] --> B["LocalLens Engine\n(Google GenAI + Maps Grounding)"]
-    C["Crowd Caps & Trap Filter\n(Google Maps Reviews + Venue Hourly Limits)"] --> B
-    B --> D["Solo & Squad Travelers\n(Taste & Group Matchmaking)"]
-    D --> E["Street-Ready Co-Pilot\n(Audio Cues • Vendor Cards • 1-Tap Plan B)"]
-    D --> F["Direct Community Tipping\n(100% to Everyday Residents & Stalls)"]
+    A["Flutter App\n(Material 3 • Riverpod • Drift SQLite)"] -->|Callable HTTPS| B["Firebase Cloud Functions v2\n(Node.js 22 • TypeScript)"]
+    B --> C["Cloud Firestore & Storage"]
+    B --> D["Google GenAI SDK\n(Gemini 2.5 Flash)"]
+    B --> E["Google Maps Platform\n(Routes & Places APIs)"]
+    A --> F["On-Device AI\n(ML Kit OCR • Flutter TTS • Geolocator)"]
 ```
 
----
-
-## ✨ Core Features & Value Pillars
-
-### 1. 🎙️ 2-Minute Local Voice Curation
-* Residents record casual regional audio notes and take quick storefront photos rather than writing long blogs.
-* Zero technical barriers: speech-to-text, Kannada-to-English contextual translation, and automated hygiene/safety tagging.
-
-### 2. 🧭 Taste & Group Matchmaking (Solo & Squads)
-* Pairs solo explorers or friend groups with insiders sharing their exact cultural palate.
-* Dynamic group sizing: `Solo (1)`, `Duo / Trio (2-3)`, `Small Crew (4-5)`, `Squad (6-7)`, and `Large Crew (7+)`.
-* Gen Z cultural aesthetic tags: `#ScenicCruiser`, `#CurryConnoisseur`, `#HiddenGemHunter`, `#SunsetChaser`, `#Cottagecore`, `#StreetFoodJunkie`.
-
-### 3. ⚡ Crowd Throttling & Tourist Trap Filtering
-* **Venue Capacity Gauges**: Real-time hourly visitor tracking (`4/12 visitors`, `8 slots remaining`) prevents venue congestion.
-* **Authenticity Scoring**: 90%+ authentic insider spot ratings grounded via Google Maps reviews.
-* **Tourist Trap Detection**: Proactively flags overcrowded tourist hubs and commercialized gimmicks.
-
-### 4. 🎧 Street-Ready Co-Pilot
-* **Earphone Audio Cues**: Turn-by-turn regional narration with dedicated play/pause/stop audio controls.
-* **Vendor Order Cards**: Instant regional language phrases (e.g. *"Namaskara! Oru filter coffee, please."*) with audio pronunciation via Flutter TTS.
-* **1-Tap Dynamic Plan B Rerouting**: When a venue is crowded or closed, one tap seamlessly swaps the spot with a vetted, uncrowded nearby alternative.
-* **100% Offline Edge Mode**: Bundled SQLite database via Drift and pre-cached neighborhood packs for zero-connectivity alleyways.
-
-### 5. 🤝 Direct Community Monetization & Instant Micro-Tipping
-* Instant digital tipping directly to the resident who curated the spot with 0% platform fee deduction.
-* Community reputation ledger and walking pass revenue sharing for verified neighborhood insiders.
-
-### 6. ✨ Gen Z AI Multi-Day Trip Planner (`/planner`)
-* **Auto-GPS Detection**: Identifies the user's real-time coordinates via Geolocator.
-* **Origin-to-Destination Transit Guidance**: Provides clear, multi-modal transit recommendations (Metro, Bus, Auto) to reach the target neighborhood.
-* **Flexible Multi-Day Itineraries**: 1 to 7 day plans with morning, afternoon, and evening slots, best visiting hours, and direct Google Maps navigation links.
-* **Walking Tour Synchronization**: 1-click button loads the generated plan directly into the active Street Walking Tour.
+| Layer | Technologies |
+| :--- | :--- |
+| **Mobile Client** | Flutter, Dart, Riverpod, GoRouter, Drift (SQLite), Flutter TTS, Google ML Kit |
+| **Backend & Cloud** | Firebase Cloud Functions v2, Cloud Firestore, Firebase Storage |
+| **AI & Grounding** | Google GenAI SDK (`@google/genai`, Gemini 2.5 Flash), Google Maps Routes & Places APIs |
 
 ---
 
-## 🖼️ Application Screens & User Journey
+## 🧪 Tests & Verification
 
-| Screen | Wireframe / Screenshot (Pitch Deck Slides 6 & 9) | Core Capabilities |
-| :--- | :--- | :--- |
-| **1. Add a Local Gem** | *Slide 9 Screenshot 1* | Local resident voice recording, venue photo upload, hygiene & safety tagging, Kannada greeting card curation. |
-| **2. Explore Local Gems** | *Slide 9 Screenshot 2* | Authenticity score percentage, crowd level indicator (`4/12 visitors`), insider tips, and clean Google Maps directions. |
-| **3. Match Your Vibe** | *Slide 9 Screenshot 3* | Traveler preference persona, group mode toggle (Solo vs Squad), pacing & budget filters, curated route previews. |
-| **4. Street Pocket Guide** | *Slide 9 Screenshot 4* | Active trip header, audio cue earphone player, vendor order cards, 1-tap Plan B backups, and instant UPI tipping. |
-| **5. AI Multi-Day Trip Planner** | *Slide 4 & Custom Feature* | Live GPS detection, transit guidance, squad sizing, aesthetic vibes, 1-7 day itineraries, and in-app route sync. |
+| Test Suite | Total | Status |
+| :--- | :---: | :---: |
+| **Backend Functions & Security Tests** | 318 | ✅ 318 Passed (100%) |
+| **Flutter Widget & Acceptance Tests** | 66 | ✅ 66 Passed (100%) |
+| **Total** | **384** | **100% Clean Pass** |
 
 ---
 
-## 🏗️ Architecture & Technology Stack
+## 🚀 Quick Start (Developers)
 
-```mermaid
-graph TB
-    subgraph Client ["Flutter Mobile Client (Android)"]
-        UI["Material 3 UI\n(Pocket Guide • Match Vibe • Add Gem • AI Planner)"]
-        State["State Management\n(Riverpod)"]
-        Router["Navigation\n(GoRouter)"]
-        LocalDB["Offline Edge Engine\n(Drift SQLite + Prebundled Packs)"]
-        NativeAI["On-Device AI & Hardware\n(Google ML Kit OCR + TTS + Geolocator)"]
-        
-        UI --> State
-        State --> Router
-        State --> LocalDB
-        State --> NativeAI
-    end
-
-    subgraph Cloud ["Google Cloud & Firebase Backend"]
-        Functions["Firebase Cloud Functions v2\n(Node.js 22 + TypeScript)"]
-        Firestore["Cloud Firestore\n(Spots • Preferences • Routes • Monetization)"]
-        Storage["Cloud Storage\n(Audio Memos • Street Photos • Offline Packs)"]
-        
-        Functions --> Firestore
-        Functions --> Storage
-    end
-
-    subgraph AIPlatform ["Google Cloud AI & Maps Platform"]
-        Gemini["Google GenAI SDK\n(Gemini 2.5 Flash Trip Planner & Curation)"]
-        RoutesAPI["Google Routes API\n(Capacity-Aware Decoded Polylines)"]
-        PlacesAPI["Google Places API\n(Real-Time Review Grounding)"]
-        
-        Functions --> Gemini
-        Functions --> RoutesAPI
-        Functions --> PlacesAPI
-    end
-
-    State -->|Callable HTTPS| Functions
-```
-
-### Technology Breakdown
-
-* **Mobile Frontend**:
-  * **Flutter & Dart**: Cross-platform client with Material 3 responsive design.
-  * **Riverpod (`flutter_riverpod`)**: Reactive, compile-safe dependency injection and state management.
-  * **GoRouter**: Deep linking and declarative navigation.
-  * **Drift (SQLite)**: 100% offline edge database storing cached neighborhood packs and local drafts.
-  * **Flutter TTS (`flutter_tts`)**: Multilingual speech synthesis for audio cues and vendor phrases.
-  * **Google ML Kit (`google_mlkit_text_recognition`)**: On-device optical character recognition for regional shop signs.
-  * **Geolocator**: Precise GPS tracking for auto-step proximity detection.
-
-* **Backend & Cloud Platform**:
-  * **Firebase Cloud Functions (2nd Gen)**: Serverless microservices running on Node.js 22 and TypeScript.
-  * **Cloud Firestore**: Enterprise NoSQL database storing verified spot cards, walking routes, and crowd ledgers.
-  * **Cloud Storage**: Secure media storage for photos, voice memos, and offline pack JSON bundles.
-
-* **AI & Grounding Layer**:
-  * **Google GenAI SDK (`@google/genai`)**: Powered by Gemini 2.5 Flash for multi-day itinerary generation, regional voice memo parsing, and aesthetic vibe matching.
-  * **Google Maps Platform (Routes & Places APIs)**: Polyline decoding, street walking directions, and place grounding against real-time business reviews.
-
----
-
-## 🧪 Testing & Verification
-
-The codebase is fortified with complete unit, integration, contract, and end-to-end acceptance test suites.
-
-| Test Suite | Framework | Total Tests | Status |
-| :--- | :--- | :---: | :---: |
-| **Backend Functions & Security** | Node.js Test Runner (`node --test`) | **318** | ✅ **318 Passed (100%)** |
-| **Flutter Client & Widget Tests** | Flutter Test (`flutter test`) | **66** | ✅ **66 Passed (100%)** |
-| **Combined Total** | | **384** | ✅ **100% Clean Pass** |
-
-### Verified Test Capabilities:
-* **Contract Invariants**: Rigorous domain validation matching all shared data schemas (`01-canonical-gem` through `10-offline-packs`).
-* **Fail-Closed Security**: Cloud Firestore & Storage security rules, App Check validation, and least-privilege authorization.
-* **Idempotent Monetization**: Micro-tipping ledger settlement and walking route pass activation without double credits or race conditions.
-* **Edge Resilience**: Full offline fallback to bundled JSON neighborhood packs when network connection is severed.
-
----
-
-## 🚀 Getting Started (Developers)
-
-### Prerequisites
-* [Flutter SDK](https://flutter.dev) (v3.24+ recommended)
-* [Node.js](https://nodejs.org/) (v22+)
-* [npm](https://www.npmjs.com/)
-* [Android Studio & Android SDK](https://developer.android.com/studio)
-* Java JDK 17+ or 25
-
-### 1. Clone the Repository
 ```bash
+# 1. Clone repository
 git clone https://github.com/Akhil-0190/locallens-app-prototype.git
 cd locallens-app-prototype
-```
 
-### 2. Setup Mobile Application
-```bash
-# Install Flutter dependencies
+# 2. Run mobile client
 flutter pub get
-
-# Generate Drift SQLite database code
 dart run build_runner build --delete-conflicting-outputs
-
-# Run Flutter tests
 flutter test
-```
+flutter run
 
-### 3. Setup Backend Functions
-```bash
-cd functions
-npm install
-npm run build
-npm test
-```
-
-### 4. Build Android Debug APK
-```bash
+# 3. Build debug APK
 flutter build apk --debug
 ```
-The compiled APK will be located at:
-`build/app/outputs/flutter-apk/app-debug.apk`
 
 ---
 
 ## 👥 Team InnovoTribe — Startup Buildathon India 2026
 
-### Developer A — Godwin Judah J
-**Backend, Firebase & Integration Lead (Backend owner)**
-- Firebase infrastructure and Cloud Functions.
-- Shared backend data models, schemas and API contracts.
-- Firestore, Authentication and Cloud Storage.
-- Contribution and AI-result persistence.
-- Preferences, groups, capacity and scheduling data.
-- Contributor ecosystem and monetization backend.
-- Security rules, authorization, App Check and secrets.
-- Backend deployment, integration and release verification.
-- Coordinates shared contracts, reviews PRs and owns merging into main.  
-*Tasks: A1–A6.*
+* **Developer A — Godwin Judah J** *(Backend, Firebase & Integration Lead)*  
+  Firebase infrastructure, Cloud Functions, data models, Firestore, security rules, App Check, and release verification. `Tasks: A1–A6.`
 
----
+* **Developer B — Akshay G** *(AI & Intelligence)*  
+  Gemini model configuration, structured schemas, regional voice/photo extraction, authenticity filtering, embeddings, and agent skills. `Tasks: B1–B7.`
 
-### Developer B — Akshay G
-**AI & Intelligence (AI owner)**
-- Gemini model configuration and access.
-- AI prompts, structured output schemas and validation.
-- Regional-language voice/photo processing and extraction.
-- Authenticity assessment and tourist-trap filtering.
-- Multimodal embeddings and personalized/group matching.
-- Gemini Live, translation and conversational assistance.
-- Gemini Nano and Gemma on-device AI model integration (AI/model side).
-- Four reusable Agent Skills and Gemini handoff.  
-*Tasks: B1–B7.*
+* **Developer C — Akhil T V** *(Maps, Places & Routing)*  
+  Google Maps Platform, Places API, walking route generation, venue capacity, crowd throttling, and Plan-B dynamic rerouting. `Tasks: C1–C6.`
 
----
-
-### Developer C — Akhil T V
-**Maps, Places & Routing (Maps and routing owner)**
-- Google Maps Platform integration.
-- Google Places API and place lookup.
-- Place verification and evidence mapping.
-- Walking route generation and stop sequencing.
-- Route distance and duration.
-- Venue capacity and crowd management.
-- Scheduling, alternatives and crowd throttling.
-- Weather and closure inputs.
-- Plan-B routing and dynamic rerouting.
-- Crowdsource access investigation.  
-*Tasks: C1–C6.*
-
----
-
-### Developer D — Aravinth S S
-**Flutter App, UI & Android (Client/app owner)**
-- Flutter/Dart application and Material 3 UI.
-- Riverpod state management and go_router navigation.
-- Firebase client integration.
-- Contributor onboarding and contribution UI.
-- Traveler onboarding, preferences and discovery UI.
-- Route, Maps and street-ready assistance UI.
-- Offline packs, local storage and offline client experience.
-- Kotlin Android integration, Method Channels and native AI bridge.
-- Contributor profiles, rewards and monetization UI.
-- Full application integration, testing and demo readiness.  
-*Tasks: D1–D7.*
+* **Developer D — Aravinth S S** *(Flutter App, UI & Android)*  
+  Flutter application, Material 3 UI, Riverpod state, GoRouter, offline packs & Drift SQLite, Android Kotlin integration, and demo readiness. `Tasks: D1–D7.`
 
 ---
 
