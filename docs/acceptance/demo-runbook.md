@@ -23,6 +23,9 @@
    - `[Simulation / In-Memory]`: Deterministic mock/test service executing contracts without active cloud credentials.
    - `[Sandbox Mode]`: Financial flows processed via simulated banking rails (no real money charged).
    - `[Local Draft]`: Information stored locally on client device; cloud dispatch marked pending.
+4. **Community Provenance & Google Crowdsource Truth-in-Advertising Disclosure:**
+   - Community dialect and venue sentiment are grounded via Gemini 3.8 Flash Google Maps review grounding and direct local voice contributions, as Google Crowdsource lacks a public API.
+   - Spot-card verification displays and evidence records are truthfully labeled with `MAPS_GROUNDED` (Google Maps Platform place knowledge graph) and `COMMUNITY_VERIFIED` (direct local regional voice & memo contributions).
 
 ---
 
@@ -53,7 +56,7 @@
   - Select Dietary: `Vegetarian Only`, Budget: `Budget Friendly`, Pacing: `Relaxed`.
   - Save preferences. Preferences persist to SharedPreferences (`TravelerPreferencesDocument`).
   - Pocket Guide feed renders curated spot cards with authenticity badges: `EXPERT_CURATED`, `HYPERLOCAL`, and `COMMUNITY_VERIFIED`.
-- **Disclosure:** `[Local Client]` SharedPreferences persistence and local filter logic. Live vector embedding similarity is pending backend cloud deployment.
+- **Disclosure:** `[Local Client]` SharedPreferences persistence and local filter logic. Live vector embedding similarity is pending backend cloud deployment. Community dialect and venue sentiment are grounded via Gemini 3.8 Flash Google Maps review grounding and direct local voice contributions, as Google Crowdsource lacks a public API. Spot cards display truthful provenance badges (`MAPS_GROUNDED` and `COMMUNITY_VERIFIED`).
 
 ### Step 4: Walking Route Tour & Street-Ready Assistance
 - **Action:** Tap `Start Walking Tour`.
