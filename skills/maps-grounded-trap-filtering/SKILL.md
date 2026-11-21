@@ -71,3 +71,50 @@ This skill is invoked during the spot verification and pocket guide compilation 
   - `trapIndicators`: Detected commercial factors (e.g. corporate chain, aggressive touting, price markups).
 - `safetyDisclosures`: Evidence-backed safety and hygiene observations.
 - `curatorSummary`: Concise synthesis explaining why the spot is or is not authentic.
+
+---
+
+## 5. Representative Examples
+
+### Example 1: Authentic Heritage Darshini (Positive Grounded Case)
+* **Input:** Brahmin Coffee Bar (Shankarapuram), Google Place ID `places/ChIJb9x1`, coordinate delta 12m, 18,500 reviews, rating 4.6, inexpensive budget tier, traditional copper filter boiler photo.
+* **Output:**
+  - `authenticityScore`: `88 / 100`
+  - `authenticityBadge`: `'HYPERLOCAL'`
+  - `touristTrapRisk`: `{ riskScore: 15, isTouristTrapRisk: false, trapIndicators: [] }`
+  - `recommendationVerdict`: `'STRONGLY_RECOMMENDED'`
+  - `curatorSummary`: `"Generational breakfast landmark with sustained local resident patronage and verified spatial grounding. Authentic heritage standing counter."`
+
+### Example 2: Commercial Tourist Trap / Counterfeit Storefront (Negative Flagged Case)
+* **Input:** Counterfeit Darshini claiming heritage legacy, coordinate delta 1,420m from submitted pin, 42 reviews, rating 3.1, touting reports.
+* **Output:**
+  - `authenticityScore`: `20 / 100`
+  - `authenticityBadge`: `'UNDER_REVIEW'`
+  - `touristTrapRisk`: `{ riskScore: 78, isTouristTrapRisk: true, trapIndicators: ["Severe coordinate discrepancy (1420m)", "Counterfeit brand mimicry"] }`
+  - `recommendationVerdict`: `'FLAGGED_TOURIST_TRAP'`
+  - `safetyDisclosures`: `["WARNING: Location mismatch detected between submitted audio and Google Maps coordinates. High counterfeit risk."]`
+
+### Example 3: Missing Spatial Evidence Case
+* **Input:** Unregistered street flower stall without Google Maps Places grounding evidence.
+* **Output:**
+  - `authenticityScore`: `35 / 100`
+  - `authenticityBadge`: `'UNDER_REVIEW'`
+  - `recommendationVerdict`: `'UNVERIFIED_PENDING_GROUNDING'`
+  - `evidenceSynthesis.mapsEvidenceStatus`: `'MISSING_EVIDENCE'`
+  - `safetyDisclosures`: `["Location has not yet been confirmed via Google Maps Places API."]`
+
+---
+
+## 6. Behavioral Safeguards & Honesty Rules
+
+1. **No Phantom Coordinates:** If Google Places does not return a matching location, the venue is marked `MISSING_EVIDENCE` rather than guessing nearby coordinates.
+2. **Coordinate Delta Enforcement:** If the distance delta between the contributor's coordinate pin and Google Places exceeds 500m, it is automatically flagged as `SUSPICIOUS` and penalized.
+3. **Evidence-Backed Safety Warnings:** Safety and hygiene disclosures must cite concrete evidence (e.g. "standing alley without handwashing sink"), avoiding unsubstantiated slander.
+
+---
+
+## 7. Execution Engine & Programmatic Service
+
+* **TypeScript Implementation:** `functions/src/ai/skills/skill-trap-filtering.ts`
+* **Firebase Callable:** `Skills-executeTrapFiltering`
+* **Test Verification:** Verified via deterministic tests in `functions/test/test-b7-agent-skills.ts` (Suite 2).

@@ -33,6 +33,7 @@
     "test:b4": "tsx test/test-b4-group-matching.ts",
     "test:b5": "tsx test/test-b5-live-assistance.ts",
     "test:b6": "tsx test/test-b6-on-device-ai.ts",
+    "test:b7": "tsx test/test-b7-agent-skills.ts",
     "test:firestore": "tsx test/test-firestore-rate-limiter.ts",
     "test:live-provider": "tsx test/test-provider-live.ts",
     "test:schemas": "tsx test/test-schemas.ts"

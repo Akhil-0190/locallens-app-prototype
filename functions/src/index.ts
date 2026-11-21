@@ -65,3 +65,8 @@ export * as Assistance from "./ai/controllers/assistance-controller.js";
  * Export Local & On-Device AI functions (Task B6).
  */
 export * as LocalAI from "./ai/controllers/local-ai-controller.js";
+
+/**
+ * Export Agent Skills & Continue in Gemini functions (Task B7).
+ */
+export * as Skills from "./ai/controllers/skills-controller.js";
