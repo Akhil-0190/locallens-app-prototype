@@ -505,7 +505,138 @@ class MonetizationService {
   }
 
   // ===========================================================================
-  // 5. Local Drafts (No Backend Callables Implemented Yet)
+  // 5. Live Guidance Booking & Partner Merchant Dispatch
+  // ===========================================================================
+
+  /// Submits a 1-on-1 local guidance booking request to backend callable `Monetization-requestLocalGuidance`.
+  Future<Map<String, dynamic>> requestLocalGuidance({
+    required String offeringId,
+    required String scheduledDateTime,
+    String? specialNotes,
+  }) async {
+    final functions = _functions;
+    if (isTestMode || functions == null) {
+      return {
+        'bookingId': 'book_${DateTime.now().millisecondsSinceEpoch}',
+        'travelerUserId': currentUserId ?? 'usr_test_traveler',
+        'offeringId': offeringId,
+        'scheduledDateTime': scheduledDateTime,
+        'status': 'PENDING_PAYMENT',
+        'specialNotes': specialNotes,
+        'paymentIntent': {
+          'transactionId': 'tx_guidance_${DateTime.now().millisecondsSinceEpoch}',
+          'amountInr': 750.0,
+          'currency': 'INR',
+          'mode': 'SANDBOX',
+        },
+      };
+    }
+
+    final callable = functions.httpsCallable('Monetization-requestLocalGuidance');
+    final payload = {
+      'offeringId': offeringId,
+      'scheduledDateTime': scheduledDateTime,
+      ...?specialNotes != null && specialNotes.isNotEmpty ? {'specialNotes': specialNotes} : null,
+    };
+
+    final result = await callable.call<Map<String, dynamic>>(payload);
+    final responseMap = Map<String, dynamic>.from(result.data);
+    return Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+  }
+
+  /// Confirms guidance booking payment via callable `Monetization-confirmGuidancePayment`.
+  Future<Map<String, dynamic>> confirmGuidancePayment({
+    required String bookingId,
+    String? simulatedOutcome,
+  }) async {
+    final functions = _functions;
+    if (isTestMode || functions == null) {
+      return {
+        'bookingId': bookingId,
+        'status': simulatedOutcome == 'FAILURE' ? 'PAYMENT_FAILED' : 'CONFIRMED',
+        'paymentStatus': simulatedOutcome == 'FAILURE' ? 'FAILED' : 'PAID_IN_ESCROW',
+      };
+    }
+
+    final callable = functions.httpsCallable('Monetization-confirmGuidancePayment');
+    final payload = {
+      'bookingId': bookingId,
+      ...?simulatedOutcome != null ? {'simulatedOutcome': simulatedOutcome} : null,
+    };
+
+    final result = await callable.call<Map<String, dynamic>>(payload);
+    final responseMap = Map<String, dynamic>.from(result.data);
+    return Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+  }
+
+  /// Registers a merchant partner subscription via callable `Monetization-registerPartnerSubscription`.
+  Future<Map<String, dynamic>> registerPartnerSubscription({
+    required String merchantPlaceId,
+    required String businessName,
+    required String contactEmail,
+    required String subscriptionPlan,
+    Map<String, dynamic>? activeDiscountOffer,
+    int durationDays = 365,
+  }) async {
+    final functions = _functions;
+    if (isTestMode || functions == null) {
+      return {
+        'subscription': {
+          'subscriptionId': 'sub_${DateTime.now().millisecondsSinceEpoch}',
+          'merchantPlaceId': merchantPlaceId,
+          'businessName': businessName,
+          'contactEmail': contactEmail,
+          'subscriptionPlan': subscriptionPlan,
+          'status': subscriptionPlan == 'COMMUNITY_FREE' ? 'ACTIVE' : 'PENDING_PAYMENT',
+        },
+        'isPendingPayment': subscriptionPlan != 'COMMUNITY_FREE',
+      };
+    }
+
+    final callable = functions.httpsCallable('Monetization-registerPartnerSubscription');
+    final payload = {
+      'merchantPlaceId': merchantPlaceId,
+      'businessName': businessName,
+      'contactEmail': contactEmail,
+      'subscriptionPlan': subscriptionPlan,
+      ...?activeDiscountOffer != null ? {'activeDiscountOffer': activeDiscountOffer} : null,
+      'durationDays': durationDays,
+    };
+
+    final result = await callable.call<Map<String, dynamic>>(payload);
+    final responseMap = Map<String, dynamic>.from(result.data);
+    return Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+  }
+
+  /// Confirms partner subscription payment via callable `Monetization-confirmPartnerSubscriptionPayment`.
+  Future<Map<String, dynamic>> confirmPartnerSubscriptionPayment({
+    required String subscriptionId,
+    String? simulatedOutcome,
+  }) async {
+    final functions = _functions;
+    if (isTestMode || functions == null) {
+      return {
+        'subscription': {
+          'subscriptionId': subscriptionId,
+          'status': simulatedOutcome == 'FAILURE' ? 'PAYMENT_FAILED' : 'ACTIVE',
+        },
+        'isIdempotentReplay': false,
+      };
+    }
+
+    final callable = functions.httpsCallable('Monetization-confirmPartnerSubscriptionPayment');
+    final payload = {
+      'subscriptionId': subscriptionId,
+      ...?simulatedOutcome != null ? {'simulatedOutcome': simulatedOutcome} : null,
+    };
+
+    final result = await callable.call<Map<String, dynamic>>(payload);
+    final responseMap = Map<String, dynamic>.from(result.data);
+    return Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+  }
+
+  // ===========================================================================
+  // 6. Local Drafts & Offline Recovery
   // ===========================================================================
 
   /// Saves ID verification request strictly as a local draft.

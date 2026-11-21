@@ -9,8 +9,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/walking_route.dart';
 import '../providers/route_providers.dart';
 import '../services/offline_tile_provider.dart';
+import '../services/native_platform_service.dart';
 import '../services/street_assistance_service.dart';
 import '../utils/polyline_decoder.dart';
+import '../widgets/adaptive_route_map.dart';
 import '../widgets/app_async_states.dart';
 
 /// D4: Route and Street-Ready Traveler Experience Screen
@@ -34,11 +36,24 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   int _activeStepIndex = 0;
   bool _isOfflineMapMode = false;
   late final StreetAssistanceService _streetAssistanceService;
+  DeviceNetworkStatus _networkStatus = DeviceNetworkStatus.wifi;
 
   @override
   void initState() {
     super.initState();
     _streetAssistanceService = ref.read(streetAssistanceServiceProvider);
+    _checkNetworkStatus();
+  }
+
+  Future<void> _checkNetworkStatus() async {
+    try {
+      final status = await NativePlatformService().getNetworkStatus();
+      if (mounted) {
+        setState(() {
+          _networkStatus = status;
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -221,12 +236,13 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 ),
               ),
 
-              // 2. Interactive GoogleMap Widget (Height constrained)
+              // 2. Interactive Adaptive Route Map (GoogleMap when online, flutter_map when offline)
               SizedBox(
                 height: 230,
                 child: Stack(
                   children: [
-                    GoogleMap(
+                    AdaptiveRouteMap(
+                      route: route,
                       onMapCreated: _onMapCreated,
                       initialCameraPosition: CameraPosition(
                         target: LatLng(
@@ -551,7 +567,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                       ),
                                     ),
                                     Text(
-                                      '${step.distanceMeters} m • ~${step.durationSeconds ~/ 60} min',
+                                      '${step.distanceMeters} m • ${step.durationSeconds < 60 ? "< 1 min" : "~${step.durationSeconds ~/ 60} min"}',
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey.shade600,

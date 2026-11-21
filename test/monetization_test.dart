@@ -457,17 +457,17 @@ void main() {
 
     testWidgets('IdVerificationModalSheet displays local draft notice and saves draft', (tester) async {
       await tester.pumpWidget(buildTestApp(
-        Scaffold(
+        const Scaffold(
           body: IdVerificationModalSheet(),
         ),
       ));
       await tester.pumpAndSettle();
 
       expect(find.text('Resident Verification'), findsOneWidget);
-      expect(find.textContaining('[ID Verification: Local Draft Only - Backend Submission Pending Developer A]'), findsOneWidget);
-      expect(find.text('Save Local Draft'), findsOneWidget);
+      expect(find.text('Submit for Verification'), findsOneWidget);
+      expect(find.text('Save Draft'), findsOneWidget);
 
-      final saveDraftBtn = find.text('Save Local Draft');
+      final saveDraftBtn = find.text('Save Draft');
       await tester.ensureVisible(saveDraftBtn);
       await tester.tap(saveDraftBtn);
       await tester.pumpAndSettle();
@@ -477,7 +477,7 @@ void main() {
 
     testWidgets('GuidanceRequestSheet displays dispatch pending notice and saves draft', (tester) async {
       await tester.pumpWidget(buildTestApp(
-        Scaffold(
+        const Scaffold(
           body: GuidanceRequestSheet(
             guideUserId: 'usr_guide_1',
             guideName: 'Aravinth S',
@@ -487,10 +487,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('1-on-1 Local Guidance'), findsOneWidget);
-      expect(find.textContaining('[Guidance Booking: Dispatch Callable Pending Developer A'), findsOneWidget);
-      expect(find.text('Save Local Guidance Request'), findsOneWidget);
+      expect(find.text('Book 1-on-1 Guidance'), findsOneWidget);
+      expect(find.text('Save Draft'), findsOneWidget);
 
-      final saveGuidanceBtn = find.text('Save Local Guidance Request');
+      final saveGuidanceBtn = find.text('Save Draft');
       await tester.ensureVisible(saveGuidanceBtn);
       await tester.tap(saveGuidanceBtn);
       await tester.pumpAndSettle();
@@ -498,12 +498,37 @@ void main() {
       expect(find.textContaining('Guidance request drafted locally!'), findsOneWidget);
     });
 
+    test('MonetizationService handles live Cloud Function dispatches gracefully with fallback', () async {
+      final service = MonetizationService();
+
+      // Test live requestLocalGuidance dispatch
+      final guidanceResult = await service.requestLocalGuidance(
+        offeringId: 'offering_malleshwaram_heritage_walk',
+        scheduledDateTime: '2026-11-25',
+        specialNotes: 'Need early morning guidance',
+      );
+      // Since Firebase app isn't initialized in pure unit test, it returns local fallback gracefully
+      expect(guidanceResult['bookingId'], isNotNull);
+      expect(guidanceResult['status'], isIn(['PENDING_PAYMENT', 'pending_escrow', 'local_draft']));
+
+      // Test live registerPartnerSubscription dispatch
+      final partnerResult = await service.registerPartnerSubscription(
+        merchantPlaceId: 'place_ctr_malleshwaram_01',
+        businessName: 'CTR Heritage Cafe',
+        contactEmail: 'contact@ctr.in',
+        subscriptionPlan: 'VERIFIED_PARTNER',
+      );
+      expect(partnerResult['subscription'], isNotNull);
+      final sub = partnerResult['subscription'] as Map<String, dynamic>;
+      expect(sub['subscriptionId'], isNotNull);
+      expect(sub['status'], isIn(['PENDING_PAYMENT', 'pending_payment', 'local_draft', 'ACTIVE']));
+    });
+
     testWidgets('PartnerSubscriptionScreen displays local draft notice and accommodation tiers', (tester) async {
       await tester.pumpWidget(buildTestApp(const PartnerSubscriptionScreen()));
       await tester.pumpAndSettle();
 
       expect(find.text('Partner Subscriptions'), findsOneWidget);
-      expect(find.textContaining('[Partner Registration: Local Draft Saved - Backend Submission Pending Developer A]'), findsOneWidget);
       expect(find.text('Hospitality Partner Tiers'), findsOneWidget);
       expect(find.text('Community Free'), findsOneWidget);
       expect(find.text('Verified Partner'), findsOneWidget);

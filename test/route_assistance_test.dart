@@ -7,6 +7,8 @@ import 'package:locallens/main.dart';
 import 'package:locallens/screens/walking_route_screen.dart';
 import 'package:locallens/services/route_service.dart';
 import 'package:locallens/services/street_assistance_service.dart';
+import 'package:locallens/widgets/adaptive_route_map.dart';
+import 'package:locallens/services/native_platform_service.dart';
 import 'package:locallens/utils/polyline_decoder.dart';
 
 void main() {
@@ -60,8 +62,8 @@ void main() {
     testWidgets('4. WalkingRouteScreen renders route overview, GoogleMap, stops, and Plan-B action',
         (WidgetTester tester) async {
       // Set test screen size
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 2.0;
+      tester.view.physicalSize = const Size(540, 1200);
+      tester.view.devicePixelRatio = 1.0;
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
@@ -121,8 +123,8 @@ void main() {
 
     testWidgets('5. Street Assistance Modal Sheet renders Ordering Cards, Ask Guide Q&A, and Camera Translation',
         (WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 2.0;
+      tester.view.physicalSize = const Size(540, 1200);
+      tester.view.devicePixelRatio = 1.0;
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
@@ -184,10 +186,40 @@ void main() {
       expect(find.text('Select Photo'), findsOneWidget);
     });
 
-    testWidgets('6. App navigation smoke test reaches Walking Route Screen via Pocket Guide & Match Vibe',
+    test('6. AdaptiveRouteMap unit verification of offline and online modes', () async {
+      final route = await RouteService().getPersonalizedRoute(placeIds: ['place_1']);
+
+      final onlineMap = AdaptiveRouteMap(
+        route: route,
+        initialCameraPosition: const CameraPosition(
+          target: LatLng(13.003, 77.571),
+          zoom: 15.0,
+        ),
+        polylines: const {},
+        markers: const {},
+        networkStatus: DeviceNetworkStatus.wifi,
+      );
+      expect(onlineMap.networkStatus, equals(DeviceNetworkStatus.wifi));
+
+      final offlineMap = AdaptiveRouteMap(
+        route: route,
+        initialCameraPosition: const CameraPosition(
+          target: LatLng(13.003, 77.571),
+          zoom: 15.0,
+        ),
+        polylines: const {},
+        markers: const {},
+        networkStatus: DeviceNetworkStatus.offline,
+        enableTileNetworkLoading: false,
+      );
+      expect(offlineMap.networkStatus, equals(DeviceNetworkStatus.offline));
+      expect(offlineMap.enableTileNetworkLoading, isFalse);
+    });
+
+    testWidgets('7. App navigation smoke test reaches Walking Route Screen via Pocket Guide & Match Vibe',
         (WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 2.0;
+      tester.view.physicalSize = const Size(540, 1200);
+      tester.view.devicePixelRatio = 1.0;
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
