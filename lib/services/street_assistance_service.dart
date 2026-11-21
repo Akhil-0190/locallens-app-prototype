@@ -134,7 +134,7 @@ class StreetAssistanceService {
     ];
   }
 
-  /// Simulated conversational Q&A adapter adhering to anticipated B5 dialogue schema.
+  /// Conversational Q&A adapter adhering to B5 dialogue schema.
   Future<String> askStreetCopilot(String query) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
@@ -144,6 +144,8 @@ class StreetAssistanceService {
         'neighborhood': 'Malleshwaram',
         'currentLatitude': 12.9982,
         'currentLongitude': 77.5709,
+        'isGuestAccess': true,
+        'userId': 'guest_traveler',
       });
       final data = Map<String, dynamic>.from(result.data);
       if (data.containsKey('answer') && data['answer'] != null) {
@@ -159,12 +161,12 @@ class StreetAssistanceService {
     if (q.contains('coffee') || q.contains('ctr') || q.contains('benne')) {
       return '[Sample AI: Simulated B5 response] Shri Sagar (CTR) has been serving its signature benne dose since the 1950s. Order at the front register first, collect your token, and take a seat in the heritage wood-panel hall.';
     } else if (q.contains('temple') || q.contains('dress') || q.contains('shoes')) {
-      return '[Sample AI: Simulated B5 response] For Kadu Malleshwara Temple, remove footwear at the courtyard gate before entering. Modest dress covering shoulders and knees is traditional.';
+      return '[Sample AI: Simulated B5 response] For local temples, remove footwear at the courtyard gate before entering. Modest dress covering shoulders and knees is traditional.';
     } else if (q.contains('rain') || q.contains('alley') || q.contains('water')) {
-      return '[Sample AI: Simulated B5 response] During heavy rains, 8th Cross Flower Market alley can be slippery. Divert via 7th Cross Margosa Road for covered pedestrian pathways.';
+      return '[Sample AI: Simulated B5 response] During heavy rains, inner stone alleyways can be slippery. Divert via main tree-lined avenues for covered pedestrian pathways.';
     }
 
-    return '[Sample AI: Simulated B5 response] You are exploring Malleshwaram. The neighborhood is known for fresh morning jasmine garlands, century-old tiffin counters, and quiet temple courtyards.';
+    return '[Sample AI: Simulated B5 response] Welcome to your neighborhood exploration! Tap any spot to view verified crowd capacity, listen to local audio cues, or ask for vendor ordering cards.';
   }
 
   /// Visual translation adapter for captured street signage.

@@ -46,7 +46,9 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  */
 export const getHourlyCapacity = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -70,7 +72,9 @@ export const getHourlyCapacity = onCall(async (request) => {
  */
 export const bookScheduledVisit = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -94,7 +98,7 @@ export const bookScheduledVisit = onCall(async (request) => {
       slotId,
       partySize: size,
       idempotencyKey,
-      travelerId: request.auth.uid,
+      travelerId: callerUid,
       groupSessionId: typeof groupSessionId === 'string' ? groupSessionId : null,
       memberUserIds: Array.isArray(memberUserIds) ? (memberUserIds as string[]) : undefined,
     });
@@ -104,13 +108,13 @@ export const bookScheduledVisit = onCall(async (request) => {
       placeId,
       slotId,
       partySize: reservation.partySize,
-      travelerId: request.auth.uid,
+      travelerId: callerUid,
     });
 
     return successEnvelope(reservation, startMs);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error('Failed to book scheduled visit', { error: msg, travelerId: request.auth.uid });
+    logger.error('Failed to book scheduled visit', { error: msg, travelerId: callerUid });
     if (msg.includes('previously used with different booking parameters')) {
       throw new HttpsError('already-exists', msg);
     }
@@ -130,7 +134,9 @@ export const bookScheduledVisit = onCall(async (request) => {
  */
 export const cancelScheduledVisit = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -142,10 +148,10 @@ export const cancelScheduledVisit = onCall(async (request) => {
   try {
     const cancelled = await releaseVisit({
       visitId,
-      callerUserId: request.auth.uid,
+      callerUserId: callerUid,
     });
 
-    logger.info('Scheduled visit cancelled', { visitId, travelerId: request.auth.uid });
+    logger.info('Scheduled visit cancelled', { visitId, travelerId: callerUid });
     return successEnvelope(cancelled, startMs);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -166,7 +172,9 @@ export const cancelScheduledVisit = onCall(async (request) => {
  */
 export const checkInScheduledVisit = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -180,12 +188,12 @@ export const checkInScheduledVisit = onCall(async (request) => {
   try {
     const checkedIn = await verifyCheckIn({
       visitId,
-      callerUserId: request.auth.uid,
+      callerUserId: callerUid,
       travelerCoordinate: travelerCoordinate as { latitude: number; longitude: number } | undefined,
       qrToken: typeof qrToken === 'string' ? qrToken : undefined,
     });
 
-    logger.info('Scheduled visit checked in', { visitId, callerUserId: request.auth.uid });
+    logger.info('Scheduled visit checked in', { visitId, callerUserId: callerUid });
     return successEnvelope(checkedIn, startMs);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

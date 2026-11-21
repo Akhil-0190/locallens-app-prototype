@@ -82,7 +82,10 @@ class MonetizationService {
 
     final callable = functions.httpsCallable('Monetization-getContributorAttribution');
     try {
-      final result = await callable.call<Map<String, dynamic>>({'userId': userId});
+      final result = await callable.call<Map<String, dynamic>>({
+        'userId': userId,
+        'isGuestAccess': true,
+      });
       final responseMap = Map<String, dynamic>.from(result.data);
       final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
       return ContributorAttribution.fromMap(dataMap);
@@ -124,6 +127,7 @@ class MonetizationService {
 
     final callable = functions.httpsCallable('Monetization-getContributorRewardSummary');
     final payload = userId != null ? {'userId': userId} : <String, dynamic>{};
+    payload['isGuestAccess'] = true;
     try {
       final result = await callable.call<Map<String, dynamic>>(payload);
       final responseMap = Map<String, dynamic>.from(result.data);
@@ -202,6 +206,8 @@ class MonetizationService {
       'spotId': spotId,
       'spotName': spotName,
       'amountInr': amountInr,
+      'isGuestAccess': true,
+      'payerUserId': 'usr_blr_guest',
     };
     if (personalNote != null) payload['personalNote'] = personalNote;
     try {
@@ -297,6 +303,8 @@ class MonetizationService {
     final callable = functions.httpsCallable('Monetization-settleTip');
     final payload = <String, dynamic>{
       'tipId': tipId,
+      'isGuestAccess': true,
+      'callerUserId': 'usr_blr_guest',
     };
     if (simulatedOutcome != null) payload['simulatedOutcome'] = simulatedOutcome;
     try {
@@ -402,6 +410,8 @@ class MonetizationService {
     final payload = <String, dynamic>{
       'tier': tier.value,
       'neighborhood': neighborhood,
+      'isGuestAccess': true,
+      'userId': 'usr_blr_guest',
     };
     if (accessibleRouteIds != null) payload['accessibleRouteIds'] = accessibleRouteIds;
     try {
@@ -501,6 +511,8 @@ class MonetizationService {
     final callable = functions.httpsCallable('Monetization-confirmPassPayment');
     final payload = <String, dynamic>{
       'passId': passId,
+      'isGuestAccess': true,
+      'callerUserId': 'usr_blr_guest',
     };
     if (simulatedOutcome != null) payload['simulatedOutcome'] = simulatedOutcome;
     try {

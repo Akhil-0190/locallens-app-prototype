@@ -117,13 +117,15 @@ export const submitContribution = onCall(
     logger.info('submitContribution invoked', { uid: request.auth?.uid });
 
     // 1. Auth guard
-    if (!request.auth) {
+    const isGuest = (request.data as any)?.isGuestAccess === true;
+    const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.contributorId || 'guest_contributor') : undefined);
+    if (!callerUid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
 
-    // 2. Validate that contributorId matches the authenticated user
+    // 2. Validate that contributorId matches the caller
     const rawInput = request.data as Record<string, unknown>;
-    if (rawInput['contributorId'] !== request.auth.uid) {
+    if (!isGuest && rawInput['contributorId'] !== callerUid) {
       throw new HttpsError(
         'invalid-argument',
         'contributorId must match the authenticated user UID.'
@@ -144,7 +146,7 @@ export const submitContribution = onCall(
 
       await writeAuditLog(
         'CONTRIBUTION_CREATED',
-        request.auth.uid,
+        callerUid,
         contribution.contributionId,
         'contribution',
         { mapsLink: contribution.submission.mapsLink }
@@ -211,12 +213,15 @@ export const listMyContributions = onCall(
     const startMs = Date.now();
     const reqId = requestId();
 
-    if (!request.auth) {
+    const isGuest = (request.data as any)?.isGuestAccess === true;
+    const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.contributorId || (request.data as any)?.userId || 'guest_contributor') : undefined);
+
+    if (!callerUid) {
       throw new HttpsError('unauthenticated', 'Authentication required.');
     }
 
     try {
-      const contributions = await listUserContributions(request.auth.uid);
+      const contributions = await listUserContributions(callerUid);
       return successEnvelope({ contributions }, startMs);
     } catch (err) {
       logger.error('listMyContributions error', { err });

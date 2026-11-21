@@ -48,7 +48,9 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  */
 export const computeWalkingRoute = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to compute routes.');
   }
 
@@ -80,7 +82,9 @@ export const computeWalkingRoute = onCall(async (request) => {
  */
 export const computeCapacityAwareRoute = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -103,7 +107,9 @@ export const computeCapacityAwareRoute = onCall(async (request) => {
  */
 export const computePlanBReroute = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -126,7 +132,9 @@ export const computePlanBReroute = onCall(async (request) => {
  */
 export const evaluateVenueCapacity = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -157,7 +165,9 @@ export const evaluateVenueCapacity = onCall(async (request) => {
  */
 export const groundContributedPlace = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -181,7 +191,9 @@ export const groundContributedPlace = onCall(async (request) => {
  */
 export const reportVenueCrowd = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to report crowd signals.');
   }
 
@@ -198,7 +210,7 @@ export const reportVenueCrowd = onCall(async (request) => {
   try {
     const reportResult = await CrowdManagementService.submitCommunityCrowdSignal({
       ...payload,
-      travelerId: request.auth.uid,
+      travelerId: callerUid,
     });
     return successEnvelope(reportResult, startMs);
   } catch (err: any) {

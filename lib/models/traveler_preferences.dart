@@ -132,6 +132,11 @@ class TravelerPreferencesDocument {
     'Malleshwaram',
     'Basavanagudi',
     'Indiranagar',
+    'Koramangala',
+    'Old Delhi',
+    'Fort Kochi',
+    'Bandra Mumbai',
+    'White Town Pondicherry',
   ];
 
   static const List<String> supportedAccessibilityNeeds = [

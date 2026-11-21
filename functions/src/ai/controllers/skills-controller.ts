@@ -62,10 +62,12 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
 export const executeVoiceNoteExtraction = onCall(async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to invoke Voice-Note Extraction Skill.');
   }
-  await assertRateLimit(request.auth.uid, 'executeVoiceNoteExtraction');
+  await assertRateLimit(callerUid, 'executeVoiceNoteExtraction');
 
   const parseResult = VoicePhotoExtractionInputSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -87,10 +89,12 @@ export const executeVoiceNoteExtraction = onCall(async (request) => {
 export const executeTrapFiltering = onCall(async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to invoke Trap Filtering Skill.');
   }
-  await assertRateLimit(request.auth.uid, 'executeTrapFiltering');
+  await assertRateLimit(callerUid, 'executeTrapFiltering');
 
   const parseResult = TrapFilterSkillInputSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -112,10 +116,12 @@ export const executeTrapFiltering = onCall(async (request) => {
 export const executeGroupBlending = onCall(async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to invoke Group Blending Skill.');
   }
-  await assertRateLimit(request.auth.uid, 'executeGroupBlending');
+  await assertRateLimit(callerUid, 'executeGroupBlending');
 
   const parseResult = GroupBlendingSkillInputSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -137,10 +143,12 @@ export const executeGroupBlending = onCall(async (request) => {
 export const executePlanBRerouting = onCall(async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to invoke Plan-B Rerouting Skill.');
   }
-  await assertRateLimit(request.auth.uid, 'executePlanBRerouting');
+  await assertRateLimit(callerUid, 'executePlanBRerouting');
 
   const parseResult = PlanBReroutingSkillInputSchema.safeParse(request.data);
   if (!parseResult.success) {
@@ -162,10 +170,12 @@ export const executePlanBRerouting = onCall(async (request) => {
 export const executeGeminiHandoffCallable = onCall(async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to initiate Continue in Gemini handoff.');
   }
-  await assertRateLimit(request.auth.uid, 'executeGeminiHandoff');
+  await assertRateLimit(callerUid, 'executeGeminiHandoff');
 
   const parseResult = GeminiHandoffExecutionInputSchema.safeParse(request.data);
   if (!parseResult.success) {

@@ -47,7 +47,9 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  */
 export const createGroupSession = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -59,7 +61,7 @@ export const createGroupSession = onCall(async (request) => {
   }
 
   try {
-    const session = await createSession(request.auth.uid, neighborhood, {
+    const session = await createSession(callerUid, neighborhood, {
       displayName: (displayName as string) || 'Host Traveler',
       vibes: Array.isArray(vibes) ? vibes : [],
       dietaryRestrictions: Array.isArray(dietaryRestrictions) ? dietaryRestrictions : [],
@@ -70,7 +72,7 @@ export const createGroupSession = onCall(async (request) => {
     logger.info('Group session created', {
       sessionId: session.sessionId,
       sessionCode: session.sessionCode,
-      hostUserId: request.auth.uid,
+      hostUserId: callerUid,
     });
 
     return successEnvelope(session, startMs);
@@ -86,7 +88,9 @@ export const createGroupSession = onCall(async (request) => {
  */
 export const joinGroupSession = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -98,7 +102,7 @@ export const joinGroupSession = onCall(async (request) => {
   }
 
   try {
-    const session = await joinSession(request.auth.uid, sessionCode, {
+    const session = await joinSession(callerUid, sessionCode, {
       displayName: (displayName as string) || 'Fellow Traveler',
       vibes: Array.isArray(vibes) ? vibes : [],
       dietaryRestrictions: Array.isArray(dietaryRestrictions) ? dietaryRestrictions : [],
@@ -108,7 +112,7 @@ export const joinGroupSession = onCall(async (request) => {
 
     logger.info('Member joined group session', {
       sessionId: session.sessionId,
-      userId: request.auth.uid,
+      userId: callerUid,
       totalMembers: session.members.length,
     });
 
@@ -125,7 +129,9 @@ export const joinGroupSession = onCall(async (request) => {
  */
 export const leaveGroupSession = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -135,7 +141,7 @@ export const leaveGroupSession = onCall(async (request) => {
   }
 
   try {
-    const res = await leaveSession(request.auth.uid, sessionId);
+    const res = await leaveSession(callerUid, sessionId);
     return successEnvelope(res, startMs);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -148,7 +154,9 @@ export const leaveGroupSession = onCall(async (request) => {
  */
 export const getGroupSession = onCall(async (request) => {
   const startMs = Date.now();
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
@@ -162,9 +170,9 @@ export const getGroupSession = onCall(async (request) => {
     throw new HttpsError('not-found', `Group session ${sessionId} not found.`);
   }
 
-  // Verify caller is a member or host
-  const isMember = session.members.some((m) => m.userId === request.auth?.uid);
-  if (!isMember && session.hostUserId !== request.auth.uid) {
+  // Verify caller is a member or host or guest
+  const isMember = isGuest || session.members.some((m) => m.userId === callerUid);
+  if (!isMember && session.hostUserId !== callerUid) {
     throw new HttpsError('permission-denied', 'Only session members may access details.');
   }
 

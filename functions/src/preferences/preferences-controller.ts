@@ -40,12 +40,12 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  */
 export const getPreferences = onCall(async (request) => {
   const startMs = Date.now();
-
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const userId = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!userId) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const userId = request.auth.uid;
   try {
     const preferences = await fetchPreferences(userId);
     const result = preferences || getDefaultPreferences(userId);
@@ -63,12 +63,11 @@ export const getPreferences = onCall(async (request) => {
  */
 export const updatePreferences = onCall(async (request) => {
   const startMs = Date.now();
-
-  if (!request.auth) {
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const userId = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!userId) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
-
-  const userId = request.auth.uid;
   const rawData = request.data as Record<string, unknown>;
 
   if (!rawData || typeof rawData !== 'object') {

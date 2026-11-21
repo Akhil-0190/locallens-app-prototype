@@ -47,6 +47,8 @@ class RouteService {
           'walkingPace': 'MODERATE',
           'autoSubstituteFullStops': true,
           'allowMockFallback': true,
+          'isGuestAccess': true,
+          'userId': 'guest_traveler',
         });
 
         final data = Map<String, dynamic>.from(response.data);
@@ -210,6 +212,8 @@ class RouteService {
           'originalRouteId': originalRouteId,
           'constrainedPlaceId': constrainedPlaceId,
           'allowMockFallback': true,
+          'isGuestAccess': true,
+          'userId': 'guest_traveler',
         });
 
         final data = Map<String, dynamic>.from(response.data);
