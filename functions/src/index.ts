@@ -4,9 +4,18 @@
  */
 
 import { onRequest } from "firebase-functions/v2/https";
+import { setGlobalOptions } from "firebase-functions/v2";
 import * as logger from "firebase-functions/logger";
 import { geminiApiKey } from "./config/secrets";
 import { adminApp } from "./config/firebase";
+
+// Enforce standard Cloud Functions resource footprint across all 2nd-gen services
+setGlobalOptions({
+  region: "us-central1",
+  cpu: "gcf_gen1",
+  memory: "256MiB",
+  maxInstances: 10,
+});
 
 /**
  * Health check endpoint for backend infrastructure validation.
@@ -29,10 +38,6 @@ export const healthCheck = onRequest(
   }
 );
 
-/**
- * Export AI services.
- */
-export * as AI from "./ai/index.js";
 
 /**
  * Export Contribution persistence functions (Task A3).

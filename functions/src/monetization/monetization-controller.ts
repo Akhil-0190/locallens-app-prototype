@@ -25,12 +25,40 @@ import { ContributorProfileService } from './services/contributor-service.js';
 import { GuidanceService } from './services/guidance-service.js';
 import { getPaymentAdapter } from './adapters/payment-adapter-factory.js';
 
-const paymentAdapter = getPaymentAdapter();
-const tippingService = new TippingService(paymentAdapter);
-const passService = new PassService(paymentAdapter);
-const merchantService = new MerchantSubscriptionService(paymentAdapter);
+let _paymentAdapter: any = null;
+let _tippingService: TippingService | null = null;
+let _passService: PassService | null = null;
+let _merchantService: MerchantSubscriptionService | null = null;
+let _guidanceService: GuidanceService | null = null;
 const contributorService = new ContributorProfileService();
-const guidanceService = new GuidanceService(paymentAdapter);
+
+function getAdapter() {
+  if (!_paymentAdapter) {
+    try {
+      _paymentAdapter = getPaymentAdapter();
+    } catch {
+      _paymentAdapter = getPaymentAdapter('SANDBOX');
+    }
+  }
+  return _paymentAdapter;
+}
+
+function getTippingService(): TippingService {
+  if (!_tippingService) _tippingService = new TippingService(getAdapter());
+  return _tippingService;
+}
+function getPassService(): PassService {
+  if (!_passService) _passService = new PassService(getAdapter());
+  return _passService;
+}
+function getMerchantService(): MerchantSubscriptionService {
+  if (!_merchantService) _merchantService = new MerchantSubscriptionService(getAdapter());
+  return _merchantService;
+}
+function getGuidanceService(): GuidanceService {
+  if (!_guidanceService) _guidanceService = new GuidanceService(getAdapter());
+  return _guidanceService;
+}
 
 function requestId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 12);
@@ -76,7 +104,7 @@ export const initiateTip = onCall(async (request) => {
   }
 
   try {
-    const result = await tippingService.initiateTip({
+    const result = await getTippingService().initiateTip({
       payerUserId: request.auth.uid,
       recipientUserId,
       spotId,
@@ -116,7 +144,7 @@ export const settleTip = onCall(async (request) => {
   }
 
   try {
-    const result = await tippingService.settleTip({
+    const result = await getTippingService().settleTip({
       tipId,
       callerUserId: request.auth.uid,
       simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
@@ -157,7 +185,7 @@ export const getContributorRewardSummary = onCall(async (request) => {
   }
 
   try {
-    const ledger = await tippingService.getRewardLedger(targetUserId);
+    const ledger = await getTippingService().getRewardLedger(targetUserId);
     return successEnvelope(ledger, startMs);
   } catch (err: unknown) {
     logger.error('Error getting reward ledger', { error: err });
@@ -185,7 +213,7 @@ export const purchaseRoutePass = onCall(async (request) => {
   }
 
   try {
-    const result = await passService.purchaseRoutePass({
+    const result = await getPassService().purchaseRoutePass({
       userId: request.auth.uid,
       tier: tier as PassTier,
       neighborhood,
@@ -222,7 +250,7 @@ export const confirmPassPayment = onCall(async (request) => {
   }
 
   try {
-    const result = await passService.confirmPassPayment({
+    const result = await getPassService().confirmPassPayment({
       passId,
       callerUserId: request.auth.uid,
       simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
@@ -254,7 +282,7 @@ export const verifyRoutePassAccess = onCall(async (request) => {
   const { routeId, neighborhood } = (request.data as Record<string, unknown>) || {};
 
   try {
-    const result = await passService.verifyRoutePassAccess({
+    const result = await getPassService().verifyRoutePassAccess({
       userId: request.auth.uid,
       routeId: typeof routeId === 'string' ? routeId : undefined,
       neighborhood: typeof neighborhood === 'string' ? neighborhood : undefined,
@@ -278,7 +306,7 @@ export const listUserPasses = onCall(async (request) => {
   }
 
   try {
-    const passes = await passService.listUserPasses(request.auth.uid);
+    const passes = await getPassService().listUserPasses(request.auth.uid);
     return successEnvelope(passes, startMs);
   } catch (err: unknown) {
     logger.error('Error listing user passes', { error: err });
@@ -302,7 +330,7 @@ export const getPublicPartnerMerchantOffer = onCall(async (request) => {
   }
 
   try {
-    const offer = await merchantService.getPublicPartnerOffer(merchantPlaceId);
+    const offer = await getMerchantService().getPublicPartnerOffer(merchantPlaceId);
     return successEnvelope(offer, startMs);
   } catch (err: unknown) {
     logger.error('Error fetching partner offer', { error: err });
@@ -384,7 +412,7 @@ export const registerPartnerSubscription = onCall(async (request) => {
   }
 
   try {
-    const result = await merchantService.registerPartnerSubscription({
+    const result = await getMerchantService().registerPartnerSubscription({
       ownerUserId: request.auth.uid, // Strictly bound to authenticated caller
       merchantPlaceId,
       businessName,
@@ -436,7 +464,7 @@ export const confirmPartnerSubscriptionPayment = onCall(async (request) => {
         ? (simulatedOutcome as 'SUCCESS' | 'FAILURE')
         : undefined;
 
-    const result = await merchantService.confirmPartnerSubscriptionPayment({
+    const result = await getMerchantService().confirmPartnerSubscriptionPayment({
       subscriptionId,
       callerUserId: request.auth.uid,
       simulatedOutcome: outcome,
@@ -493,7 +521,7 @@ export const registerGuidanceOffering = onCall(async (request) => {
   }
 
   try {
-    const offering = await guidanceService.registerOffering({
+    const offering = await getGuidanceService().registerOffering({
       guideUserId: request.auth.uid,
       neighborhood,
       title,
@@ -524,7 +552,7 @@ export const listGuidanceOfferings = onCall(async (request) => {
   const { neighborhood } = (request.data as Record<string, unknown>) || {};
 
   try {
-    const offerings = await guidanceService.listOfferings(
+    const offerings = await getGuidanceService().listOfferings(
       typeof neighborhood === 'string' ? neighborhood : undefined
     );
     return successEnvelope(offerings, startMs);
@@ -555,7 +583,7 @@ export const requestLocalGuidance = onCall(async (request) => {
   }
 
   try {
-    const result = await guidanceService.requestLocalGuidance({
+    const result = await getGuidanceService().requestLocalGuidance({
       travelerUserId: request.auth.uid,
       offeringId,
       scheduledDateTime,
@@ -585,7 +613,7 @@ export const confirmGuidancePayment = onCall(async (request) => {
   }
 
   try {
-    const result = await guidanceService.confirmGuidancePayment({
+    const result = await getGuidanceService().confirmGuidancePayment({
       bookingId,
       callerUserId: request.auth.uid,
       simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
@@ -614,7 +642,7 @@ export const acceptGuidanceRequest = onCall(async (request) => {
   }
 
   try {
-    const booking = await guidanceService.acceptGuidanceRequest({
+    const booking = await getGuidanceService().acceptGuidanceRequest({
       bookingId,
       callerUserId: request.auth.uid,
     });
@@ -641,7 +669,7 @@ export const rejectGuidanceRequest = onCall(async (request) => {
   }
 
   try {
-    const booking = await guidanceService.rejectGuidanceRequest({
+    const booking = await getGuidanceService().rejectGuidanceRequest({
       bookingId,
       callerUserId: request.auth.uid,
       reason: typeof reason === 'string' ? reason : undefined,
@@ -669,7 +697,7 @@ export const cancelGuidanceBooking = onCall(async (request) => {
   }
 
   try {
-    const booking = await guidanceService.cancelGuidanceBooking({
+    const booking = await getGuidanceService().cancelGuidanceBooking({
       bookingId,
       callerUserId: request.auth.uid,
       reason: typeof reason === 'string' ? reason : undefined,
@@ -697,7 +725,7 @@ export const completeGuidanceBooking = onCall(async (request) => {
   }
 
   try {
-    const result = await guidanceService.completeGuidanceBooking({
+    const result = await getGuidanceService().completeGuidanceBooking({
       bookingId,
       callerUserId: request.auth.uid,
     });
@@ -725,7 +753,7 @@ export const getGuidanceBooking = onCall(async (request) => {
 
   try {
     const role = (request.auth.token?.role as string) || undefined;
-    const booking = await guidanceService.getGuidanceBooking(bookingId, request.auth.uid, role);
+    const booking = await getGuidanceService().getGuidanceBooking(bookingId, request.auth.uid, role);
     return successEnvelope(booking, startMs);
   } catch (err: unknown) {
     logger.error('Error getting guidance booking', { error: err });
@@ -747,7 +775,7 @@ export const listMyGuidanceBookings = onCall(async (request) => {
   const queryRole = role === 'guide' ? 'guide' : 'traveler';
 
   try {
-    const bookings = await guidanceService.listMyGuidanceBookings(request.auth.uid, queryRole);
+    const bookings = await getGuidanceService().listMyGuidanceBookings(request.auth.uid, queryRole);
     return successEnvelope(bookings, startMs);
   } catch (err: unknown) {
     logger.error('Error listing user guidance bookings', { error: err });

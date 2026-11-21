@@ -5,7 +5,7 @@
   "private": true,
   "main": "lib/src/index.js",
   "engines": {
-    "node": ">=22"
+    "node": "22"
   },
   "scripts": {
     "lint": "tsc --noEmit",
