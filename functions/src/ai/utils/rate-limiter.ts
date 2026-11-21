@@ -27,6 +27,7 @@ export const ENDPOINT_POLICIES: Record<string, RateLimitPolicy> = {
   generateAudioGuidance: { maxRequests: 15, windowMs: 60 * 1000 },      // Max 15 audio scripts per min
   explainPlanBReroute: { maxRequests: 10, windowMs: 60 * 1000 },        // Max 10 Plan-B explanations per min
   formatGeminiHandoff: { maxRequests: 5, windowMs: 60 * 1000 },         // Max 5 handoffs per min
+  generateTripPlan: { maxRequests: 20, windowMs: 60 * 1000 },           // Max 20 trip plan generations per min
 };
 
 export interface UsageRecord {

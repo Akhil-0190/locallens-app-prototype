@@ -170,6 +170,11 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
         title: const Text('Match Your Vibe'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.auto_awesome),
+            tooltip: 'AI Trip Planner',
+            onPressed: () => context.push('/planner'),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh Discovery',
             onPressed: () => ref.refresh(discoverySpotsProvider),
@@ -203,6 +208,27 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
                   ),
                 ),
               ],
+            ),
+          ),
+
+          // AI Trip Planner CTA Button
+          Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F766E),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                elevation: 1,
+              ),
+              onPressed: () => context.push('/planner'),
+              icon: const Icon(Icons.auto_awesome, size: 18),
+              label: const Text(
+                '✨ Plan Custom Trip with AI (Solo / Squad)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
             ),
           ),
 

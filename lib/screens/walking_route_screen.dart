@@ -460,9 +460,9 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
 
           return Column(
             children: [
-              // 1. Route Overview & Sample Disclosure Banner.
+              // 1. Route Overview & Sample / Live Disclosure Banner.
               Container(
-                color: Colors.amber.shade50,
+                color: route.isMockData ? Colors.amber.shade50 : const Color(0xFFCCFBF1),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 8,
@@ -470,18 +470,20 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.info_outline,
+                      route.isMockData ? Icons.info_outline : Icons.verified,
                       size: 16,
-                      color: Colors.amber.shade900,
+                      color: route.isMockData ? Colors.amber.shade900 : const Color(0xFF0F766E),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '[Sample Route Data: C3 Routes API integration pending]',
+                        route.isMockData
+                            ? '[Sample Route Data: C3 Routes API integration pending]'
+                            : 'Live Dynamic Route Active (Google Routes & Crowd Throttling)',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
-                          color: Colors.amber.shade900,
+                          color: route.isMockData ? Colors.amber.shade900 : const Color(0xFF0F766E),
                         ),
                       ),
                     ),

@@ -33,6 +33,7 @@ import {
   generateAudioGuidance as serviceGenerateAudio,
   explainPlanBReroute as serviceExplainPlanB,
   formatGeminiHandoffContext as serviceFormatHandoff,
+  generateTripPlan as serviceGenerateTripPlan,
 } from '../services/live-assistance-service.js';
 import {
   LiveSessionTokenRequestSchema,
@@ -319,5 +320,28 @@ export const formatGeminiHandoff = onCall(async (request) => {
   } catch (err: any) {
     logger.error('formatGeminiHandoff error', { err });
     throw new HttpsError('internal', err.message || 'Failed to format Gemini handoff.');
+  }
+});
+
+/**
+ * Callable: generateTripPlan
+ * Generates an uncrowded, personalized multi-day Gen Z trip plan with transit advice.
+ */
+export const generateTripPlan = onCall(async (request) => {
+  const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated to generate trip plans.');
+  }
+  await assertRateLimit(callerUid, 'generateTripPlan');
+
+  try {
+    const plan = await serviceGenerateTripPlan(request.data as any);
+    return successEnvelope(plan, startMs);
+  } catch (err: any) {
+    logger.error('generateTripPlan error', { err });
+    throw new HttpsError('internal', err.message || 'Failed to generate trip plan.');
   }
 });

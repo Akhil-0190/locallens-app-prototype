@@ -10,10 +10,15 @@ import '../screens/partner_subscription_screen.dart';
 import '../screens/pocket_guide_screen.dart';
 import '../screens/route_pass_screen.dart';
 import '../screens/walking_route_screen.dart';
+import '../screens/trip_planner_screen.dart';
 
 final GoRouter appRouter = GoRouter(
   initialLocation: '/guide',
   routes: [
+    GoRoute(
+      path: '/planner',
+      builder: (context, state) => const TripPlannerScreen(),
+    ),
     GoRoute(
       path: '/route',
       builder: (context, state) => const WalkingRouteScreen(),

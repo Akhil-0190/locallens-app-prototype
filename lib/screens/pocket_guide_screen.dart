@@ -294,20 +294,37 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // D. Launch Action Button
+                  // D. Launch Action Buttons
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
                       style: FilledButton.styleFrom(
-                        backgroundColor: Colors.teal.shade700,
+                        backgroundColor: const Color(0xFF0F766E),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () => context.push('/planner'),
+                      icon: const Icon(Icons.auto_awesome, size: 18),
+                      label: const Text(
+                        '✨ Plan Multi-Day Trip with AI (Solo / Squad)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: Colors.teal.shade700),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                       onPressed: () => context.push('/route'),
                       icon: const Icon(Icons.navigation, size: 18),
                       label: Text(
-                        'Start Uncrowded Walking Tour (${groupSize == 1 ? "Solo" : "$groupSize Travelers"})',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        'Start Walking Tour (${groupSize == 1 ? "Solo" : "$groupSize Travelers"})',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.teal.shade800),
                       ),
                     ),
                   ),
