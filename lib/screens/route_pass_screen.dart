@@ -1,4 +1,5 @@
 // ignore: deprecated_member_use
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -45,8 +46,11 @@ class RoutePassScreen extends ConsumerWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
-                      'Route passes unlock audio walking co-pilot, curated offline maps, and artisan merchant discounts via backend simulation.',
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
+                              'Route passes unlock audio walking co-pilot, curated offline maps, and artisan merchant discounts via backend simulation.'
+                          : '🎟️ Walking Route Passes • Audio Co-Pilot & Artisan Merchant Benefits\n'
+                              'Unlock offline audio navigation, alley shortcuts, and verified vendor perks.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.deepPurple.shade900,

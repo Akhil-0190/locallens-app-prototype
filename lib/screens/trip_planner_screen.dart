@@ -226,7 +226,7 @@ class _TripPlannerScreenState extends ConsumerState<TripPlannerScreen> {
       updatedAt: nowIso,
     );
 
-    ref.read(activeRouteProvider.notifier).state = AsyncValue.data(route);
+    ref.read(activeRouteProvider.notifier).setActiveRoute(route);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

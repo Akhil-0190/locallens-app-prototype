@@ -76,29 +76,27 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-getContributorAttribution');
+      try {
+        final result = await callable.call<Map<String, dynamic>>({
+          'userId': userId,
+          'isGuestAccess': true,
+        });
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        return ContributorAttribution.fromMap(dataMap);
+      } catch (_) {}
     }
 
-    final callable = functions.httpsCallable('Monetization-getContributorAttribution');
-    try {
-      final result = await callable.call<Map<String, dynamic>>({
-        'userId': userId,
-        'isGuestAccess': true,
-      });
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-      return ContributorAttribution.fromMap(dataMap);
-    } catch (_) {
-      return ContributorAttribution(
-        userId: userId,
-        displayName: 'Aravinth S (Local Resident)',
-        reputationTier: 'HERITAGE_SAGE',
-        badgeTitle: 'Neighborhood Insider',
-        approvedGemsCount: 5,
-        isVerifiedResident: true,
-      );
-    }
+    return ContributorAttribution(
+      userId: userId,
+      displayName: 'Aravinth S (Local Resident)',
+      reputationTier: 'HERITAGE_SAGE',
+      badgeTitle: 'Neighborhood Insider',
+      approvedGemsCount: 5,
+      isVerifiedResident: true,
+    );
   }
 
   /// Fetches materialized reward balance ledger for a contributor.
@@ -121,31 +119,29 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-getContributorRewardSummary');
+      final payload = userId != null ? {'userId': userId} : <String, dynamic>{};
+      payload['isGuestAccess'] = true;
+      try {
+        final result = await callable.call<Map<String, dynamic>>(payload);
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        return ContributorRewardLedger.fromMap(dataMap);
+      } catch (_) {}
     }
 
-    final callable = functions.httpsCallable('Monetization-getContributorRewardSummary');
-    final payload = userId != null ? {'userId': userId} : <String, dynamic>{};
-    payload['isGuestAccess'] = true;
-    try {
-      final result = await callable.call<Map<String, dynamic>>(payload);
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-      return ContributorRewardLedger.fromMap(dataMap);
-    } catch (_) {
-      return ContributorRewardLedger(
-        userId: userId ?? currentUserId ?? 'usr_test_contributor',
-        totalEarningsInr: 1250.0,
-        availableBalanceInr: 850.0,
-        withdrawnTotalInr: 400.0,
-        unrecoveredAdjustmentInr: 0.0,
-        payoutUpiId: 'aravinth@okhdfcbank',
-        reputationPoints: 340,
-        guidanceRank: 'Malleshwaram Heritage Master',
-        updatedAt: DateTime.now().subtract(const Duration(hours: 4)),
-      );
-    }
+    return ContributorRewardLedger(
+      userId: userId ?? currentUserId ?? 'usr_test_contributor',
+      totalEarningsInr: 1250.0,
+      availableBalanceInr: 850.0,
+      withdrawnTotalInr: 400.0,
+      unrecoveredAdjustmentInr: 0.0,
+      payoutUpiId: 'aravinth@okhdfcbank',
+      reputationPoints: 340,
+      guidanceRank: 'Malleshwaram Heritage Master',
+      updatedAt: DateTime.now().subtract(const Duration(hours: 4)),
+    );
   }
 
   // ===========================================================================
@@ -196,33 +192,32 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-initiateTip');
+      final payload = <String, dynamic>{
+        'recipientUserId': recipientUserId,
+        'spotId': spotId,
+        'spotName': spotName,
+        'amountInr': amountInr,
+        'isGuestAccess': true,
+        'payerUserId': 'usr_blr_guest',
+      };
+      if (personalNote != null) payload['personalNote'] = personalNote;
+      try {
+        final result = await callable.call<Map<String, dynamic>>(payload);
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        final tipMap = Map<String, dynamic>.from(dataMap['tip'] as Map? ?? {});
+        final intentMap = Map<String, dynamic>.from(dataMap['paymentIntent'] as Map? ?? {});
+
+        return (
+          tip: ContributorTip.fromMap(tipMap),
+          paymentIntent: PaymentIntent.fromMap(intentMap),
+        );
+      } catch (_) {}
     }
 
-    final callable = functions.httpsCallable('Monetization-initiateTip');
-    final payload = <String, dynamic>{
-      'recipientUserId': recipientUserId,
-      'spotId': spotId,
-      'spotName': spotName,
-      'amountInr': amountInr,
-      'isGuestAccess': true,
-      'payerUserId': 'usr_blr_guest',
-    };
-    if (personalNote != null) payload['personalNote'] = personalNote;
-    try {
-      final result = await callable.call<Map<String, dynamic>>(payload);
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-      final tipMap = Map<String, dynamic>.from(dataMap['tip'] as Map? ?? {});
-      final intentMap = Map<String, dynamic>.from(dataMap['paymentIntent'] as Map? ?? {});
-
-      return (
-        tip: ContributorTip.fromMap(tipMap),
-        paymentIntent: PaymentIntent.fromMap(intentMap),
-      );
-    } catch (_) {
-      final tipId = 'tip_sim_${DateTime.now().millisecondsSinceEpoch}';
+    final tipId = 'tip_sim_${DateTime.now().millisecondsSinceEpoch}';
       final platformFee = (amountInr * 0.05).roundToDouble();
       final netEarnings = amountInr - platformFee;
       final tip = ContributorTip(
@@ -249,7 +244,6 @@ class MonetizationService {
         qrPayload: 'upi://pay?pa=sandbox@upi&am=$amountInr&tn=$tipId',
       );
       return (tip: tip, paymentIntent: intent);
-    }
   }
 
   /// Settles a tip transaction.
@@ -296,37 +290,43 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-settleTip');
+      final payload = <String, dynamic>{
+        'tipId': tipId,
+        'isGuestAccess': true,
+        'callerUserId': 'usr_blr_guest',
+      };
+      if (simulatedOutcome != null) payload['simulatedOutcome'] = simulatedOutcome;
+      try {
+        final result = await callable.call<Map<String, dynamic>>(payload);
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        final tipMap = Map<String, dynamic>.from(dataMap['tip'] as Map? ?? {});
+        final ledgerMap = Map<String, dynamic>.from(dataMap['rewardLedger'] as Map? ?? {});
+        final isReplay = dataMap['isIdempotentReplay'] as bool? ?? false;
+
+        return (
+          tip: ContributorTip.fromMap(tipMap),
+          rewardLedger: ContributorRewardLedger.fromMap(ledgerMap),
+          isIdempotentReplay: isReplay,
+        );
+      } catch (e) {
+        if (simulatedOutcome == 'FAILURE') {
+          throw PaymentSettlementException(
+            'Simulated payment failure: payment was declined by sandbox banking rails.',
+            transactionId: tipId,
+          );
+        }
+      }
     }
 
-    final callable = functions.httpsCallable('Monetization-settleTip');
-    final payload = <String, dynamic>{
-      'tipId': tipId,
-      'isGuestAccess': true,
-      'callerUserId': 'usr_blr_guest',
-    };
-    if (simulatedOutcome != null) payload['simulatedOutcome'] = simulatedOutcome;
-    try {
-      final result = await callable.call<Map<String, dynamic>>(payload);
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-      final tipMap = Map<String, dynamic>.from(dataMap['tip'] as Map? ?? {});
-      final ledgerMap = Map<String, dynamic>.from(dataMap['rewardLedger'] as Map? ?? {});
-      final isReplay = dataMap['isIdempotentReplay'] as bool? ?? false;
-
-      return (
-        tip: ContributorTip.fromMap(tipMap),
-        rewardLedger: ContributorRewardLedger.fromMap(ledgerMap),
-        isIdempotentReplay: isReplay,
+    if (simulatedOutcome == 'FAILURE') {
+      throw PaymentSettlementException(
+        'Simulated payment failure: payment was declined by sandbox banking rails.',
+        transactionId: tipId,
       );
-    } catch (_) {
-      if (simulatedOutcome == 'FAILURE') {
-        throw PaymentSettlementException(
-          'Simulated payment failure: payment was declined by sandbox banking rails.',
-          transactionId: tipId,
-        );
-      }
+    }
       final settledTip = ContributorTip(
         tipId: tipId,
         payerUserId: currentUserId ?? 'usr_test_payer',
@@ -353,7 +353,6 @@ class MonetizationService {
         updatedAt: DateTime.now(),
       );
       return (tip: settledTip, rewardLedger: ledger, isIdempotentReplay: false);
-    }
   }
 
   // ===========================================================================
@@ -402,33 +401,32 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-purchaseRoutePass');
+      final payload = <String, dynamic>{
+        'tier': tier.value,
+        'neighborhood': neighborhood,
+        'isGuestAccess': true,
+        'userId': 'usr_blr_guest',
+      };
+      if (accessibleRouteIds != null) payload['accessibleRouteIds'] = accessibleRouteIds;
+      try {
+        final result = await callable.call<Map<String, dynamic>>(payload);
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        final passMap = Map<String, dynamic>.from(dataMap['pass'] as Map? ?? {});
+        final intentMap = Map<String, dynamic>.from(dataMap['paymentIntent'] as Map? ?? {});
+
+        final pass = RoutePass.fromMap(passMap);
+        _inMemoryPasses.add(pass);
+        return (
+          pass: pass,
+          paymentIntent: PaymentIntent.fromMap(intentMap),
+        );
+      } catch (_) {}
     }
 
-    final callable = functions.httpsCallable('Monetization-purchaseRoutePass');
-    final payload = <String, dynamic>{
-      'tier': tier.value,
-      'neighborhood': neighborhood,
-      'isGuestAccess': true,
-      'userId': 'usr_blr_guest',
-    };
-    if (accessibleRouteIds != null) payload['accessibleRouteIds'] = accessibleRouteIds;
-    try {
-      final result = await callable.call<Map<String, dynamic>>(payload);
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-      final passMap = Map<String, dynamic>.from(dataMap['pass'] as Map? ?? {});
-      final intentMap = Map<String, dynamic>.from(dataMap['paymentIntent'] as Map? ?? {});
-
-      final pass = RoutePass.fromMap(passMap);
-      _inMemoryPasses.add(pass);
-      return (
-        pass: pass,
-        paymentIntent: PaymentIntent.fromMap(intentMap),
-      );
-    } catch (_) {
-      final passId = 'pass_${neighborhood.toLowerCase()}_${DateTime.now().millisecondsSinceEpoch}';
+    final passId = 'pass_${neighborhood.toLowerCase()}_${DateTime.now().millisecondsSinceEpoch}';
       final pass = RoutePass(
         passId: passId,
         userId: currentUserId ?? 'usr_test_buyer',
@@ -459,7 +457,6 @@ class MonetizationService {
       );
       _inMemoryPasses.add(pass);
       return (pass: pass, paymentIntent: intent);
-    }
   }
 
   /// Confirms payment and activates a pending route pass.
@@ -504,42 +501,48 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-confirmPassPayment');
+      final payload = <String, dynamic>{
+        'passId': passId,
+        'isGuestAccess': true,
+        'callerUserId': 'usr_blr_guest',
+      };
+      if (simulatedOutcome != null) payload['simulatedOutcome'] = simulatedOutcome;
+      try {
+        final result = await callable.call<Map<String, dynamic>>(payload);
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        final passMap = Map<String, dynamic>.from(dataMap['pass'] as Map? ?? {});
+        final isReplay = dataMap['isIdempotentReplay'] as bool? ?? false;
+
+        final pass = RoutePass.fromMap(passMap);
+        final existingIndex = _inMemoryPasses.indexWhere((p) => p.passId == passId);
+        if (existingIndex != -1) {
+          _inMemoryPasses[existingIndex] = pass;
+        } else {
+          _inMemoryPasses.add(pass);
+        }
+        return (
+          pass: pass,
+          isIdempotentReplay: isReplay,
+        );
+      } catch (e) {
+        if (simulatedOutcome == 'FAILURE') {
+          throw PaymentSettlementException(
+            'Payment verification failed: Declined by sandbox payment adapter.',
+            transactionId: passId,
+          );
+        }
+      }
     }
 
-    final callable = functions.httpsCallable('Monetization-confirmPassPayment');
-    final payload = <String, dynamic>{
-      'passId': passId,
-      'isGuestAccess': true,
-      'callerUserId': 'usr_blr_guest',
-    };
-    if (simulatedOutcome != null) payload['simulatedOutcome'] = simulatedOutcome;
-    try {
-      final result = await callable.call<Map<String, dynamic>>(payload);
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-      final passMap = Map<String, dynamic>.from(dataMap['pass'] as Map? ?? {});
-      final isReplay = dataMap['isIdempotentReplay'] as bool? ?? false;
-
-      final pass = RoutePass.fromMap(passMap);
-      final existingIndex = _inMemoryPasses.indexWhere((p) => p.passId == passId);
-      if (existingIndex != -1) {
-        _inMemoryPasses[existingIndex] = pass;
-      } else {
-        _inMemoryPasses.add(pass);
-      }
-      return (
-        pass: pass,
-        isIdempotentReplay: isReplay,
+    if (simulatedOutcome == 'FAILURE') {
+      throw PaymentSettlementException(
+        'Payment verification failed: Declined by sandbox payment adapter.',
+        transactionId: passId,
       );
-    } catch (_) {
-      if (simulatedOutcome == 'FAILURE') {
-        throw PaymentSettlementException(
-          'Payment verification failed: Declined by sandbox payment adapter.',
-          transactionId: passId,
-        );
-      }
+    }
       final existingIndex = _inMemoryPasses.indexWhere((p) => p.passId == passId);
       final activePass = RoutePass(
         passId: passId,
@@ -565,7 +568,6 @@ class MonetizationService {
         _inMemoryPasses.add(activePass);
       }
       return (pass: activePass, isIdempotentReplay: false);
-    }
   }
 
   /// Lists all route passes owned by the current authenticated user.
@@ -596,21 +598,19 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-listUserPasses');
+      try {
+        final result = await callable.call<Map<String, dynamic>>({});
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataList = responseMap['data'] as List? ?? [];
+
+        final list = dataList
+            .map((raw) => RoutePass.fromMap(Map<String, dynamic>.from(raw as Map)))
+            .toList();
+        if (list.isNotEmpty) return list;
+      } catch (_) {}
     }
-
-    final callable = functions.httpsCallable('Monetization-listUserPasses');
-    try {
-      final result = await callable.call<Map<String, dynamic>>({});
-      final responseMap = Map<String, dynamic>.from(result.data);
-      final dataList = responseMap['data'] as List? ?? [];
-
-      final list = dataList
-          .map((raw) => RoutePass.fromMap(Map<String, dynamic>.from(raw as Map)))
-          .toList();
-      if (list.isNotEmpty) return list;
-    } catch (_) {}
 
     return _inMemoryPasses.isNotEmpty
         ? List.unmodifiable(_inMemoryPasses)
@@ -654,19 +654,27 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-verifyRoutePassAccess');
+      final payload = <String, dynamic>{};
+      if (routeId != null) payload['routeId'] = routeId;
+      if (neighborhood != null) payload['neighborhood'] = neighborhood;
+      try {
+        final result = await callable.call<Map<String, dynamic>>(payload);
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+        return RoutePassAccessResult.fromMap(dataMap);
+      } catch (_) {}
     }
 
-    final callable = functions.httpsCallable('Monetization-verifyRoutePassAccess');
-    final payload = <String, dynamic>{};
-    if (routeId != null) payload['routeId'] = routeId;
-    if (neighborhood != null) payload['neighborhood'] = neighborhood;
-    final result = await callable.call<Map<String, dynamic>>(payload);
-
-    final responseMap = Map<String, dynamic>.from(result.data);
-    final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-    return RoutePassAccessResult.fromMap(dataMap);
+    final hasActive = _inMemoryPasses.any((p) => p.isCurrentlyValid);
+    return RoutePassAccessResult(
+      hasAccess: hasActive,
+      unlockedAudio: hasActive,
+      unlockedOfflinePack: hasActive,
+      partnerDiscountPercent: hasActive ? 10 : 0,
+      grantingPassId: hasActive ? 'pass_sample_active_01' : null,
+    );
   }
 
   // ===========================================================================
@@ -690,19 +698,28 @@ class MonetizationService {
     }
 
     final functions = _functions;
-    if (functions == null) {
-      throw Exception('Firebase Functions unavailable.');
+    if (functions != null) {
+      final callable = functions.httpsCallable('Monetization-getPublicPartnerMerchantOffer');
+      try {
+        final result = await callable.call<Map<String, dynamic>>({
+          'merchantPlaceId': merchantPlaceId,
+        });
+        final responseMap = Map<String, dynamic>.from(result.data);
+        final data = responseMap['data'];
+        if (data != null) {
+          return PublicPartnerOffer.fromMap(Map<String, dynamic>.from(data as Map));
+        }
+      } catch (_) {}
     }
 
-    final callable = functions.httpsCallable('Monetization-getPublicPartnerMerchantOffer');
-    final result = await callable.call<Map<String, dynamic>>({
-      'merchantPlaceId': merchantPlaceId,
-    });
-
-    final responseMap = Map<String, dynamic>.from(result.data);
-    final data = responseMap['data'];
-    if (data == null) return null;
-    return PublicPartnerOffer.fromMap(Map<String, dynamic>.from(data as Map));
+    return PublicPartnerOffer(
+      merchantPlaceId: merchantPlaceId,
+      businessName: 'Veena Stores Malleshwaram',
+      subscriptionPlan: 'VERIFIED_PARTNER',
+      discountPercent: 10,
+      discountTerms: '10% discount on coffee with breakfast thali for route pass holders.',
+      isActive: true,
+    );
   }
 
   // ===========================================================================

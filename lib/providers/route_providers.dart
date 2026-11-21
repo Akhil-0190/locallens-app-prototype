@@ -25,6 +25,10 @@ class ActiveRouteNotifier extends StateNotifier<AsyncValue<WalkingRoute>> {
     loadDefaultRoute();
   }
 
+  void setActiveRoute(WalkingRoute route) {
+    state = AsyncValue.data(route);
+  }
+
   Future<void> loadDefaultRoute() async {
     state = const AsyncValue.loading();
     try {

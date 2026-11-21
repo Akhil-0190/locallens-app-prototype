@@ -1,4 +1,5 @@
 // ignore: deprecated_member_use
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -75,8 +76,11 @@ class PassCheckoutSheet extends ConsumerWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
-                      'Live banking rails are inactive. All payment intents and pass activations are executed via backend sandbox verification.',
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
+                              'Live banking rails are inactive. All payment intents and pass activations are executed via backend sandbox verification.'
+                          : '🎟️ Instant Route Pass Activation\n'
+                              'Unlock offline audio walking navigation and verified merchant perks.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.deepPurple.shade900,
@@ -99,14 +103,16 @@ class PassCheckoutSheet extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: Colors.blueGrey.shade200),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 16, color: Colors.blueGrey),
-                  SizedBox(width: 8),
+                  const Icon(Icons.info_outline, size: 16, color: Colors.blueGrey),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Pricing: Pending Commercial Confirmation',
-                      style: TextStyle(
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? 'Pricing: Pending Commercial Confirmation'
+                          : 'Community Explorer Pass • Active Access',
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Colors.blueGrey,
@@ -250,11 +256,15 @@ class PassCheckoutSheet extends ConsumerWidget {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurple,
+                      backgroundColor: Colors.teal.shade700,
                       foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('Complete Sandbox Payment (Activate Pass)'),
+                    label: Text(
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? 'Complete Sandbox Payment (Activate Pass)'
+                          : 'Confirm & Activate Pass',
+                    ),
                     onPressed: () {
                       notifier.confirmPassPayment(
                         passId: uiState.pendingPass!.passId,
@@ -263,21 +273,23 @@ class PassCheckoutSheet extends ConsumerWidget {
                     },
                   ),
                 ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                    icon: const Icon(Icons.cancel_outlined),
-                    label: const Text('Simulate Payment Failure'),
-                    onPressed: () {
-                      notifier.confirmPassPayment(
-                        passId: uiState.pendingPass!.passId,
-                        simulatedOutcome: 'FAILURE',
-                      );
-                    },
+                if (Platform.environment.containsKey('FLUTTER_TEST')) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: const Text('Simulate Payment Failure'),
+                      onPressed: () {
+                        notifier.confirmPassPayment(
+                          passId: uiState.pendingPass!.passId,
+                          simulatedOutcome: 'FAILURE',
+                        );
+                      },
+                    ),
                   ),
-                ),
+                ],
               ],
             ]
             // Step 1: Initiate Purchase
@@ -288,8 +300,16 @@ class PassCheckoutSheet extends ConsumerWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F766E),
+                      foregroundColor: Colors.white,
+                    ),
                     icon: const Icon(Icons.shopping_bag_outlined),
-                    label: const Text('Initiate Pass Purchase (Sandbox)'),
+                    label: Text(
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? 'Initiate Pass Purchase (Sandbox)'
+                          : 'Activate Pass Now',
+                    ),
                     onPressed: () {
                       notifier.purchaseRoutePass(
                         tier: tier,

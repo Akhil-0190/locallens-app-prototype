@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
 import '../models/traveler_preferences.dart';
 import '../providers/spot_providers.dart';
-import '../providers/traveler_providers.dart';
 import '../widgets/app_async_states.dart';
 import '../widgets/spot_card_tile.dart';
 import '../widgets/tipping_modal_sheet.dart';
@@ -53,6 +53,111 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
     return '${trimmed.substring(0, maxLength)}...';
   }
 
+  Future<void> _openInMaps(SpotCard spot) async {
+    final neighborhoodStr = _selectedNeighborhood != 'All'
+        ? _selectedNeighborhood
+        : (spot.formattedAddress.isNotEmpty ? spot.formattedAddress : 'Bengaluru');
+    final query = Uri.encodeComponent('${spot.spotName} $neighborhoodStr');
+    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  void _showLocalPhraseDialog(SpotCard spot) {
+    final phrase = spot.greetingCard.isNotEmpty
+        ? spot.greetingCard
+        : 'Namaskara! Oru filter coffee, please.';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.translate, color: Color(0xFF0F766E)),
+            SizedBox(width: 8),
+            Text('Vendor Order Card', style: TextStyle(fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Show this to the vendor or tap speaker to listen:',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFCCFBF1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF14B8A6)),
+              ),
+              child: Text(
+                phrase,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F766E),
+                ),
+              ),
+            ),
+            if (spot.practicalTips.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.tips_and_updates, size: 14, color: Colors.amber),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Insider Tip: ${spot.practicalTips}',
+                      style: const TextStyle(fontSize: 12, color: Colors.black87),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.volume_up, color: Color(0xFF0F766E)),
+            tooltip: 'Listen to Pronunciation',
+            onPressed: () => _tts.speak(phrase),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handlePlanB(SpotCard spot) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.alt_route, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '1-Tap Plan B Activated: Swapped ${spot.spotName} with uncrowded alternative nearby!',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF0F766E),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Future<void> _toggleAudioCue(SpotCard spot) async {
     if (_playingSpotId == spot.id) {
       await _tts.stop();
@@ -96,14 +201,9 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
         title: const Text('Street Pocket Guide'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.confirmation_number_outlined),
-            onPressed: () => context.push('/route-passes'),
-            tooltip: 'Route Passes',
-          ),
-          IconButton(
-            icon: const Icon(Icons.person_outline),
-            onPressed: () => context.push('/contributor-profile'),
-            tooltip: 'Contributor Profile & Earnings',
+            icon: const Icon(Icons.alt_route),
+            onPressed: () => context.push('/route'),
+            tooltip: 'Walking Route Tour',
           ),
           IconButton(
             icon: const Icon(Icons.offline_pin_outlined),
@@ -111,9 +211,9 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
             tooltip: 'Offline Neighborhood Packs',
           ),
           IconButton(
-            icon: const Icon(Icons.alt_route),
-            onPressed: () => context.push('/route'),
-            tooltip: 'Walking Route Tour',
+            icon: const Icon(Icons.person_outline),
+            onPressed: () => context.push('/contributor-profile'),
+            tooltip: 'Contributor Profile & Earnings',
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -408,14 +508,48 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
                     spot: spot,
                     statusText: '${spot.currentVisitors}/${spot.hourlyLimit}',
                     actions: [
+                      FilledButton.tonalIcon(
+                        onPressed: () => _openInMaps(spot),
+                        icon: const Icon(Icons.directions, size: 15),
+                        label: const Text('Directions', style: TextStyle(fontSize: 12)),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        ),
+                      ),
                       OutlinedButton.icon(
                         onPressed: () => _toggleAudioCue(spot),
                         icon: Icon(
                           _playingSpotId == spot.id ? Icons.stop : Icons.headphones,
-                          size: 18,
+                          size: 15,
                           color: _playingSpotId == spot.id ? Colors.red : null,
                         ),
-                        label: Text(_playingSpotId == spot.id ? 'Stop Audio' : 'Audio Cue'),
+                        label: Text(
+                          _playingSpotId == spot.id ? 'Stop Audio' : 'Audio Cue',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _showLocalPhraseDialog(spot),
+                        icon: const Icon(Icons.translate, size: 15),
+                        label: const Text('Order Card', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _handlePlanB(spot),
+                        icon: const Icon(Icons.alt_route, size: 15),
+                        label: const Text('Plan B', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        ),
                       ),
                       OutlinedButton.icon(
                         onPressed: () {
@@ -430,8 +564,12 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
                             ),
                           );
                         },
-                        icon: const Icon(Icons.volunteer_activism_outlined, size: 18),
-                        label: const Text('Tip'),
+                        icon: const Icon(Icons.volunteer_activism_outlined, size: 15),
+                        label: const Text('Tip', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        ),
                       ),
                     ],
                   );

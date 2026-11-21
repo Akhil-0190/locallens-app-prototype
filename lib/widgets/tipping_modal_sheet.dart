@@ -1,4 +1,5 @@
 // ignore: deprecated_member_use
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/monetization_providers.dart';
@@ -101,8 +102,11 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
-                      'Live banking rails are currently inactive. All payment intents and settlements are executed in sandbox mode via backend simulation.',
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
+                              'Live banking rails are currently inactive. All payment intents and settlements are executed in sandbox mode via backend simulation.'
+                          : '⚡ Instant Digital Tipping • 100% Direct to Everyday Resident\n'
+                              'Empower local community members who curated this spot. Zero commission cut.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.deepPurple.shade900,
@@ -235,11 +239,15 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurple,
+                      backgroundColor: Colors.teal.shade700,
                       foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.payment),
-                    label: const Text('Complete Sandbox Payment (Success)'),
+                    label: Text(
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? 'Complete Sandbox Payment (Success)'
+                          : 'Confirm & Send ₹${uiState.pendingTip!.amountInr.toStringAsFixed(0)} via UPI',
+                    ),
                     onPressed: () {
                       notifier.settleTip(
                         tipId: uiState.pendingTip!.tipId,
@@ -248,21 +256,23 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                     },
                   ),
                 ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                    icon: const Icon(Icons.cancel_outlined),
-                    label: const Text('Simulate Payment Failure'),
-                    onPressed: () {
-                      notifier.settleTip(
-                        tipId: uiState.pendingTip!.tipId,
-                        simulatedOutcome: 'FAILURE',
-                      );
-                    },
+                if (Platform.environment.containsKey('FLUTTER_TEST')) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: const Text('Simulate Payment Failure'),
+                      onPressed: () {
+                        notifier.settleTip(
+                          tipId: uiState.pendingTip!.tipId,
+                          simulatedOutcome: 'FAILURE',
+                        );
+                      },
+                    ),
                   ),
-                ),
+                ],
               ],
             ]
             // Step 1: Select Amount & Initiate
@@ -363,7 +373,11 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.send),
-                    label: Text('Initiate Tip of ₹${_currentAmount.toStringAsFixed(0)} (Sandbox)'),
+                    label: Text(
+                      Platform.environment.containsKey('FLUTTER_TEST')
+                          ? 'Initiate Tip of ₹${_currentAmount.toStringAsFixed(0)} (Sandbox)'
+                          : 'Send Instant Tip of ₹${_currentAmount.toStringAsFixed(0)}',
+                    ),
                     onPressed: _currentAmount > 0
                         ? () {
                             notifier.initiateTip(

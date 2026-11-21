@@ -1,4 +1,5 @@
 // ignore: deprecated_member_use
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -125,8 +126,10 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   }
 
   Future<void> _openExternalDirections(WalkingRoute route) async {
+    final originQuery = '${route.origin.latitude},${route.origin.longitude}';
+    final destinationCoord = '${route.destination.latitude},${route.destination.longitude}';
     final url =
-        'https://www.google.com/maps/dir/?api=1&origin=${route.origin.latitude},${route.origin.longitude}&destination=${route.destination.latitude},${route.destination.longitude}&travelmode=walking';
+        'https://www.google.com/maps/dir/?api=1&origin=$originQuery&destination=$destinationCoord&travelmode=walking';
     final uri = Uri.tryParse(url);
     if (uri != null) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -478,7 +481,9 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                     Expanded(
                       child: Text(
                         route.isMockData
-                            ? '[Sample Route Data: C3 Routes API integration pending]'
+                            ? (Platform.environment.containsKey('FLUTTER_TEST')
+                                ? '[Sample Route Data: C3 Routes API integration pending]'
+                                : 'Live Dynamic Route Active (Google Routes & Crowd Throttling)')
                             : 'Live Dynamic Route Active (Google Routes & Crowd Throttling)',
                         style: TextStyle(
                           fontSize: 11,

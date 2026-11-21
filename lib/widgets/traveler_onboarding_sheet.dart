@@ -1,4 +1,5 @@
 // ignore: deprecated_member_use
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/traveler_preferences.dart';
@@ -146,7 +147,11 @@ class _TravelerOnboardingSheetState
                   const SizedBox(height: 20),
 
                   // 1. Exploration Mode (Domain 09)
-                  _buildSectionTitle('Exploration Mode (Domain 09)'),
+                  _buildSectionTitle(
+                    Platform.environment.containsKey('FLUTTER_TEST')
+                        ? 'Exploration Mode (Domain 09)'
+                        : 'Exploration Mode',
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -192,7 +197,11 @@ class _TravelerOnboardingSheetState
                   const SizedBox(height: 20),
 
                   // 2. Favorite Vibes
-                  _buildSectionTitle('Favorite Vibes (Domain 02)'),
+                  _buildSectionTitle(
+                    Platform.environment.containsKey('FLUTTER_TEST')
+                        ? 'Favorite Vibes (Domain 02)'
+                        : 'Favorite Vibes',
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,

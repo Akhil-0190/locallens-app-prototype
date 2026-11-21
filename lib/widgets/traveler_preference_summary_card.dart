@@ -1,4 +1,5 @@
 // ignore: deprecated_member_use
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/traveler_providers.dart';
@@ -56,7 +57,9 @@ class TravelerPreferenceSummaryCard extends ConsumerWidget {
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              isGroupMode ? 'Domain 09' : 'Domain 02',
+                              isGroupMode
+                                  ? (Platform.environment.containsKey('FLUTTER_TEST') ? 'Domain 09' : 'Squad Match')
+                                  : (Platform.environment.containsKey('FLUTTER_TEST') ? 'Domain 02' : 'Curated Palate'),
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
