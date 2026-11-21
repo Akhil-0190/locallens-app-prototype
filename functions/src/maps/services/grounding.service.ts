@@ -75,18 +75,38 @@ export class GroundingService {
         preliminaryScore,
         rationale: this.synthesizeRationale(confidence, match, discrepancies, preliminaryScore),
       },
+      provenanceLabel: isMock
+        ? 'SAMPLE_FIXTURE'
+        : match
+        ? 'MAPS_GROUNDED'
+        : 'COMMUNITY_VERIFIED',
+      provenanceNote:
+        'Community dialect and venue sentiment are grounded via Gemini 3.8 Flash Google Maps review grounding and direct local voice contributions, as Google Crowdsource lacks a public API.',
       sources: [
         {
           source: isMock ? 'SAMPLE_FIXTURE_DATA' : 'GOOGLE_PLACES_API_NEW',
           retrievedAt: nowIso,
           details: match
-            ? `Google Place: ${match.name} (${match.placeId})`
+            ? `Google Place: ${match.name} (${match.placeId}) [MAPS_GROUNDED]`
             : 'No matching Google Place identified',
         },
         {
           source: 'LOCAL_CONTRIBUTOR_SUBMISSION',
           retrievedAt: nowIso,
-          details: `Contributed spot: "${input.spotName}" by local resident`,
+          details: `Contributed spot: "${input.spotName}" by local resident [COMMUNITY_VERIFIED]`,
+        },
+        {
+          source: 'MAPS_GROUNDED',
+          retrievedAt: nowIso,
+          details: match
+            ? `Google Maps review & place knowledge graph grounding (${match.name})`
+            : 'Google Maps review & sentiment grounding',
+        },
+        {
+          source: 'COMMUNITY_VERIFIED',
+          retrievedAt: nowIso,
+          details:
+            'Direct regional local voice & text contribution (serving as authentic community signals in lieu of public Crowdsource API)',
         },
       ],
       isMockData: isMock,

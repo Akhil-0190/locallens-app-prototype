@@ -64,7 +64,15 @@ export type EvidenceSourceType =
   | 'GOOGLE_PLACES_API_NEW'
   | 'LOCAL_CONTRIBUTOR_SUBMISSION'
   | 'LOCAL_CONTRIBUTOR_EXIF'
-  | 'SAMPLE_FIXTURE_DATA';
+  | 'SAMPLE_FIXTURE_DATA'
+  | 'MAPS_GROUNDED'
+  | 'COMMUNITY_VERIFIED';
+
+export type ProvenanceBadge =
+  | 'MAPS_GROUNDED'
+  | 'COMMUNITY_VERIFIED'
+  | 'HYBRID_VERIFIED'
+  | 'SAMPLE_FIXTURE';
 
 export interface ContributedPlaceInput {
   spotName: string;
@@ -94,6 +102,8 @@ export interface PlaceGroundingEvidence {
     preliminaryScore: number; // 0 to 100
     rationale: string;
   };
+  provenanceLabel?: ProvenanceBadge;
+  provenanceNote?: string;
   sources: {
     source: EvidenceSourceType;
     retrievedAt: string;

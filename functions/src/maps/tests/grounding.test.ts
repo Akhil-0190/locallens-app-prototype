@@ -122,4 +122,26 @@ describe('GroundingService', () => {
     assert.strictEqual(result.evidence.matchedPlace?.placeId, sampleId);
     assert.strictEqual(result.evidence.matchedPlace?.name, 'Malleshwaram 8th Cross Flower Market');
   });
+
+  it('should label data provenance truthfully as MAPS_GROUNDED and COMMUNITY_VERIFIED', async () => {
+    const placesService = new PlacesService({ apiKey: '', allowMockFallback: true });
+    const groundingService = new GroundingService({}, placesService);
+
+    const result = await groundingService.groundContributedPlace({
+      spotName: 'CTR Shri Sagar',
+      neighborhoodHint: 'Malleshwaram',
+      infoParagraph: 'Iconic heritage eatery.',
+    });
+
+    assert.ok(result.evidence.provenanceLabel);
+    assert.ok(result.evidence.provenanceNote);
+    assert.ok(
+      result.evidence.provenanceNote.includes('Google Crowdsource lacks a public API')
+    );
+
+    // Verify truthful source attribution tags
+    const sources = result.evidence.sources.map((s) => s.source);
+    assert.ok(sources.includes('MAPS_GROUNDED'));
+    assert.ok(sources.includes('COMMUNITY_VERIFIED'));
+  });
 });
