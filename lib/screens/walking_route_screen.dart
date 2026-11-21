@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/walking_route.dart';
 import '../providers/route_providers.dart';
+import '../services/offline_tile_provider.dart';
 import '../services/native_platform_service.dart';
 import '../services/street_assistance_service.dart';
 import '../utils/polyline_decoder.dart';
@@ -33,6 +34,7 @@ class WalkingRouteScreen extends ConsumerStatefulWidget {
 class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   GoogleMapController? _mapController;
   int _activeStepIndex = 0;
+  bool _isOfflineMapMode = false;
   late final StreetAssistanceService _streetAssistanceService;
   DeviceNetworkStatus _networkStatus = DeviceNetworkStatus.wifi;
 
@@ -95,6 +97,18 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
       ),
       builder: (context) => const _StreetAssistanceSheet(),
     );
+  }
+
+  Set<TileOverlay> _buildTileOverlays(WalkingRoute route) {
+    if (!_isOfflineMapMode) return {};
+    return {
+      TileOverlay(
+        tileOverlayId: const TileOverlayId('offline_osm_raster_tiles'),
+        tileProvider: const LocalOfflineTileProvider(
+          packId: 'pack_malleshwaram_v1',
+        ),
+      ),
+    };
   }
 
   Set<Polyline> _buildPolylines(WalkingRoute route) {
@@ -239,7 +253,9 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                       ),
                       polylines: _buildPolylines(route),
                       markers: _buildMarkers(route),
-                      networkStatus: _networkStatus,
+                      tileOverlays: _buildTileOverlays(route),
+                      myLocationButtonEnabled: false,
+                      zoomControlsEnabled: true,
                     ),
                     Positioned(
                       top: 10,
@@ -261,6 +277,71 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                         ),
                       ),
                     ),
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _isOfflineMapMode = !_isOfflineMapMode;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: _isOfflineMapMode
+                                ? Colors.deepOrange.shade800
+                                : Colors.black87,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isOfflineMapMode
+                                    ? Icons.offline_pin
+                                    : Icons.cloud_done,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _isOfflineMapMode
+                                    ? 'Offline Tiles'
+                                    : 'Online Map',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_isOfflineMapMode)
+                      Positioned(
+                        bottom: 4,
+                        right: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.85),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            LocalOfflineTileProvider.osmAttribution,
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.black87,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),

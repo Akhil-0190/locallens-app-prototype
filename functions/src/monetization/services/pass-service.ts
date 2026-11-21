@@ -105,14 +105,6 @@ export class PassService {
     const validFrom = now.toISOString();
     const validUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 
-    const paymentIntent = await this.paymentAdapter.createPaymentIntent({
-      transactionId: passId,
-      payerUserId: input.userId,
-      amountInr: pricePaidInr,
-      currency: 'INR',
-      description: `${input.tier} Pass for ${input.neighborhood}`,
-    });
-
     const passDocument: RoutePassDocument = {
       passId,
       userId: input.userId,
@@ -122,7 +114,6 @@ export class PassService {
       pricePaidInr,
       currency: 'INR',
       paymentMode: this.paymentAdapter.getMode(),
-      paymentGatewayReference: paymentIntent.gatewayReference,
       status: 'PENDING', // STRICT: Pending payment confirmation
       perksIncluded: {
         audioGuidanceUnlocked: true,
@@ -136,7 +127,21 @@ export class PassService {
 
     RoutePassDocumentSchema.parse(passDocument);
 
+    // Save initial transaction so canonical record exists before gateway intent creation
     await db.collection('passes').doc(passId).set(passDocument);
+
+    const paymentIntent = await this.paymentAdapter.createPaymentIntent({
+      transactionId: passId,
+      payerUserId: input.userId,
+      amountInr: pricePaidInr,
+      currency: 'INR',
+      description: `${input.tier} Pass for ${input.neighborhood}`,
+    });
+
+    passDocument.paymentGatewayReference = paymentIntent.gatewayReference;
+    await db.collection('passes').doc(passId).update({
+      paymentGatewayReference: paymentIntent.gatewayReference,
+    });
 
     return {
       pass: passDocument,

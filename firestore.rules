@@ -18,11 +18,16 @@ service cloud.firestore {
     }
 
     /** True when the requesting user has MODERATOR or ADMIN role.
-        Role is stored on the user's profile document and read via get(). */
+        Checks trusted Firebase custom claims first, then falls back to user document if exists. */
     function isModerator() {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
-          in ['MODERATOR', 'ADMIN'];
+      return isAuthenticated() && (
+        (request.auth.token != null && (
+          ('role' in request.auth.token && request.auth.token.role in ['MODERATOR', 'ADMIN', 'moderator', 'admin']) ||
+          ('admin' in request.auth.token && request.auth.token.admin == true)
+        )) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['MODERATOR', 'ADMIN'])
+      );
     }
 
     /** True when the existing document's contributorId matches the authenticated UID. */
@@ -43,9 +48,11 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId) || isModerator();
 
-      // Owner may update own profile but CANNOT change their own role field.
+      // Owner may update own profile but CANNOT change or add their own role field.
       allow update: if isOwner(userId)
-        && request.resource.data.role == resource.data.role;
+        && (!('role' in request.resource.data) || (
+             ('role' in resource.data) && request.resource.data.role == resource.data.role
+           ));
 
       // Only Admin SDK creates/deletes user documents.
       allow create: if false;
@@ -97,19 +104,57 @@ service cloud.firestore {
     match /group_sessions/{sessionId} {
       allow read: if isAuthenticated() && (
         resource.data.hostUserId == request.auth.uid ||
-        request.auth.uid in resource.data.memberUserIds
+        request.auth.uid in resource.data.memberUserIds ||
+        isModerator()
       );
       allow create, update, delete: if false;
     }
 
     // -----------------------------------------------------------------------
-    // places/{placeId}/hourly_capacities/{slotId} (Domain 07 Venue Capacity)
+    // spots/{spotId} (Domain 01 / 03 / 05 Structured Spot Cards)
     // -----------------------------------------------------------------------
-    // - Read: Any authenticated user (to render live crowd badge indicators).
-    // - Write: Admin SDK only via Cloud Functions transactions.
+    // - Read: Any authenticated user (for discovery, cards, and route planning).
+    // - Write: Admin SDK only via Cloud Functions (AI synthesis & moderation pipeline).
+    //          Direct client writes are strictly denied to prevent injecting
+    //          unverified, commercialized, or fraudulent spot records.
     // -----------------------------------------------------------------------
 
+    match /spots/{spotId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // places/{placeId} & hourly_capacities (Domain 02 / 07 Venue Grounding & Capacity)
+    // -----------------------------------------------------------------------
+    // - Read: Any authenticated user (to render place details & live crowd badge indicators).
+    // - Write: Admin SDK only via Cloud Functions transactions & Maps normalization.
+    // -----------------------------------------------------------------------
+
+    match /places/{placeId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
     match /places/{placeId}/hourly_capacities/{slotId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // Root collection alias for venue capacity documents
+    match /venue_capacity/{venueId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // offline_packs/{packId} (Domain 06 Offline Packs Manifest)
+    // -----------------------------------------------------------------------
+    // - Read: Any authenticated user (for discovery of downloadable offline packs).
+    // - Write: Admin SDK only via Cloud Functions.
+    // -----------------------------------------------------------------------
+
+    match /offline_packs/{packId} {
       allow read: if isAuthenticated();
       allow create, update, delete: if false;
     }
@@ -189,7 +234,7 @@ service cloud.firestore {
     // -----------------------------------------------------------------------
 
     match /subscriptions/{subscriptionId} {
-      allow read: if isModerator();
+      allow read: if isModerator() || (isAuthenticated() && resource.data.ownerUserId == request.auth.uid);
       allow create, update, delete: if false;
     }
 
@@ -220,6 +265,17 @@ service cloud.firestore {
         isModerator()
       );
       allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // webhook_events/{eventId} (Server-side Payment Webhook Idempotency Records)
+    // -----------------------------------------------------------------------
+    // - Read / Write: Strictly denied for direct client access.
+    //                 Only Admin SDK writes and checks idempotency.
+    // -----------------------------------------------------------------------
+
+    match /webhook_events/{eventId} {
+      allow read, write: if false;
     }
 
 

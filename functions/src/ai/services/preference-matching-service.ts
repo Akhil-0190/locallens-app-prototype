@@ -767,7 +767,7 @@ export async function matchGroupPreferences(
         );
       }).length;
       const ratio = memberVibes.length > 0 ? matchedCount / memberVibes.length : 0.7;
-      let memberScore = Math.round(ratio * 60 + vibeMatch * 0.4);
+      let memberScore = Math.round(ratio * 60 + vibeMatch * 0.4 + authenticityBonus * 0.5);
       if (
         dietaryStatus === 'CONFLICT_DETECTED' &&
         m.dietaryRestrictions?.some((d) => consensus.dietaryConstraintsUnion.includes(d))
