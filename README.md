@@ -215,8 +215,64 @@ The compiled APK will be located at:
 
 ## 👥 Team InnovoTribe — Startup Buildathon India 2026
 
-* **Akhil S** — Mobile Architecture, On-Device Edge AI, Flutter Development & UI Engineering
-* **InnovoTribe Team Members** — Backend Cloud Functions, AI Grounding Pipeline & Product Strategy
+### Developer A — Godwin Judah J
+**Backend, Firebase & Integration Lead (Backend owner)**
+- Firebase infrastructure and Cloud Functions.
+- Shared backend data models, schemas and API contracts.
+- Firestore, Authentication and Cloud Storage.
+- Contribution and AI-result persistence.
+- Preferences, groups, capacity and scheduling data.
+- Contributor ecosystem and monetization backend.
+- Security rules, authorization, App Check and secrets.
+- Backend deployment, integration and release verification.
+- Coordinates shared contracts, reviews PRs and owns merging into main.  
+*Tasks: A1–A6.*
+
+---
+
+### Developer B — Akshay G
+**AI & Intelligence (AI owner)**
+- Gemini model configuration and access.
+- AI prompts, structured output schemas and validation.
+- Regional-language voice/photo processing and extraction.
+- Authenticity assessment and tourist-trap filtering.
+- Multimodal embeddings and personalized/group matching.
+- Gemini Live, translation and conversational assistance.
+- Gemini Nano and Gemma on-device AI model integration (AI/model side).
+- Four reusable Agent Skills and Gemini handoff.  
+*Tasks: B1–B7.*
+
+---
+
+### Developer C — Akhil T V
+**Maps, Places & Routing (Maps and routing owner)**
+- Google Maps Platform integration.
+- Google Places API and place lookup.
+- Place verification and evidence mapping.
+- Walking route generation and stop sequencing.
+- Route distance and duration.
+- Venue capacity and crowd management.
+- Scheduling, alternatives and crowd throttling.
+- Weather and closure inputs.
+- Plan-B routing and dynamic rerouting.
+- Crowdsource access investigation.  
+*Tasks: C1–C6.*
+
+---
+
+### Developer D — Aravinth S S
+**Flutter App, UI & Android (Client/app owner)**
+- Flutter/Dart application and Material 3 UI.
+- Riverpod state management and go_router navigation.
+- Firebase client integration.
+- Contributor onboarding and contribution UI.
+- Traveler onboarding, preferences and discovery UI.
+- Route, Maps and street-ready assistance UI.
+- Offline packs, local storage and offline client experience.
+- Kotlin Android integration, Method Channels and native AI bridge.
+- Contributor profiles, rewards and monetization UI.
+- Full application integration, testing and demo readiness.  
+*Tasks: D1–D7.*
 
 ---
 
