@@ -16,6 +16,9 @@ class AdaptiveRouteMap extends StatefulWidget {
   final void Function(gmaps.GoogleMapController)? onMapCreated;
   final Set<gmaps.Marker> markers;
   final Set<gmaps.Polyline> polylines;
+  final Set<gmaps.TileOverlay>? tileOverlays;
+  final bool myLocationButtonEnabled;
+  final bool zoomControlsEnabled;
   final DeviceNetworkStatus networkStatus;
   final bool enableTileNetworkLoading;
 
@@ -26,6 +29,9 @@ class AdaptiveRouteMap extends StatefulWidget {
     this.onMapCreated,
     required this.markers,
     required this.polylines,
+    this.tileOverlays,
+    this.myLocationButtonEnabled = false,
+    this.zoomControlsEnabled = true,
     this.networkStatus = DeviceNetworkStatus.wifi,
     this.enableTileNetworkLoading = true,
   });
@@ -48,9 +54,11 @@ class _AdaptiveRouteMapState extends State<AdaptiveRouteMap> {
       initialCameraPosition: widget.initialCameraPosition,
       onMapCreated: widget.onMapCreated,
       myLocationEnabled: false,
-      zoomControlsEnabled: true,
+      myLocationButtonEnabled: widget.myLocationButtonEnabled,
+      zoomControlsEnabled: widget.zoomControlsEnabled,
       polylines: widget.polylines,
       markers: widget.markers,
+      tileOverlays: widget.tileOverlays ?? const <gmaps.TileOverlay>{},
     );
   }
 

@@ -51,7 +51,7 @@ class TravelerService {
         spotName: 'Central Tiffin Room (Shri Sagar)',
         formattedAddress:
             '7th Cross Rd, Margosa Rd, Malleshwaram, Bengaluru 560003',
-        mapsLink: 'https://maps.google.com/?cid=1234567890123456789',
+        mapsLink: 'https://www.google.com/maps/search/?api=1&query=Central+Tiffin+Room+Malleshwaram+Bengaluru',
         primaryCategory: 'south_indian_restaurant',
         categories: const ['restaurant', 'heritage_cafe', 'breakfast_spot'],
         infoParagraph:
@@ -94,7 +94,7 @@ class TravelerService {
         id: 'place_veena_stores_02',
         spotName: 'Veena Stores',
         formattedAddress: 'Margosa Rd, Malleshwaram, Bengaluru 560003',
-        mapsLink: 'https://maps.google.com/?cid=9876543210987654321',
+        mapsLink: 'https://www.google.com/maps/search/?api=1&query=Veena+Stores+Malleshwaram+Bengaluru',
         primaryCategory: 'breakfast_kiosk',
         categories: const ['street_food', 'heritage_eatery'],
         infoParagraph:
@@ -136,7 +136,7 @@ class TravelerService {
         spotName: 'Brahmin\'s Coffee Bar',
         formattedAddress:
             'Ranga Rao Rd, Shankarapuram, Basavanagudi, Bengaluru 560004',
-        mapsLink: 'https://maps.google.com/?cid=1122334455667788990',
+        mapsLink: 'https://www.google.com/maps/search/?api=1&query=Brahmins+Coffee+Bar+Basavanagudi+Bengaluru',
         primaryCategory: 'coffee_counter',
         categories: const ['cafe', 'heritage_breakfast'],
         infoParagraph:
@@ -177,7 +177,7 @@ class TravelerService {
         id: 'place_kadu_temple_04',
         spotName: 'Kadu Malleshwara & Nandi Teertha',
         formattedAddress: '2nd Temple St, Malleshwaram, Bengaluru 560003',
-        mapsLink: 'https://maps.google.com/?cid=334455667788990011',
+        mapsLink: 'https://www.google.com/maps/search/?api=1&query=Kadu+Malleshwara+Temple+Malleshwaram+Bengaluru',
         primaryCategory: 'historic_temple',
         categories: const ['heritage_site', 'quiet_walk'],
         infoParagraph:
@@ -217,7 +217,7 @@ class TravelerService {
         id: 'place_tourist_trap_05',
         spotName: 'Commercial Street Overpriced Gift Arcade',
         formattedAddress: 'Commercial St, Tasker Town, Shivaji Nagar 560001',
-        mapsLink: 'https://maps.google.com/?cid=998877665544332211',
+        mapsLink: 'https://www.google.com/maps/search/?api=1&query=Commercial+Street+Shivaji+Nagar+Bengaluru',
         primaryCategory: 'souvenir_shop',
         categories: const ['tourist_kiosk'],
         infoParagraph:

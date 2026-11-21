@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'router/app_router.dart';
 
@@ -22,6 +23,13 @@ void main() async {
           : const AndroidDebugProvider(),
       providerApple: const AppleDeviceCheckProvider(),
     );
+
+    // Ensure user session exists for Cloud Functions callables
+    try {
+      if (FirebaseAuth.instance.currentUser == null) {
+        await FirebaseAuth.instance.signInAnonymously();
+      }
+    } catch (_) {}
   } catch (_) {}
 
   runApp(
