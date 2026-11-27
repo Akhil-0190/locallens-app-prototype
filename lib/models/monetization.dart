@@ -142,31 +142,50 @@ class ContributorTip {
 class PaymentIntent {
   final String transactionId;
   final String gatewayReference;
+  final String? orderId;
   final double amountInr;
   final String currency;
   final PaymentMode mode;
   final String? qrPayload;
   final String? deeplinkUrl;
+  final String? intentUrl;
+  final String? razorpayKeyId;
 
   const PaymentIntent({
     required this.transactionId,
     required this.gatewayReference,
+    this.orderId,
     required this.amountInr,
     this.currency = 'INR',
     this.mode = PaymentMode.sandbox,
     this.qrPayload,
     this.deeplinkUrl,
+    this.intentUrl,
+    this.razorpayKeyId,
   });
 
   factory PaymentIntent.fromMap(Map<String, dynamic> map) {
+    final intentUrl = map['intentUrl'] as String?;
+    String? extractedKey = map['razorpayKeyId'] as String?;
+    if ((extractedKey == null || extractedKey.isEmpty) &&
+        intentUrl != null &&
+        intentUrl.isNotEmpty) {
+      final uri = Uri.tryParse(intentUrl);
+      extractedKey = uri?.queryParameters['key_id'];
+    }
     return PaymentIntent(
       transactionId: map['transactionId'] as String? ?? '',
       gatewayReference: map['gatewayReference'] as String? ?? '',
+      orderId: map['orderId'] as String? ?? map['gatewayReference'] as String?,
       amountInr: (map['amountInr'] as num?)?.toDouble() ?? 0.0,
       currency: map['currency'] as String? ?? 'INR',
-      mode: PaymentModeX.fromString(map['mode'] as String?),
+      mode: PaymentModeX.fromString(
+        (map['paymentMode'] ?? map['mode']) as String?,
+      ),
       qrPayload: map['qrPayload'] as String?,
       deeplinkUrl: map['deeplinkUrl'] as String?,
+      intentUrl: intentUrl,
+      razorpayKeyId: extractedKey,
     );
   }
 
@@ -174,12 +193,50 @@ class PaymentIntent {
     return {
       'transactionId': transactionId,
       'gatewayReference': gatewayReference,
+      if (orderId != null) 'orderId': orderId,
       'amountInr': amountInr,
       'currency': currency,
       'mode': mode.value,
       if (qrPayload != null) 'qrPayload': qrPayload,
       if (deeplinkUrl != null) 'deeplinkUrl': deeplinkUrl,
+      if (intentUrl != null) 'intentUrl': intentUrl,
+      if (razorpayKeyId != null) 'razorpayKeyId': razorpayKeyId,
     };
+  }
+}
+
+/// Contributor Revenue Share Ledger Entry from Neighborhood Route Passes.
+class RevenueShareEntry {
+  final String entryId;
+  final String passId;
+  final String neighborhood;
+  final String passTier;
+  final double passPriceInr;
+  final double shareAmountInr;
+  final DateTime createdAt;
+
+  const RevenueShareEntry({
+    required this.entryId,
+    required this.passId,
+    required this.neighborhood,
+    required this.passTier,
+    required this.passPriceInr,
+    required this.shareAmountInr,
+    required this.createdAt,
+  });
+
+  factory RevenueShareEntry.fromMap(Map<String, dynamic> map) {
+    return RevenueShareEntry(
+      entryId: map['entryId']?.toString() ?? '',
+      passId: map['passId']?.toString() ?? '',
+      neighborhood: map['neighborhood']?.toString() ?? '',
+      passTier: map['passTier']?.toString() ?? 'NEIGHBORHOOD_ALL_ACCESS',
+      passPriceInr: (map['passPriceInr'] as num?)?.toDouble() ?? 0.0,
+      shareAmountInr: (map['shareAmountInr'] as num?)?.toDouble() ?? 0.0,
+      createdAt: map['createdAt'] != null
+          ? DateTime.tryParse(map['createdAt'].toString()) ?? DateTime.now()
+          : DateTime.now(),
+    );
   }
 }
 

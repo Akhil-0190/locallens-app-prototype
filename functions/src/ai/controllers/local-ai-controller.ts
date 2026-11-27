@@ -13,8 +13,13 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import { randomUUID } from 'node:crypto';
+import { geminiApiKey, mapsApiKey } from '../../config/secrets.js';
 import { ApiSuccessResponse } from '../../types/contracts/index.js';
 import { assertRateLimit } from '../utils/rate-limiter.js';
+import {
+  getGemmaModelManifest,
+  buildNeighborhoodOfflinePack,
+} from '../../offline/pack-builder-controller.js';
 import {
   evaluateAICoreReadiness,
   evaluateGemmaGGUFReadiness,
@@ -105,7 +110,9 @@ export const evaluateGemmaReadinessCallable = onCall(async (request) => {
  * 3. Enforces user opt-in consent (userConsentCloudFallback: true). If withheld, throws permission-denied.
  * 4. Strictly tagged with provenance: 'CLOUD_FALLBACK', isLocalInference: false, executionEnvironment: 'BACKEND_CLOUD_FUNCTIONS'.
  */
-export const executeCloudFallbackInference = onCall(async (request) => {
+export const executeCloudFallbackInference = onCall(
+  { secrets: [geminiApiKey], memory: '512MiB' },
+  async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
 
@@ -149,3 +156,46 @@ export const executeCloudFallbackInference = onCall(async (request) => {
     throw new HttpsError('internal', err.message || 'Cloud fallback inference failed.');
   }
 });
+
+/**
+ * Callable: getModelManifest
+ * Returns the canonical Gemma 4 E2B LiteRT-LM on-device model manifest and hardware thresholds.
+ */
+export const getModelManifest = onCall(async (request) => {
+  const startMs = Date.now();
+  checkAppCheckIfEnforced(request);
+  const manifest = getGemmaModelManifest();
+  return successEnvelope(manifest, startMs);
+});
+
+/**
+ * Callable: generateNeighborhoodPack
+ * Compiles verified Firestore places/spots, walking routes, and tile bounding boxes
+ * into a SHA-256 verified offline pack uploaded to Storage and indexed in `offline_packs`.
+ */
+export const generateNeighborhoodPack = onCall(
+  { secrets: [mapsApiKey, geminiApiKey], memory: '512MiB' },
+  async (request) => {
+    const startMs = Date.now();
+    checkAppCheckIfEnforced(request);
+
+    const data = (request.data as Record<string, unknown>) || {};
+    const neighborhood =
+      typeof data.neighborhood === 'string' && data.neighborhood.trim().length > 0
+        ? data.neighborhood.trim()
+        : '';
+    const city = typeof data.city === 'string' ? data.city.trim() : 'Bengaluru';
+
+    if (!neighborhood) {
+      throw new HttpsError('invalid-argument', 'A valid neighborhood name is required.');
+    }
+
+    try {
+      const pack = await buildNeighborhoodOfflinePack({ neighborhood, city });
+      return successEnvelope(pack, startMs);
+    } catch (err: any) {
+      logger.error('generateNeighborhoodPack error', { err });
+      throw new HttpsError('internal', err.message || 'Failed to build offline neighborhood pack.');
+    }
+  }
+);

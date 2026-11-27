@@ -6,7 +6,7 @@
  * fallback demonstration, and test scenario validation when live API is unavailable.
  */
 
-import type { GooglePlaceNewRaw } from '../types/places.types';
+import type { GooglePlaceNewRaw } from '../../types/places.types';
 
 export const SAMPLE_PLACES_FIXTURE: GooglePlaceNewRaw[] = [
   {

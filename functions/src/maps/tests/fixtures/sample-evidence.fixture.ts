@@ -5,9 +5,9 @@
  * Clearly labeled mock/sample fixtures for testing and fallback evaluation.
  */
 
-import { PlaceGroundingEvidence } from '../types/evidence.types';
+import { PlaceGroundingEvidence } from '../../types/evidence.types';
 import { SAMPLE_PLACES_FIXTURE } from './sample-places.fixture';
-import { NormalizationService } from '../services/normalization.service';
+import { NormalizationService } from '../../services/normalization.service';
 
 const ctrPlace = NormalizationService.normalizePlace(SAMPLE_PLACES_FIXTURE[0], true);
 

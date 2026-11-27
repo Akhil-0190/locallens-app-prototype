@@ -12,6 +12,7 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { randomUUID } from 'node:crypto';
+import { geminiApiKey, mapsApiKey } from '../config/secrets.js';
 import type { ApiSuccessResponse } from '../types/contracts/index.js';
 import { RoutesService } from './services/routes.service.js';
 import { CrowdManagementService } from './services/crowd-management.service.js';
@@ -42,11 +43,16 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
   };
 }
 
+const mapsCallableOptions = {
+  secrets: [mapsApiKey, geminiApiKey],
+  memory: '512MiB' as const,
+};
+
 /**
  * Callable: computeWalkingRoute
  * Computes a personalized walking route using Google Routes API conforming to CanonicalRouteDocument.
  */
-export const computeWalkingRoute = onCall(async (request) => {
+export const computeWalkingRoute = onCall(mapsCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -80,7 +86,7 @@ export const computeWalkingRoute = onCall(async (request) => {
  * Callable: computeCapacityAwareRoute
  * Generates walking route considering hourly venue capacity, crowd throttling and automatic substitution.
  */
-export const computeCapacityAwareRoute = onCall(async (request) => {
+export const computeCapacityAwareRoute = onCall(mapsCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -105,7 +111,7 @@ export const computeCapacityAwareRoute = onCall(async (request) => {
  * Callable: computePlanBReroute
  * One-tap dynamic rerouting responding to unexpected closures, weather disruptions, or crowd limits.
  */
-export const computePlanBReroute = onCall(async (request) => {
+export const computePlanBReroute = onCall(mapsCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -130,7 +136,7 @@ export const computePlanBReroute = onCall(async (request) => {
  * Callable: evaluateVenueCapacity
  * Queries real-time hourly capacity and crowd status for a venue and intended visit time.
  */
-export const evaluateVenueCapacity = onCall(async (request) => {
+export const evaluateVenueCapacity = onCall(mapsCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -151,7 +157,7 @@ export const evaluateVenueCapacity = onCall(async (request) => {
       placeName: typeof placeName === 'string' ? placeName : undefined,
       intendedVisitTime,
       partySize: typeof partySize === 'number' ? partySize : 1,
-      allowMockFallback: allowMockFallback !== false,
+      allowMockFallback: allowMockFallback === true,
     });
     return successEnvelope(evaluation, startMs);
   } catch (err: any) {
@@ -163,7 +169,7 @@ export const evaluateVenueCapacity = onCall(async (request) => {
  * Callable: groundContributedPlace
  * Grounds local contributor place submission against Google Places API (New) with discrepancy detection.
  */
-export const groundContributedPlace = onCall(async (request) => {
+export const groundContributedPlace = onCall(mapsCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -189,7 +195,7 @@ export const groundContributedPlace = onCall(async (request) => {
  * Submits a 1-tap real-time community crowd signal from an authenticated traveler or local resident.
  * Synthesizes signal with capacity records and returns updated crowd intelligence.
  */
-export const reportVenueCrowd = onCall(async (request) => {
+export const reportVenueCrowd = onCall(mapsCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);

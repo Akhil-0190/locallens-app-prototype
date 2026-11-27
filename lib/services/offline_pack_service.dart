@@ -1,13 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:typed_data' show BytesBuilder;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart' as drift;
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/foundation.dart' show Uint8List;
 import '../database/app_database.dart';
+import '../models/app_failure.dart';
 import '../models/offline_pack.dart';
 import '../models/walking_route.dart';
+import 'offline_tile_provider.dart';
 
 class PackChecksumMismatchException implements Exception {
   final String expected;
@@ -32,21 +35,22 @@ class PackSizeMismatchException implements Exception {
 class OfflinePackService {
   final AppDatabase db;
   final FirebaseFirestore? firestore;
+  final bool enableTileDownloads;
 
   OfflinePackService({
     required this.db,
     this.firestore,
+    this.enableTileDownloads = true,
   });
 
-  /// Discovers available offline neighborhood packs.
-  /// First queries Firestore collection `offline_packs`. If unavailable or empty,
-  /// falls back to bundled sample pack `pack_malleshwaram_v1` with explicit sample labeling.
-  Future<List<OfflinePackManifest>> getAvailablePacks({bool forceSampleFallback = false}) async {
+  /// Discovers available offline neighborhood packs from Firestore collection `offline_packs`,
+  /// merging download state with locally installed Drift packs.
+  Future<List<OfflinePackManifest>> getAvailablePacks() async {
     final downloadedList = await getDownloadedPacks();
     final downloadedMap = {for (var p in downloadedList) p.packId: p};
 
     final fs = firestore;
-    if (!forceSampleFallback && fs != null) {
+    if (fs != null) {
       try {
         final snapshot = await fs.collection('offline_packs').get();
         if (snapshot.docs.isNotEmpty) {
@@ -60,22 +64,19 @@ class OfflinePackService {
             return manifest.copyWith(isDownloaded: isDl);
           }).toList();
         }
+        return downloadedList;
       } catch (e) {
-        // Firestore rules or connectivity fallback
+        if (downloadedList.isNotEmpty) {
+          return downloadedList;
+        }
+        throw AppFailure.network(
+          'Unable to fetch offline neighborhood packs. Connect to the internet or generate a live pack first.',
+          e,
+        );
       }
     }
 
-    // Default bundled sample fixture (Malleshwaram)
-    try {
-      final jsonString = await rootBundle
-          .loadString('assets/offline_packs/pack_malleshwaram_v1.json');
-      final data = jsonDecode(jsonString) as Map<String, dynamic>;
-      final sampleManifest = OfflinePackManifest.fromJson(data);
-      final isDl = downloadedMap.containsKey(sampleManifest.packId);
-      return [sampleManifest.copyWith(isDownloaded: isDl)];
-    } catch (_) {
-      return [];
-    }
+    return downloadedList;
   }
 
   /// Retrieves list of all currently installed packs from Drift SQLite.
@@ -135,20 +136,13 @@ class OfflinePackService {
           }
         }
         rawBytes = bytesBuilder.toBytes();
-      } catch (e) {
-        // Graceful fallback to bundled offline asset pack on network error
-        final byteData = await rootBundle.load('assets/offline_packs/pack_malleshwaram_v1.json');
-        rawBytes = byteData.buffer.asUint8List();
-        onProgress?.call(0.5);
       } finally {
         client.close();
       }
     } else {
-      // Local bundled sample pack fallback
-      final byteData = await rootBundle
-          .load('assets/offline_packs/pack_malleshwaram_v1.json');
-      rawBytes = byteData.buffer.asUint8List();
-      onProgress?.call(0.5);
+      throw ArgumentError(
+        'Offline pack ${manifest.packId} has no valid HTTPS downloadUrl. Use live pack generation instead.',
+      );
     }
 
     // 1. Verify file size if specified (enforced during injected test runs or remote downloads)
@@ -187,7 +181,137 @@ class OfflinePackService {
 
     // 4. Atomically ingest and reconcile pack in SQLite
     await _reconcileAndIngestPack(parsedManifest);
+
+    // 5. Pre-cache OpenStreetMap raster tiles for 100% offline map rendering
+    if (enableTileDownloads && injectedBytes == null) {
+      final bounds = _computeTileBounds(payloadMap, parsedManifest);
+      if (bounds != null) {
+        await OfflineTileDownloader.downloadTilesForBounds(
+          packId: parsedManifest.packId,
+          north: bounds.north,
+          south: bounds.south,
+          east: bounds.east,
+          west: bounds.west,
+          minZoom: bounds.minZoom,
+          maxZoom: bounds.maxZoom,
+          onProgress: (done, total) {
+            if (total > 0 && onProgress != null) {
+              onProgress(0.8 + 0.19 * (done / total));
+            }
+          },
+        );
+      }
+    }
+
     onProgress?.call(1.0);
+  }
+
+  ({double north, double south, double east, double west, int minZoom, int maxZoom})?
+      _computeTileBounds(
+    Map<String, dynamic> rawMap,
+    OfflinePackManifest manifest,
+  ) {
+    final tb = rawMap['tileBounds'];
+    if (tb is Map) {
+      final n = (tb['north'] as num?)?.toDouble();
+      final s = (tb['south'] as num?)?.toDouble();
+      final e = (tb['east'] as num?)?.toDouble();
+      final w = (tb['west'] as num?)?.toDouble();
+      if (n != null && s != null && e != null && w != null) {
+        return (
+          north: n,
+          south: s,
+          east: e,
+          west: w,
+          minZoom: (tb['minZoom'] as num?)?.toInt() ?? 14,
+          maxZoom: (tb['maxZoom'] as num?)?.toInt() ?? 16,
+        );
+      }
+    }
+
+    final coords = <({double lat, double lng})>[];
+    for (final s in manifest.spots) {
+      if (s.hasValidCoordinates && s.latitude != null && s.longitude != null) {
+        coords.add((lat: s.latitude!, lng: s.longitude!));
+      }
+    }
+    for (final r in manifest.routes) {
+      coords.add((lat: r.origin.latitude, lng: r.origin.longitude));
+      coords.add((lat: r.destination.latitude, lng: r.destination.longitude));
+    }
+    if (coords.isEmpty) return null;
+
+    double north = coords.first.lat;
+    double south = coords.first.lat;
+    double east = coords.first.lng;
+    double west = coords.first.lng;
+    for (final c in coords) {
+      if (c.lat > north) north = c.lat;
+      if (c.lat < south) south = c.lat;
+      if (c.lng > east) east = c.lng;
+      if (c.lng < west) west = c.lng;
+    }
+    const pad = 0.004;
+    return (
+      north: north + pad,
+      south: south - pad,
+      east: east + pad,
+      west: west - pad,
+      minZoom: 14,
+      maxZoom: 16,
+    );
+  }
+
+  /// Calls `LocalAI-generateNeighborhoodPack` on the backend to compile live Firestore
+  /// verified spots, walking routes, and tile bounds, then downloads & installs the pack locally.
+  Future<OfflinePackManifest> generateAndInstallLivePack({
+    required String neighborhood,
+    String city = 'Bengaluru',
+    void Function(double progress)? onProgress,
+  }) async {
+    onProgress?.call(0.1);
+    final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+        .httpsCallable('LocalAI-generateNeighborhoodPack');
+    final response = await callable.call<Map<String, dynamic>>({
+      'neighborhood': neighborhood,
+      'city': city,
+    });
+    final envelope = Map<String, dynamic>.from(response.data);
+    final data = envelope['data'] is Map
+        ? Map<String, dynamic>.from(envelope['data'] as Map)
+        : envelope;
+
+    final manifest = OfflinePackManifest.fromJson(data);
+    final inlineJson = data['inlineBundleJson']?.toString();
+    onProgress?.call(0.35);
+
+    if (inlineJson != null && inlineJson.isNotEmpty) {
+      final bytes = Uint8List.fromList(utf8.encode(inlineJson));
+      final payloadMap = jsonDecode(inlineJson) as Map<String, dynamic>;
+      final parsed = OfflinePackManifest.fromJson(payloadMap).copyWith(
+        sha256Checksum: manifest.sha256Checksum,
+      );
+      await _reconcileAndIngestPack(parsed);
+      if (enableTileDownloads) {
+        final bounds = _computeTileBounds(payloadMap, parsed);
+        if (bounds != null) {
+          await OfflineTileDownloader.downloadTilesForBounds(
+            packId: parsed.packId,
+            north: bounds.north,
+            south: bounds.south,
+            east: bounds.east,
+            west: bounds.west,
+            minZoom: bounds.minZoom,
+            maxZoom: bounds.maxZoom,
+          );
+        }
+      }
+      onProgress?.call(1.0);
+      return parsed.copyWith(isDownloaded: true, downloadSizeBytes: bytes.length);
+    }
+
+    await downloadAndIngestPack(manifest, onProgress: onProgress);
+    return manifest.copyWith(isDownloaded: true);
   }
 
   /// Ingests pack spots and routes atomically.
@@ -336,6 +460,11 @@ class OfflinePackService {
         }
       }
     });
+
+    // 6. Clean up cached disk map tiles for this pack
+    if (enableTileDownloads) {
+      await OfflineTileDownloader.deletePackTiles(packId);
+    }
   }
 
   /// Queries verified spots from local SQLite Drift database.

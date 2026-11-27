@@ -34,7 +34,7 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/contributor-profile/:userId',
       builder: (context, state) {
-        final userId = state.pathParameters['userId'] ?? 'usr_blr_782914';
+        final userId = state.pathParameters['userId'];
         return ContributorProfileScreen(userId: userId);
       },
     ),

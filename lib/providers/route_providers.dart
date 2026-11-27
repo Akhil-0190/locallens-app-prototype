@@ -1,10 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/walking_route.dart';
+import '../providers/spot_providers.dart';
 import '../services/route_service.dart';
 import '../services/street_assistance_service.dart';
 
 final routeServiceProvider = Provider<RouteService>((ref) {
-  return RouteService();
+  final db = ref.watch(appDatabaseProvider);
+  return RouteService(db: db);
 });
 
 final streetAssistanceServiceProvider = Provider<StreetAssistanceService>((ref) {
@@ -45,7 +47,12 @@ class ActiveRouteNotifier extends StateNotifier<AsyncValue<WalkingRoute>> {
     }
   }
 
-  Future<void> applyPlanB(String constrainedPlaceId) async {
+  Future<void> applyPlanB(
+    String constrainedPlaceId, {
+    String disruptionType = 'VENUE_OVERCROWDED',
+    String? disruptionDescription,
+    bool preferIndoorAlternatives = false,
+  }) async {
     final current = state.valueOrNull;
     if (current == null) return;
 
@@ -54,6 +61,10 @@ class ActiveRouteNotifier extends StateNotifier<AsyncValue<WalkingRoute>> {
       final altRoute = await _service.requestPlanBAlternative(
         originalRouteId: current.routeId,
         constrainedPlaceId: constrainedPlaceId,
+        originalRoute: current,
+        disruptionType: disruptionType,
+        disruptionDescription: disruptionDescription,
+        preferIndoorAlternatives: preferIndoorAlternatives,
       );
       state = AsyncValue.data(altRoute);
     } catch (e, st) {
@@ -65,11 +76,12 @@ class ActiveRouteNotifier extends StateNotifier<AsyncValue<WalkingRoute>> {
 /// Currently focused or selected route stop index
 final selectedStopIndexProvider = StateProvider<int>((ref) => 0);
 
-/// Active route venue constraints and disruptions
+/// Active route venue constraints and disruptions evaluated live against active route
 final activeDisruptionsProvider =
     FutureProvider<List<DisruptionAlert>>((ref) async {
   final service = ref.watch(routeServiceProvider);
-  return service.getActiveDisruptions();
+  final route = ref.watch(activeRouteProvider).valueOrNull;
+  return service.getActiveDisruptions(route: route);
 });
 
 /// Plan-B rerouting in progress state

@@ -73,8 +73,7 @@ void main() {
     });
 
     test('3. ContributionService authentication guard enforcement in production', () async {
-      // In production mode (isTestMode: false), verifyContributorAuthorization throws AuthenticationRequiredException if no user is signed in
-      final service = ContributionService(isTestMode: false);
+      final service = ContributionService();
       expect(
         () => service.verifyContributorAuthorization(),
         throwsA(isA<AuthenticationRequiredException>()),
@@ -111,7 +110,7 @@ void main() {
       expect(find.text('Submitted to Backend'), findsOneWidget);
       expect(find.text('Asset Upload to Cloud Storage (A3)'), findsOneWidget);
       expect(find.text('Gemini Multimodal Analysis (B2)'), findsOneWidget);
-      expect(find.textContaining('Downstream C2 Integration Pending'), findsOneWidget);
+      expect(find.textContaining('Queued for Google Maps Platform grounding'), findsOneWidget);
       // Ensure no fake SpotCard is displayed at SUBMITTED stage
       expect(find.text('View Resulting Structured Spot Card'), findsNothing);
     });
@@ -176,8 +175,8 @@ void main() {
       expect(find.text('Filter Coffee'), findsOneWidget);
       expect(find.text('Come early before podi idli runs out'), findsOneWidget);
 
-      // Verify Maps Grounding is accurately disclosed as pending downstream integration
-      expect(find.textContaining('[Downstream C2 Integration Pending]'), findsOneWidget);
+      // Verify Maps Grounding step shows queued state cleanly
+      expect(find.textContaining('Queued for Google Maps Platform grounding'), findsOneWidget);
 
       // Spot card must NOT be displayed yet because place is not verified
       expect(find.text('View Resulting Structured Spot Card'), findsNothing);

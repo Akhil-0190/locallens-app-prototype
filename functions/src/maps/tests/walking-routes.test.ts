@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
+import { SAMPLE_RAW_ROUTE_FIXTURE } from './fixtures/register';
 import { RoutesService } from '../services/routes.service';
 import { RouteGenerationError } from '../types/routes.types';
-import { SAMPLE_RAW_ROUTE_FIXTURE } from '../fixtures/sample-routes.fixture';
 import { validateCanonicalRoute } from '../../types/contracts';
 
 describe('Task C3 - Walking Routes Service & Generator', () => {

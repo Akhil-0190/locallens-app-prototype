@@ -6,8 +6,6 @@ import '../providers/monetization_providers.dart';
 
 /// Screen presenting Partner Merchant Subscriptions tailored for
 /// local accommodation providers: Hotels, Homestays, and Hostels.
-/// All inquiries are saved strictly as local drafts because backend self-service
-/// callable is pending Developer A deployment.
 class PartnerSubscriptionScreen extends ConsumerStatefulWidget {
   const PartnerSubscriptionScreen({super.key});
 
@@ -76,8 +74,14 @@ class _PartnerSubscriptionScreenState
       final subId = sub['subscriptionId']?.toString() ?? 'sub_${DateTime.now().millisecondsSinceEpoch}';
 
       if (result['isPendingPayment'] == true) {
-        // Auto-confirm in sandbox mode
-        await service.confirmPartnerSubscriptionPayment(subscriptionId: subId, simulatedOutcome: 'SUCCESS');
+        final confirmResult = await service.confirmPartnerSubscriptionPayment(subscriptionId: subId);
+        final status = (confirmResult['subscription'] as Map?)?['status']?.toString() ?? 'ACTIVE';
+        setState(() {
+          _isDispatching = false;
+          _draftSaved = true;
+          _dispatchResult = 'Registered on backend! Subscription ID: $subId ($status)';
+        });
+        return;
       }
 
       setState(() {
@@ -89,7 +93,7 @@ class _PartnerSubscriptionScreenState
       _handleSaveInquiry();
       setState(() {
         _isDispatching = false;
-        _dispatchResult = 'Cloud dispatch pending ($e). Saved locally as draft with sync pending.';
+        _dispatchResult = 'Could not reach cloud registration service ($e). Saved locally as draft for retry.';
       });
     }
   }
@@ -133,27 +137,26 @@ class _PartnerSubscriptionScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Mandatory Honest Disclosure Banner
+            // Partner Merchant Disclosure Banner
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.amber.shade50,
+                color: Colors.teal.shade50,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.amber.shade300),
+                border: Border.all(color: Colors.teal.shade300),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline, color: Colors.amber.shade900, size: 20),
+                  Icon(Icons.storefront, color: Colors.teal.shade800, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '[Partner Registration: Local Draft Saved - Backend Submission Pending Developer A]\n'
-                      'Merchant partner self-registration infrastructure is pending backend deployment. '
-                      'Inquiries drafted here are saved locally and will not directly write to Firestore or activate a live subscription.',
+                      'LocalLens Partner Network • Live Firestore Registration\n'
+                      'Register your hotel, homestay, or cafe to issue verified route-pass perks directly to walking explorers.',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.amber.shade900,
+                        color: Colors.teal.shade900,
                         height: 1.3,
                         fontWeight: FontWeight.w500,
                       ),
@@ -402,9 +405,8 @@ class _PartnerSubscriptionScreenState
                 ],
               ),
               const SizedBox(height: 4),
-              // Pricing Pending Label
               const Text(
-                'Pricing: Pending Commercial Confirmation',
+                'Partner Tier Benefits',
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.blueGrey),
               ),
               const Divider(height: 16),

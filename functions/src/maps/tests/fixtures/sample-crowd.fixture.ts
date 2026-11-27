@@ -9,8 +9,8 @@
  * DO NOT TREAT AS REAL OR LIVE VENUE CAPACITIES.
  */
 
-import type { VenueHourlyCapacityDocument } from '../../types/contracts/index.js';
-import type { AlternativeVenueOption, CommunityCrowdSignal } from '../types/crowd.types.js';
+import type { VenueHourlyCapacityDocument } from '../../../types/contracts/index.js';
+import type { AlternativeVenueOption, CommunityCrowdSignal } from '../../types/crowd.types.js';
 
 export const SAMPLE_HOURLY_CAPACITIES_FIXTURE: Record<string, Record<string, VenueHourlyCapacityDocument>> = {
   // CTR Shri Sagar (Malleswaram) - popular breakfast/tiffin spot

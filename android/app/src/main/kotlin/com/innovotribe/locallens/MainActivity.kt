@@ -3,6 +3,9 @@ package com.innovotribe.locallens
 import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
@@ -23,8 +26,78 @@ class MainActivity : FlutterActivity() {
 
     private val DEVICE_CHANNEL = "com.innovotribe.locallens/device_info"
     private val NATIVE_AI_CHANNEL = "com.innovotribe.locallens/native_ai"
+    private val PCM_AUDIO_CHANNEL = "com.innovotribe.locallens/pcm_audio"
+    private val EDGE_AI_CHANNEL = "com.innovotribe.locallens/edge_ai"
 
     private var generativeModel: GenerativeModel? = null
+    private var pcmAudioTrack: AudioTrack? = null
+    private val pcmAudioLock = Any()
+
+    private fun startPcmAudioTrack(sampleRate: Int) {
+        synchronized(pcmAudioLock) {
+            stopPcmAudioTrackLocked()
+            val minBuffer = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(sampleRate / 5)
+
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuffer * 2)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+
+            track.play()
+            pcmAudioTrack = track
+        }
+    }
+
+    private fun writePcmAudioChunk(pcmBytes: ByteArray): Int {
+        synchronized(pcmAudioLock) {
+            val track = pcmAudioTrack ?: return 0
+            return track.write(pcmBytes, 0, pcmBytes.size, AudioTrack.WRITE_BLOCKING)
+        }
+    }
+
+    private fun stopPcmAudioTrackLocked() {
+        val track = pcmAudioTrack ?: return
+        try {
+            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                track.pause()
+                track.flush()
+            }
+            track.stop()
+        } catch (_: Exception) {
+            // Safe teardown
+        } finally {
+            try {
+                track.release()
+            } catch (_: Exception) {
+            }
+            pcmAudioTrack = null
+        }
+    }
+
+    override fun onDestroy() {
+        synchronized(pcmAudioLock) {
+            stopPcmAudioTrackLocked()
+        }
+        GemmaEdgeRuntime.close()
+        super.onDestroy()
+    }
 
     private fun getMlKitModel(): GenerativeModel {
         if (generativeModel == null) {
@@ -34,8 +107,7 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Supports both model filenames used by the existing B6 implementations.
-     * A file being present does not, by itself, establish that inference works.
+     * Discovers on-device Gemma 4 E2B bundles across LiteRT-LM (.litertlm) and legacy GGUF formats.
      */
     private fun getGemmaModelFile(customPath: String? = null): File {
         if (!customPath.isNullOrBlank()) {
@@ -44,13 +116,17 @@ class MainActivity : FlutterActivity() {
 
         val modelsDirectory = File(context.filesDir, "models")
 
+        val litertFile = File(modelsDirectory, "gemma-4-E2B-it.litertlm")
+        val litertShort = File(modelsDirectory, "gemma-4-e2b.litertlm")
         val preferredFile = File(modelsDirectory, "gemma-4-e2b.gguf")
         val legacyFile = File(modelsDirectory, "gemma-4-E2B-it-Q4_K_M.gguf")
 
         return when {
+            litertFile.exists() && litertFile.length() > 0 -> litertFile
+            litertShort.exists() && litertShort.length() > 0 -> litertShort
             preferredFile.exists() && preferredFile.length() > 0 -> preferredFile
             legacyFile.exists() && legacyFile.length() > 0 -> legacyFile
-            else -> preferredFile
+            else -> litertFile
         }
     }
 
@@ -827,6 +903,152 @@ class MainActivity : FlutterActivity() {
                             )
                         }
                     }
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
+        // ---------------------------------------------------------
+        // 3. GEMINI LIVE 24KHZ PCM STREAMING AUDIO CHANNEL
+        // ---------------------------------------------------------
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PCM_AUDIO_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startPcmPlayback" -> {
+                    val sampleRate = call.argument<Int>("sampleRate") ?: 24000
+                    try {
+                        startPcmAudioTrack(sampleRate)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("PCM_START_ERROR", e.message, null)
+                    }
+                }
+                "feedPcmChunk" -> {
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (bytes == null || bytes.isEmpty()) {
+                        result.success(0)
+                    } else {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val written = writePcmAudioChunk(bytes)
+                                launch(Dispatchers.Main) {
+                                    result.success(written)
+                                }
+                            } catch (e: Exception) {
+                                launch(Dispatchers.Main) {
+                                    result.error("PCM_WRITE_ERROR", e.message, null)
+                                }
+                            }
+                        }
+                    }
+                }
+                "stopPcmPlayback" -> {
+                    synchronized(pcmAudioLock) {
+                        stopPcmAudioTrackLocked()
+                    }
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // ---------------------------------------------------------
+        // 4. GEMMA 4 E2B MULTIMODAL EDGE AI CHANNEL (LITERT-LM)
+        // ---------------------------------------------------------
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            EDGE_AI_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "checkDeviceSupport" -> {
+                    val totalRamMb = GemmaEdgeRuntime.getTotalRamMb(context)
+                    val freeStorageMb = try {
+                        StatFs(context.filesDir.absolutePath).availableBytes / (1024L * 1024L)
+                    } catch (_: Exception) {
+                        0L
+                    }
+                    val gemmaFile = getGemmaModelFile()
+                    val gemmaDownloaded = gemmaFile.exists() && gemmaFile.length() > 0L
+                    val gemmaSupported = totalRamMb >= GemmaEdgeRuntime.MIN_RAM_MB
+                    val recommendedBackend = when {
+                        totalRamMb >= GemmaEdgeRuntime.GPU_RECOMMENDED_RAM_MB -> "GPU"
+                        totalRamMb >= GemmaEdgeRuntime.MIN_RAM_MB -> "CPU"
+                        else -> "UNSUPPORTED"
+                    }
+                    val geminiNanoAvailable = isAICoreInstalled() && Build.VERSION.SDK_INT >= 34
+
+                    result.success(
+                        mapOf(
+                            "totalRamMb" to totalRamMb.toInt(),
+                            "freeStorageMb" to freeStorageMb.toInt(),
+                            "gemmaE2bSupported" to gemmaSupported,
+                            "recommendedBackend" to recommendedBackend,
+                            "geminiNanoAvailable" to geminiNanoAvailable,
+                            "gemmaModelDownloaded" to gemmaDownloaded,
+                            "gemmaModelPath" to if (gemmaDownloaded) gemmaFile.absolutePath else null,
+                            "gemmaLoaded" to GemmaEdgeRuntime.isLoaded(),
+                            "activeBackend" to GemmaEdgeRuntime.getActiveBackend()
+                        )
+                    )
+                }
+
+                "initGemmaE2B" -> {
+                    val modelPath = call.argument<String>("modelPath")
+                        ?: getGemmaModelFile().absolutePath
+                    val useGpu = call.argument<Boolean>("useGpu")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val initRes = GemmaEdgeRuntime.initialize(
+                            context = context,
+                            modelPath = modelPath,
+                            preferGpu = useGpu
+                        )
+                        launch(Dispatchers.Main) {
+                            result.success(
+                                mapOf(
+                                    "loaded" to initRes.loaded,
+                                    "backend" to initRes.backend,
+                                    "loadTimeMs" to initRes.loadTimeMs,
+                                    "error" to initRes.error
+                                )
+                            )
+                        }
+                    }
+                }
+
+                "runGemmaMultimodal" -> {
+                    val prompt = call.argument<String>("prompt") ?: ""
+                    val imagePath = call.argument<String>("imagePath")
+                    val modelPath = call.argument<String>("modelPath")
+                        ?: getGemmaModelFile().let { if (it.exists()) it.absolutePath else null }
+
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val genRes = GemmaEdgeRuntime.generate(
+                            context = context,
+                            prompt = prompt,
+                            imagePath = imagePath,
+                            modelPath = modelPath
+                        )
+                        launch(Dispatchers.Main) {
+                            result.success(
+                                mapOf(
+                                    "success" to genRes.success,
+                                    "text" to genRes.text,
+                                    "tokensPerSec" to genRes.tokensPerSec,
+                                    "model" to genRes.model,
+                                    "backend" to genRes.backend,
+                                    "error" to genRes.error
+                                )
+                            )
+                        }
+                    }
+                }
+
+                "unloadGemmaE2B" -> {
+                    GemmaEdgeRuntime.close()
+                    result.success(true)
                 }
 
                 else -> result.notImplemented()

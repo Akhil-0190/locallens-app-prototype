@@ -1,14 +1,12 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 import '../models/monetization.dart';
 import '../providers/monetization_providers.dart';
 
-/// Modal sheet for purchasing and activating neighborhood Route Passes.
-/// Operates strictly under Sandbox Payment rails with mandatory simulation disclosure.
-/// Pricing is explicitly labeled as pending commercial confirmation.
-class PassCheckoutSheet extends ConsumerWidget {
+/// Modal sheet for purchasing and activating neighborhood Route Passes via Razorpay.
+/// 20% of confirmed pass revenue is shared pro-rata with verified local contributors.
+class PassCheckoutSheet extends ConsumerStatefulWidget {
   final PassTier tier;
   final String neighborhood;
   final List<String>? accessibleRouteIds;
@@ -21,9 +19,104 @@ class PassCheckoutSheet extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PassCheckoutSheet> createState() => _PassCheckoutSheetState();
+}
+
+class _PassCheckoutSheetState extends ConsumerState<PassCheckoutSheet> {
+  Razorpay? _razorpay;
+  String? _activeRazorpayPassId;
+
+  int get _tierPriceInr {
+    switch (widget.tier) {
+      case PassTier.singleRoute:
+        return 99;
+      case PassTier.neighborhoodAllAccess:
+        return 299;
+      case PassTier.annualExplorer:
+        return 999;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _razorpay = Razorpay();
+      _razorpay!.on(Razorpay.EVENT_PAYMENT_SUCCESS, _onRazorpaySuccess);
+      _razorpay!.on(Razorpay.EVENT_PAYMENT_ERROR, _onRazorpayError);
+      _razorpay!.on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
+    } catch (_) {}
+  }
+
+  void _onRazorpaySuccess(PaymentSuccessResponse response) {
+    final passId = _activeRazorpayPassId ??
+        ref.read(monetizationNotifierProvider).pendingPass?.passId;
+    if (passId == null) return;
+    ref.read(monetizationNotifierProvider.notifier).confirmPassPayment(
+          passId: passId,
+          providerPaymentId: response.paymentId,
+          providerSignature: response.signature,
+        );
+  }
+
+  void _onRazorpayError(PaymentFailureResponse response) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Razorpay pass payment failed: ${response.message ?? 'Error code ${response.code}'}',
+        ),
+        backgroundColor: Colors.red.shade700,
+      ),
+    );
+  }
+
+  void _onExternalWallet(ExternalWalletResponse response) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Redirecting to wallet: ${response.walletName}')),
+    );
+  }
+
+  void _openRazorpayCheckout(RoutePass pass, PaymentIntent intent) {
+    final keyId = intent.razorpayKeyId;
+    final orderId = intent.orderId ?? intent.gatewayReference;
+    if (_razorpay == null || keyId == null || keyId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Razorpay key not returned by backend pass order intent.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    _activeRazorpayPassId = pass.passId;
+    final priceInr = pass.pricePaidInr > 0 ? pass.pricePaidInr : _tierPriceInr.toDouble();
+    final options = <String, dynamic>{
+      'key': keyId,
+      'amount': (priceInr * 100).round(),
+      'currency': 'INR',
+      'order_id': orderId,
+      'name': 'LocalLens',
+      'description': '${widget.tier.displayName} — ${widget.neighborhood}',
+      'theme': {'color': '#0F766E'},
+    };
+    _razorpay!.open(options);
+  }
+
+  @override
+  void dispose() {
+    _razorpay?.clear();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final uiState = ref.watch(monetizationNotifierProvider);
     final notifier = ref.read(monetizationNotifierProvider.notifier);
+    final tier = widget.tier;
+    final neighborhood = widget.neighborhood;
+    final accessibleRouteIds = widget.accessibleRouteIds;
 
     return Padding(
       padding: EdgeInsets.only(
@@ -76,11 +169,8 @@ class PassCheckoutSheet extends ConsumerWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
-                              'Live banking rails are inactive. All payment intents and pass activations are executed via backend sandbox verification.'
-                          : '🎟️ Instant Route Pass Activation\n'
-                              'Unlock offline audio walking navigation and verified merchant perks.',
+                      'Instant Route Pass Activation\n'
+                      'Unlock offline audio walking navigation, offline map tiles, and verified merchant perks.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.deepPurple.shade900,
@@ -94,7 +184,7 @@ class PassCheckoutSheet extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
 
-            // Mandatory Pricing Status Label (No hardcoded rates)
+            // Live Razorpay Pricing Label
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -109,9 +199,7 @@ class PassCheckoutSheet extends ConsumerWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? 'Pricing: Pending Commercial Confirmation'
-                          : 'Community Explorer Pass • Active Access',
+                      '₹$_tierPriceInr INR via Razorpay • 20% Revenue Shared with Local Contributors',
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -261,35 +349,24 @@ class PassCheckoutSheet extends ConsumerWidget {
                     ),
                     icon: const Icon(Icons.check_circle_outline),
                     label: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? 'Complete Sandbox Payment (Activate Pass)'
+                      uiState.pendingPaymentIntent!.mode == PaymentMode.live &&
+                              uiState.pendingPaymentIntent!.razorpayKeyId != null
+                          ? 'Pay ₹$_tierPriceInr via Razorpay & Activate Pass'
                           : 'Confirm & Activate Pass',
                     ),
                     onPressed: () {
-                      notifier.confirmPassPayment(
-                        passId: uiState.pendingPass!.passId,
-                        simulatedOutcome: 'SUCCESS',
-                      );
+                      final intent = uiState.pendingPaymentIntent!;
+                      final pass = uiState.pendingPass!;
+                      if (intent.mode == PaymentMode.live &&
+                          intent.razorpayKeyId != null &&
+                          intent.razorpayKeyId!.isNotEmpty) {
+                        _openRazorpayCheckout(pass, intent);
+                      } else {
+                        notifier.confirmPassPayment(passId: pass.passId);
+                      }
                     },
                   ),
                 ),
-                if (Platform.environment.containsKey('FLUTTER_TEST')) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                      icon: const Icon(Icons.cancel_outlined),
-                      label: const Text('Simulate Payment Failure'),
-                      onPressed: () {
-                        notifier.confirmPassPayment(
-                          passId: uiState.pendingPass!.passId,
-                          simulatedOutcome: 'FAILURE',
-                        );
-                      },
-                    ),
-                  ),
-                ],
               ],
             ]
             // Step 1: Initiate Purchase
@@ -305,11 +382,7 @@ class PassCheckoutSheet extends ConsumerWidget {
                       foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.shopping_bag_outlined),
-                    label: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? 'Initiate Pass Purchase (Sandbox)'
-                          : 'Activate Pass Now',
-                    ),
+                    label: const Text('Activate Pass Now'),
                     onPressed: () {
                       notifier.purchaseRoutePass(
                         tier: tier,

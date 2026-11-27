@@ -16,6 +16,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import './fixtures/register.js';
 import { WeatherService } from '../services/weather.service.js';
 import { PlanBReroutingService } from '../services/plan-b.service.js';
 import { CrowdManagementService } from '../services/crowd-management.service.js';

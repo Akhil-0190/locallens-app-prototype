@@ -134,6 +134,21 @@ service cloud.firestore {
     match /places/{placeId} {
       allow read: if isAuthenticated();
       allow create, update, delete: if false;
+
+      // ---------------------------------------------------------------------
+      // places/{placeId}/order_cards/{cardId} (Phase 4 Cached Vendor Order Cards)
+      // ---------------------------------------------------------------------
+      // Assumed Data Model:
+      //   - Non-PII cached Gemini 3.8 Flash regional-script vendor order cards
+      //     (placeId, targetLanguage, localScript, transliteration, meaning,
+      //     dietaryNotes, generatedAt).
+      // - Read: Any authenticated user (to render spot-specific ordering phrases).
+      // - Write: STRICTLY DENIED for clients. Admin SDK only via Cloud Functions.
+      // ---------------------------------------------------------------------
+      match /order_cards/{cardId} {
+        allow read: if isAuthenticated();
+        allow create, update, delete: if false;
+      }
     }
 
     match /places/{placeId}/hourly_capacities/{slotId} {
@@ -322,6 +337,66 @@ service cloud.firestore {
         // All asset document writes go through Cloud Functions (Admin SDK)
         allow create, update, delete: if false;
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // community_signals/{signalId} (Phase 2 Community Crowdsource Signals)
+    // -----------------------------------------------------------------------
+    // Assumed Data Model:
+    //   - placeId: string (required) - target place identifier
+    //   - signalType: string (required) - crowd, dialect, hygiene, safety, landmark
+    //   - reporterType: string - LOCAL_RESIDENT | VISITING_TRAVELER | PARTNER_MERCHANT
+    //   - reportedAt / expiresAt: timestamp or ISO string
+    //   - Non-PII payload only (no private emails, phone numbers, or addresses)
+    // - Read: Any authenticated user (to display community-sourced signals).
+    // - Write: STRICTLY DENIED for clients. Written exclusively via Admin SDK
+    //          Cloud Functions (Community-submitPlaceSignal) to guarantee
+    //          validation, anti-spam rate limiting, and aggregation into
+    //          places/{placeId}.
+    // -----------------------------------------------------------------------
+
+    match /community_signals/{signalId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // safety_verifications/{placeId} (Phase 2 Safety & Hygiene Verifications)
+    // -----------------------------------------------------------------------
+    // Assumed Data Model:
+    //   - placeId: string (required) - matches document ID
+    //   - verificationTier: string - UNVERIFIED | AI_EVIDENCE_CHECKED | COMMUNITY_VERIFIED
+    //   - hygieneSignals, lightingSafety, soloTravelerFriendly, updatedAt
+    //   - Non-PII aggregate safety/hygiene verification metadata only
+    // - Read: Any authenticated user (to render verified safety/hygiene badges).
+    // - Write: STRICTLY DENIED for clients. Admin SDK only via Cloud Functions.
+    // -----------------------------------------------------------------------
+
+    match /safety_verifications/{placeId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // revenue_share_ledger/{entryId} (Phase 4 Contributor Revenue Share Ledger)
+    // -----------------------------------------------------------------------
+    // Assumed Data Model:
+    //   - contributorUserId: string (required, immutable) - credited contributor UID
+    //   - passId / sourceTransactionId: string (required)
+    //   - shareAmountInr / currency / status / createdAt
+    // - Read: Strictly restricted to the credited contributor
+    //         (resource.data.contributorUserId == request.auth.uid) or
+    //         moderators/admins to prevent cross-user financial data leaks.
+    // - Write: STRICTLY DENIED for clients. Written exclusively via Admin SDK
+    //          inside transactional pass settlement.
+    // -----------------------------------------------------------------------
+
+    match /revenue_share_ledger/{entryId} {
+      allow read: if isAuthenticated() && (
+        resource.data.contributorUserId == request.auth.uid ||
+        isModerator()
+      );
+      allow create, update, delete: if false;
     }
 
     // -----------------------------------------------------------------------

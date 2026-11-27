@@ -12,6 +12,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import './fixtures/register.js';
 import { CrowdManagementService } from '../services/crowd-management.service.js';
 import { calculateCrowdLevel, deriveSlotId } from '../../capacity/capacity-service.js';
 

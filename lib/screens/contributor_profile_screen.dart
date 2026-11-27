@@ -1,6 +1,7 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/monetization_providers.dart';
 import '../widgets/guidance_request_sheet.dart';
@@ -11,17 +12,42 @@ import '../widgets/tipping_modal_sheet.dart';
 /// Displays reputation badges, approved gems, materialized balance ledger,
 /// and provides navigation to content management and action sheets.
 class ContributorProfileScreen extends ConsumerWidget {
-  final String userId;
+  final String? userId;
 
   const ContributorProfileScreen({
     super.key,
-    this.userId = 'usr_blr_782914',
+    this.userId,
   });
+
+  String _resolveUserId() {
+    if (userId != null && userId!.isNotEmpty) return userId!;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final attributionAsync = ref.watch(contributorAttributionProvider(userId));
-    final rewardAsync = ref.watch(contributorRewardSummaryProvider(userId));
+    final effectiveUserId = _resolveUserId();
+    if (effectiveUserId.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Contributor Profile')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(24.0),
+            child: Text(
+              'Please sign in to view your contributor profile and earnings ledger.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final attributionAsync = ref.watch(contributorAttributionProvider(effectiveUserId));
+    final rewardAsync = ref.watch(contributorRewardSummaryProvider(effectiveUserId));
 
     return Scaffold(
       appBar: AppBar(
@@ -41,8 +67,8 @@ class ContributorProfileScreen extends ConsumerWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          ref.invalidate(contributorAttributionProvider(userId));
-          ref.invalidate(contributorRewardSummaryProvider(userId));
+          ref.invalidate(contributorAttributionProvider(effectiveUserId));
+          ref.invalidate(contributorRewardSummaryProvider(effectiveUserId));
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -84,7 +110,7 @@ class ContributorProfileScreen extends ConsumerWidget {
                           context: context,
                           isScrollControlled: true,
                           builder: (ctx) => TippingModalSheet(
-                            recipientUserId: userId,
+                            recipientUserId: effectiveUserId,
                             recipientName: attributionAsync.value?.displayName ?? 'Local Contributor',
                             spotId: 'spot_ctr_shri_sagar',
                             spotName: 'CTR Shri Sagar Malleshwaram',
@@ -103,7 +129,7 @@ class ContributorProfileScreen extends ConsumerWidget {
                           context: context,
                           isScrollControlled: true,
                           builder: (ctx) => GuidanceRequestSheet(
-                            guideUserId: userId,
+                            guideUserId: effectiveUserId,
                             guideName: attributionAsync.value?.displayName ?? 'Local Contributor',
                             neighborhood: 'Malleshwaram',
                           ),

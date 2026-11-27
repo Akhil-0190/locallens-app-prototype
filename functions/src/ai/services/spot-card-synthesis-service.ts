@@ -456,19 +456,22 @@ export async function synthesizeSpotCardWithGrounding(
   let groundedAddress = baseCard.formattedAddress;
   let groundedHours = baseCard.openHours;
   let mapsPlaceId: string | undefined = undefined;
+  let synthesizedHeritageContext: string | undefined = undefined;
+  let synthesizedSafetyNotices: string[] = [];
 
   if (config.hasApiKey) {
     try {
-      const prompt = `You are grounding neighborhood spot evidence for LocalLens.
+      const prompt = `You are grounding neighborhood spot evidence for LocalLens using Google Maps and Google Search.
 Place Name: "${baseCard.spotName}"
 Neighborhood/City: "${input.submission?.mapsLink || 'Malleshwaram, Bangalore, India'}"
 Contributor Narrative: "${input.submission?.infoParagraph || ''}"
 
-Evaluate Google Maps and Google Search to verify:
+Evaluate Google Maps and Google Search to verify and summarize:
 1. Exact official name and address of the establishment
 2. Official opening hours and days
 3. Must-try regional culinary specialties and authenticity signals
-4. Cultural and neighborhood context
+4. Heritage & cultural context (history, community significance, architectural/culinary roots)
+5. Practical safety or visitor notices (e.g., cash/UPI only, traffic/footpath access, peak rush warnings, lighting/solo visitor notes)
 
 Strict anti-hallucination rules:
 - Only cite facts grounded in Maps or Search results.
@@ -488,6 +491,21 @@ Strict anti-hallucination rules:
         },
         1
       );
+
+      const responseText = (liveResponse.text || '').trim();
+      if (responseText.length > 0) {
+        synthesizedHeritageContext = responseText.slice(0, 600);
+        const safetyLines = responseText
+          .split(/\r?\n/)
+          .map((l) => l.replace(/^[\s\-*•\d.]+/, '').trim())
+          .filter((l) =>
+            /\b(safety|safe|cash|upi|crowd|rush|footpath|parking|hygiene|clean|solo|lighting|hours|closed)\b/i.test(l)
+          )
+          .slice(0, 4);
+        if (safetyLines.length > 0) {
+          synthesizedSafetyNotices = safetyLines;
+        }
+      }
 
       const metadata = liveResponse.candidates?.[0]?.groundingMetadata;
       if (metadata) {
@@ -513,6 +531,8 @@ Strict anti-hallucination rules:
             });
           }
         }
+        executionStatus = 'LIVE_GROUNDED_SUCCESS';
+      } else if (responseText.length > 0) {
         executionStatus = 'LIVE_GROUNDED_SUCCESS';
       }
     } catch (err: any) {
@@ -549,11 +569,19 @@ Strict anti-hallucination rules:
 
   const sentimentSummary = `${baseCard.authenticity.localSentimentSummary} [Truthful Provenance: ${prov.badge} | Maps Grounded: ${hasMapsGrounded} | Community Voice: ${hasCommunityVoice} | Search Corroborated: ${hasSearchGrounded}]`;
 
+  const searchGroundingUrls = groundedSources
+    .filter((s) => s.sourceType === 'GOOGLE_SEARCH' && typeof s.uri === 'string' && s.uri.length > 0)
+    .map((s) => s.uri as string);
+
   const finalCard: CanonicalPlaceDocument = {
     ...baseCard,
     placeId: mapsPlaceId || baseCard.placeId,
+    ...(mapsPlaceId ? { googlePlaceId: mapsPlaceId } : {}),
     formattedAddress: groundedAddress,
     openHours: groundedHours,
+    ...(synthesizedHeritageContext ? { heritageContext: synthesizedHeritageContext } : {}),
+    ...(synthesizedSafetyNotices.length > 0 ? { safetyNotices: synthesizedSafetyNotices } : {}),
+    ...(searchGroundingUrls.length > 0 ? { searchGroundingUrls } : {}),
     isVerified: hasMapsGrounded,
     authenticity: {
       ...baseCard.authenticity,

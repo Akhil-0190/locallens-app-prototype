@@ -17,7 +17,16 @@ import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import { randomUUID, createHmac } from 'node:crypto';
 import { db } from '../config/firebase.js';
+import {
+  razorpayKeyId,
+  razorpayKeySecret,
+  paymentWebhookSecret,
+} from '../config/secrets.js';
 import { ApiSuccessResponse, PassTier, MerchantPlanTier } from '../types/contracts/index.js';
+
+const monetizationCallableOptions = {
+  secrets: [razorpayKeyId, razorpayKeySecret],
+};
 import { TippingService } from './services/tipping-service.js';
 import { PassService } from './services/pass-service.js';
 import { MerchantSubscriptionService } from './services/merchant-subscription-service.js';
@@ -81,7 +90,7 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  * Callable: initiateTip
  * Traveler sends a micro-tip to a local contributor.
  */
-export const initiateTip = onCall(async (request) => {
+export const initiateTip = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -133,7 +142,7 @@ export const initiateTip = onCall(async (request) => {
  * Callable: settleTip
  * Confirms payment and credits contributor reward ledger transactionally.
  */
-export const settleTip = onCall(async (request) => {
+export const settleTip = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -141,7 +150,24 @@ export const settleTip = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const { tipId, simulatedOutcome } = (request.data as Record<string, unknown>) || {};
+  const data = (request.data as Record<string, unknown>) || {};
+  const { tipId, simulatedOutcome } = data;
+  const providerPaymentId =
+    typeof data.providerPaymentId === 'string'
+      ? data.providerPaymentId
+      : typeof data.razorpayPaymentId === 'string'
+        ? data.razorpayPaymentId
+        : undefined;
+  const providerSignature =
+    typeof data.providerSignature === 'string'
+      ? data.providerSignature
+      : typeof data.razorpaySignature === 'string'
+        ? data.razorpaySignature
+        : undefined;
+  const parsedSimulatedOutcome =
+    simulatedOutcome === 'SUCCESS' || simulatedOutcome === 'FAILURE'
+      ? (simulatedOutcome as 'SUCCESS' | 'FAILURE')
+      : undefined;
 
   if (!tipId || typeof tipId !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid tipId string is required.');
@@ -151,7 +177,9 @@ export const settleTip = onCall(async (request) => {
     const result = await getTippingService().settleTip({
       tipId,
       callerUserId: callerUid,
-      simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
+      simulatedOutcome: parsedSimulatedOutcome,
+      providerPaymentId,
+      providerSignature,
     });
 
     logger.info('Tip settled', {
@@ -171,7 +199,7 @@ export const settleTip = onCall(async (request) => {
  * Callable: getContributorRewardSummary
  * Contributor checks their earnings, available balance, and community guidance rank.
  */
-export const getContributorRewardSummary = onCall(async (request) => {
+export const getContributorRewardSummary = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -203,7 +231,7 @@ export const getContributorRewardSummary = onCall(async (request) => {
  * Callable: purchaseRoutePass
  * Traveler purchases a route pass.
  */
-export const purchaseRoutePass = onCall(async (request) => {
+export const purchaseRoutePass = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -246,7 +274,7 @@ export const purchaseRoutePass = onCall(async (request) => {
  * Callable: confirmPassPayment
  * Confirms payment and activates a pending route pass.
  */
-export const confirmPassPayment = onCall(async (request) => {
+export const confirmPassPayment = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   const isGuest = (request.data as any)?.isGuestAccess === true;
   const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
@@ -254,7 +282,25 @@ export const confirmPassPayment = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const { passId, simulatedOutcome } = (request.data as Record<string, unknown>) || {};
+  const data = (request.data as Record<string, unknown>) || {};
+  const { passId, simulatedOutcome } = data;
+  const providerPaymentId =
+    typeof data.providerPaymentId === 'string'
+      ? data.providerPaymentId
+      : typeof data.razorpayPaymentId === 'string'
+        ? data.razorpayPaymentId
+        : undefined;
+  const providerSignature =
+    typeof data.providerSignature === 'string'
+      ? data.providerSignature
+      : typeof data.razorpaySignature === 'string'
+        ? data.razorpaySignature
+        : undefined;
+  const parsedSimulatedOutcome =
+    simulatedOutcome === 'SUCCESS' || simulatedOutcome === 'FAILURE'
+      ? (simulatedOutcome as 'SUCCESS' | 'FAILURE')
+      : undefined;
+
   if (!passId || typeof passId !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid passId string is required.');
   }
@@ -263,7 +309,9 @@ export const confirmPassPayment = onCall(async (request) => {
     const result = await getPassService().confirmPassPayment({
       passId,
       callerUserId: callerUid,
-      simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
+      simulatedOutcome: parsedSimulatedOutcome,
+      providerPaymentId,
+      providerSignature,
     });
 
     logger.info('Route pass payment confirmed', {
@@ -283,7 +331,7 @@ export const confirmPassPayment = onCall(async (request) => {
  * Callable: verifyRoutePassAccess
  * Checks if traveler has active route pass granting audio or offline access.
  */
-export const verifyRoutePassAccess = onCall(async (request) => {
+export const verifyRoutePassAccess = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -306,10 +354,49 @@ export const verifyRoutePassAccess = onCall(async (request) => {
 });
 
 /**
+ * Callable: getContributorRevenueShares
+ * Lists contributor revenue-share payouts earned from neighborhood Route Passes.
+ */
+export const getContributorRevenueShares = onCall(monetizationCallableOptions, async (request) => {
+  const startMs = Date.now();
+  const isGuest = (request.data as any)?.isGuestAccess === true;
+  const callerUid = request.auth?.uid || (isGuest ? ((request.data as any)?.userId || 'guest_traveler') : undefined);
+  if (!callerUid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { userId } = (request.data as Record<string, unknown>) || {};
+  const targetUserId = typeof userId === 'string' && userId.trim().length > 0 ? userId : callerUid;
+
+  if (targetUserId !== callerUid) {
+    const role = String(request.auth?.token?.role || '').toUpperCase();
+    if (role !== 'ADMIN' && role !== 'MODERATOR') {
+      throw new HttpsError('permission-denied', 'Cannot inspect another contributor\'s revenue shares.');
+    }
+  }
+
+  try {
+    const entries = await getPassService().listContributorRevenueShares(targetUserId);
+    const totalRevenueShareInr = entries.reduce((sum, e) => sum + Number(e.shareAmountInr || 0), 0);
+    return successEnvelope(
+      {
+        contributorUserId: targetUserId,
+        totalRevenueShareInr,
+        entries,
+      },
+      startMs
+    );
+  } catch (err: unknown) {
+    logger.error('Error listing contributor revenue shares', { error: err });
+    throw new HttpsError('internal', (err as Error).message || 'Failed to list revenue shares.');
+  }
+});
+
+/**
  * Callable: listUserPasses
  * Returns all passes owned by the authenticated caller.
  */
-export const listUserPasses = onCall(async (request) => {
+export const listUserPasses = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -328,7 +415,7 @@ export const listUserPasses = onCall(async (request) => {
  * Callable: getPublicPartnerMerchantOffer
  * Returns sanitized discount perks for a merchant place without leaking billing details.
  */
-export const getPublicPartnerMerchantOffer = onCall(async (request) => {
+export const getPublicPartnerMerchantOffer = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -352,7 +439,7 @@ export const getPublicPartnerMerchantOffer = onCall(async (request) => {
  * Callable: getContributorAttribution
  * Returns public badges, reputation tier, and approved gem counts for spot cards.
  */
-export const getContributorAttribution = onCall(async (request) => {
+export const getContributorAttribution = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -376,7 +463,7 @@ export const getContributorAttribution = onCall(async (request) => {
  * Callable: registerPartnerSubscription (A5-V-04)
  * Registers a merchant partner subscription.
  */
-export const registerPartnerSubscription = onCall(async (request) => {
+export const registerPartnerSubscription = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -452,13 +539,26 @@ export const registerPartnerSubscription = onCall(async (request) => {
  * Callable: confirmPartnerSubscriptionPayment (A5-V-04)
  * Confirms payment for a paid merchant partner subscription.
  */
-export const confirmPartnerSubscriptionPayment = onCall(async (request) => {
+export const confirmPartnerSubscriptionPayment = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const { subscriptionId, simulatedOutcome } = (request.data as Record<string, unknown>) || {};
+  const data = (request.data as Record<string, unknown>) || {};
+  const { subscriptionId, simulatedOutcome } = data;
+  const providerPaymentId =
+    typeof data.providerPaymentId === 'string'
+      ? data.providerPaymentId
+      : typeof data.razorpayPaymentId === 'string'
+        ? data.razorpayPaymentId
+        : undefined;
+  const providerSignature =
+    typeof data.providerSignature === 'string'
+      ? data.providerSignature
+      : typeof data.razorpaySignature === 'string'
+        ? data.razorpaySignature
+        : undefined;
   if (!subscriptionId || typeof subscriptionId !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid subscriptionId is required.');
   }
@@ -478,6 +578,8 @@ export const confirmPartnerSubscriptionPayment = onCall(async (request) => {
       subscriptionId,
       callerUserId: request.auth.uid,
       simulatedOutcome: outcome,
+      providerPaymentId,
+      providerSignature,
       isAdminOverride: isAdmin,
     });
 
@@ -498,7 +600,7 @@ export const confirmPartnerSubscriptionPayment = onCall(async (request) => {
  * Callable: registerGuidanceOffering (A5-V-01)
  * Local guide creates a 1-on-1 guidance offering.
  */
-export const registerGuidanceOffering = onCall(async (request) => {
+export const registerGuidanceOffering = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -553,7 +655,7 @@ export const registerGuidanceOffering = onCall(async (request) => {
  * Callable: listGuidanceOfferings (A5-V-01)
  * Browse available local guidance offerings.
  */
-export const listGuidanceOfferings = onCall(async (request) => {
+export const listGuidanceOfferings = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -576,7 +678,7 @@ export const listGuidanceOfferings = onCall(async (request) => {
  * Callable: requestLocalGuidance (A5-V-01)
  * Traveler books a 1-on-1 guidance session.
  */
-export const requestLocalGuidance = onCall(async (request) => {
+export const requestLocalGuidance = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -611,13 +713,31 @@ export const requestLocalGuidance = onCall(async (request) => {
  * Callable: confirmGuidancePayment (A5-V-01)
  * Traveler confirms payment for a guidance booking.
  */
-export const confirmGuidancePayment = onCall(async (request) => {
+export const confirmGuidancePayment = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const { bookingId, simulatedOutcome } = (request.data as Record<string, unknown>) || {};
+  const data = (request.data as Record<string, unknown>) || {};
+  const { bookingId, simulatedOutcome } = data;
+  const providerPaymentId =
+    typeof data.providerPaymentId === 'string'
+      ? data.providerPaymentId
+      : typeof data.razorpayPaymentId === 'string'
+        ? data.razorpayPaymentId
+        : undefined;
+  const providerSignature =
+    typeof data.providerSignature === 'string'
+      ? data.providerSignature
+      : typeof data.razorpaySignature === 'string'
+        ? data.razorpaySignature
+        : undefined;
+  const parsedSimulatedOutcome =
+    simulatedOutcome === 'SUCCESS' || simulatedOutcome === 'FAILURE'
+      ? (simulatedOutcome as 'SUCCESS' | 'FAILURE')
+      : undefined;
+
   if (!bookingId || typeof bookingId !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid bookingId is required.');
   }
@@ -626,7 +746,9 @@ export const confirmGuidancePayment = onCall(async (request) => {
     const result = await getGuidanceService().confirmGuidancePayment({
       bookingId,
       callerUserId: request.auth.uid,
-      simulatedOutcome: simulatedOutcome === 'FAILURE' ? 'FAILURE' : 'SUCCESS',
+      simulatedOutcome: parsedSimulatedOutcome,
+      providerPaymentId,
+      providerSignature,
     });
 
     return successEnvelope(result, startMs);
@@ -640,7 +762,7 @@ export const confirmGuidancePayment = onCall(async (request) => {
  * Callable: acceptGuidanceRequest (A5-V-01)
  * Guide accepts a booking request.
  */
-export const acceptGuidanceRequest = onCall(async (request) => {
+export const acceptGuidanceRequest = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -667,7 +789,7 @@ export const acceptGuidanceRequest = onCall(async (request) => {
  * Callable: rejectGuidanceRequest (A5-V-01)
  * Guide rejects a booking request.
  */
-export const rejectGuidanceRequest = onCall(async (request) => {
+export const rejectGuidanceRequest = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -695,7 +817,7 @@ export const rejectGuidanceRequest = onCall(async (request) => {
  * Callable: cancelGuidanceBooking (A5-V-01)
  * Traveler or guide cancels a booking.
  */
-export const cancelGuidanceBooking = onCall(async (request) => {
+export const cancelGuidanceBooking = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -723,7 +845,7 @@ export const cancelGuidanceBooking = onCall(async (request) => {
  * Callable: completeGuidanceBooking (A5-V-01)
  * Completes session and disburses escrow net to guide reward ledger.
  */
-export const completeGuidanceBooking = onCall(async (request) => {
+export const completeGuidanceBooking = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -750,7 +872,7 @@ export const completeGuidanceBooking = onCall(async (request) => {
  * Callable: getGuidanceBooking (A5-V-01)
  * Fetches guidance booking details.
  */
-export const getGuidanceBooking = onCall(async (request) => {
+export const getGuidanceBooking = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -775,7 +897,7 @@ export const getGuidanceBooking = onCall(async (request) => {
  * Callable: listMyGuidanceBookings (A5-V-01)
  * Lists guidance bookings for the authenticated user as traveler or guide.
  */
-export const listMyGuidanceBookings = onCall(async (request) => {
+export const listMyGuidanceBookings = onCall(monetizationCallableOptions, async (request) => {
   const startMs = Date.now();
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated.');
@@ -794,10 +916,78 @@ export const listMyGuidanceBookings = onCall(async (request) => {
 });
 
 /**
+ * Callable: submitVerificationRequest
+ * Persists a resident/contributor KYC verification request in Firestore with status PENDING_REVIEW.
+ */
+export const submitVerificationRequest = onCall(async (request) => {
+  const startMs = Date.now();
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated to submit ID verification.');
+  }
+
+  const data = (request.data as Record<string, unknown>) || {};
+  const documentType = typeof data.documentType === 'string' ? data.documentType.trim() : '';
+  const documentStoragePath = typeof data.documentStoragePath === 'string' ? data.documentStoragePath.trim() : undefined;
+  const neighborhood = typeof data.neighborhood === 'string' ? data.neighborhood.trim() : undefined;
+  const fullName = typeof data.fullName === 'string' ? data.fullName.trim() : undefined;
+  const notes = typeof data.notes === 'string' ? data.notes.trim() : undefined;
+
+  if (!documentType) {
+    throw new HttpsError('invalid-argument', 'Valid documentType is required.');
+  }
+
+  try {
+    const uid = request.auth.uid;
+    const now = new Date().toISOString();
+    const requestId = `vrf_${randomUUID().slice(0, 12)}`;
+
+    const payload = {
+      requestId,
+      userId: uid,
+      documentType,
+      documentStoragePath: documentStoragePath || null,
+      neighborhood: neighborhood || null,
+      fullName: fullName || null,
+      notes: notes || null,
+      status: 'PENDING_REVIEW',
+      submittedAt: now,
+      updatedAt: now,
+    };
+
+    const batch = db.batch();
+    batch.set(db.collection('verification_requests').doc(requestId), payload);
+    batch.set(
+      db.collection('users').doc(uid),
+      {
+        verificationStatus: 'PENDING_REVIEW',
+        latestVerificationRequestId: requestId,
+        verificationSubmittedAt: now,
+      },
+      { merge: true }
+    );
+    await batch.commit();
+
+    return successEnvelope(
+      {
+        requestId,
+        status: 'PENDING_REVIEW',
+        submittedAt: now,
+      },
+      startMs
+    );
+  } catch (err: unknown) {
+    logger.error('Error submitting ID verification request', { error: err });
+    throw new HttpsError('internal', (err as Error).message || 'Failed to submit verification request.');
+  }
+});
+
+/**
  * Inbound HTTP Webhook: handlePaymentWebhook
  * Handles payment gateway webhooks with HMAC signature verification and idempotency protection.
  */
-export const handlePaymentWebhook = onRequest(async (req, res) => {
+export const handlePaymentWebhook = onRequest(
+  { secrets: [razorpayKeyId, razorpayKeySecret, paymentWebhookSecret] },
+  async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Method Not Allowed');
     return;
@@ -919,12 +1109,14 @@ export const handlePaymentWebhook = onRequest(async (req, res) => {
           });
         } else if (transactionId.startsWith('pass_')) {
           const passRef = db.collection('passes').doc(transactionId);
+          let activatedPassForRevShare: any = null;
           await db.runTransaction(async (t) => {
             const passSnap = await t.get(passRef);
             if (!passSnap.exists) return;
             const pass = passSnap.data() as any;
             if (pass.status === 'ACTIVE' || pass.paymentStatus === 'COMPLETED') return;
-            if (pass.priceInr !== amountInr) return;
+            const expectedPrice = Number(pass.pricePaidInr ?? pass.priceInr ?? 0);
+            if (expectedPrice !== amountInr) return;
 
             t.update(passRef, {
               status: 'ACTIVE',
@@ -933,7 +1125,11 @@ export const handlePaymentWebhook = onRequest(async (req, res) => {
               paymentReference: paymentId,
               updatedAt: now,
             });
+            activatedPassForRevShare = { ...pass, status: 'ACTIVE' };
           });
+          if (activatedPassForRevShare) {
+            await getPassService().distributeContributorRevenueShare(activatedPassForRevShare);
+          }
         } else if (transactionId.startsWith('sub_')) {
           const subRef = db.collection('subscriptions').doc(transactionId);
           await db.runTransaction(async (t) => {

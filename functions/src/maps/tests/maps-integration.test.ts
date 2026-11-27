@@ -19,6 +19,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import './fixtures/register.js';
 import { PlacesService } from '../services/places.service.js';
 import { GroundingService } from '../services/grounding.service.js';
 import { RoutesService } from '../services/routes.service.js';

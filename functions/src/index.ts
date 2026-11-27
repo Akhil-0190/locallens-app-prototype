@@ -75,3 +75,13 @@ export * as LocalAI from "./ai/controllers/local-ai-controller.js";
  * Export Agent Skills & Continue in Gemini functions (Task B7).
  */
 export * as Skills from "./ai/controllers/skills-controller.js";
+
+/**
+ * Export Community Dialect, Crowd & Safety/Hygiene Verification functions (Stage 1).
+ */
+export * as Community from "./community/community-signals-controller.js";
+
+/**
+ * Export AI Vector Discovery & Solo/Group Taste Matchmaking functions (Stage 2).
+ */
+export * as Discovery from "./discovery/discovery-controller.js";

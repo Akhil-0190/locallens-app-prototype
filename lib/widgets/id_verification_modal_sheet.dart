@@ -4,8 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
 import '../providers/monetization_providers.dart';
 
-/// Modal sheet for submitting local ID verification drafts.
-/// Clearly discloses: Backend submission callable pending Developer A.
+/// Modal sheet for submitting resident KYC verification requests to `Monetization-submitVerificationRequest`.
 class IdVerificationModalSheet extends ConsumerStatefulWidget {
   final String currentNeighborhood;
   final bool isVerified;
@@ -62,18 +61,27 @@ class _IdVerificationModalSheetState
     });
 
     try {
-      // Simulate live document verification registration with cloud storage reference
-      await Future.delayed(const Duration(milliseconds: 350));
+      final result = await ref.read(monetizationServiceProvider).submitVerificationRequest(
+            documentType: _selectedDocType,
+            neighborhood: _neighborhoodController.text.trim(),
+            notes: _descriptionController.text.trim().isNotEmpty
+                ? _descriptionController.text.trim()
+                : null,
+          );
+      final reqId = result['requestId']?.toString() ?? 'submitted';
+      final status = result['status']?.toString() ?? 'PENDING_REVIEW';
       _handleSaveDraft();
+      if (!mounted) return;
       setState(() {
         _isUploading = false;
-        _uploadStatus = 'Verification document submitted to cloud review! Reference: VRF-${DateTime.now().millisecondsSinceEpoch}';
+        _uploadStatus = 'Verification submitted ($status). Reference: $reqId';
       });
     } catch (e) {
       _handleSaveDraft();
+      if (!mounted) return;
       setState(() {
         _isUploading = false;
-        _uploadStatus = 'Cloud sync pending. Draft saved locally on device.';
+        _uploadStatus = 'Submission unavailable ($e). Draft saved locally for retry.';
       });
     }
   }
@@ -126,27 +134,25 @@ class _IdVerificationModalSheetState
             ),
             const SizedBox(height: 8),
 
-            // Mandatory Honest Disclosure Banner
+            // Live KYC Verification Banner
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.amber.shade50,
+                color: Colors.teal.shade50,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.amber.shade300),
+                border: Border.all(color: Colors.teal.shade300),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline, color: Colors.amber.shade900, size: 20),
+                  Icon(Icons.verified_user_outlined, color: Colors.teal.shade800, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '[ID Verification: Local Draft Only - Backend Submission Pending Developer A]\n'
-                      'Administrative verification infrastructure has not been deployed to the backend. '
-                      'Drafting information here saves locally only and will NOT submit to Firestore or change your verification status.',
+                      'Submit your residency verification request to cloud review. Your account status will update to PENDING_REVIEW until verified.',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.amber.shade900,
+                        color: Colors.teal.shade900,
                         height: 1.3,
                       ),
                     ),

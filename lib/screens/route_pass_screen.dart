@@ -1,5 +1,3 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
@@ -7,8 +5,7 @@ import '../providers/monetization_providers.dart';
 import '../widgets/pass_checkout_sheet.dart';
 
 /// Screen presenting Walking Route Passes, active user passes,
-/// and sandbox pass checkout workflows.
-/// All pricing is explicitly labeled as pending commercial confirmation.
+/// and Razorpay pass checkout workflows.
 class RoutePassScreen extends ConsumerWidget {
   const RoutePassScreen({super.key});
 
@@ -46,11 +43,8 @@ class RoutePassScreen extends ConsumerWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
-                              'Route passes unlock audio walking co-pilot, curated offline maps, and artisan merchant discounts via backend simulation.'
-                          : '🎟️ Walking Route Passes • Audio Co-Pilot & Artisan Merchant Benefits\n'
-                              'Unlock offline audio navigation, alley shortcuts, and verified vendor perks.',
+                      'Walking Route Passes • Audio Co-Pilot & Artisan Merchant Benefits\n'
+                      'Unlock offline audio navigation, offline map tiles, and verified vendor perks.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.deepPurple.shade900,
@@ -105,7 +99,7 @@ class RoutePassScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Commercial pricing is pending official confirmation with local merchant and heritage partners.',
+              '20% of confirmed pass revenue goes directly to verified neighborhood contributors.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 12),
@@ -113,7 +107,8 @@ class RoutePassScreen extends ConsumerWidget {
             _buildTierCard(
               context: context,
               tier: PassTier.singleRoute,
-              description: 'Access 1 curated walking route for 48 hours. Includes audio walking co-pilot and offline spot cards (map tile pre-caching pending).',
+              priceLabel: '₹99',
+              description: 'Access 1 curated walking route for 48 hours. Includes audio walking co-pilot and offline spot cards with disk-cached map tiles.',
               neighborhood: 'Malleshwaram',
             ),
             const SizedBox(height: 12),
@@ -121,7 +116,8 @@ class RoutePassScreen extends ConsumerWidget {
             _buildTierCard(
               context: context,
               tier: PassTier.neighborhoodAllAccess,
-              description: 'Access to walking routes and curated food trails in the neighborhood for 7 days. Includes 10% partner merchant discounts and offline spot packs.',
+              priceLabel: '₹299',
+              description: 'Access to walking routes and curated food trails in the neighborhood for 7 days. Includes 10% partner merchant discounts and offline packs.',
               neighborhood: 'Malleshwaram',
               isPopular: true,
             ),
@@ -130,7 +126,8 @@ class RoutePassScreen extends ConsumerWidget {
             _buildTierCard(
               context: context,
               tier: PassTier.annualExplorer,
-              description: '365-day explorer pass for walking routes within the neighborhood, with 20% partner merchant discounts and offline spot cards (map tile pre-caching pending).',
+              priceLabel: '₹999',
+              description: '365-day explorer pass for walking routes within the neighborhood, with 20% partner merchant discounts and offline packs with cached map tiles.',
               neighborhood: 'Malleshwaram',
             ),
             const SizedBox(height: 24),
@@ -220,6 +217,7 @@ class RoutePassScreen extends ConsumerWidget {
   Widget _buildTierCard({
     required BuildContext context,
     required PassTier tier,
+    required String priceLabel,
     required String description,
     required String neighborhood,
     bool isPopular = false,
@@ -271,22 +269,22 @@ class RoutePassScreen extends ConsumerWidget {
             Text(description, style: const TextStyle(fontSize: 12, height: 1.3)),
             const SizedBox(height: 12),
 
-            // Pricing Pending Confirmation Notice (No hardcoded rates)
+            // Live Razorpay Test/Live Pricing
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.amber.shade50,
+                color: Colors.teal.shade50,
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.amber.shade200),
+                border: Border.all(color: Colors.teal.shade200),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 14, color: Colors.amber),
-                  SizedBox(width: 6),
+                  const Icon(Icons.payments_outlined, size: 14, color: Colors.teal),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Pricing: Pending Commercial Confirmation',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.black87),
+                      '$priceLabel • ${tier.durationLabel} via Razorpay UPI / Cards',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.black87),
                     ),
                   ),
                 ],
@@ -298,7 +296,7 @@ class RoutePassScreen extends ConsumerWidget {
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.shopping_cart_outlined, size: 16),
-                label: const Text('Purchase Pass (Sandbox)'),
+                label: Text('Purchase Pass ($priceLabel)'),
                 onPressed: () {
                   showModalBottomSheet(
                     context: context,

@@ -78,6 +78,11 @@ export const LiveSessionTokenRequestSchema = z.object({
   sessionPurpose: z.enum(['STREET_WALKING', 'MARKET_BROWSING', 'VENDOR_ORDERING', 'ROUTE_NAVIGATION']),
   preferredLanguage: RegionalLanguageCodeSchema.default('kn-IN'),
   neighborhoodHint: z.string().optional(),
+  sourceLanguage: RegionalLanguageCodeSchema.optional(),
+  targetLanguage: RegionalLanguageCodeSchema.optional(),
+  spotId: z.string().optional(),
+  spotName: z.string().optional(),
+  mode: z.enum(['BIDI_VOICE_TRANSLATION', 'STREET_COPILOT']).optional(),
 });
 export type LiveSessionTokenRequest = z.infer<typeof LiveSessionTokenRequestSchema>;
 
@@ -185,7 +190,13 @@ export const OrderingAssistanceRequestSchema = z.object({
   neighborhood: z.string().default('Malleshwaram'),
   targetVendorType: z.enum(['DARSHINI', 'SWEET_STALL', 'FLOWER_MARKET', 'TEMPLE_COUNTER', 'TEA_STALL', 'GENERAL']).default('GENERAL'),
   language: RegionalLanguageCodeSchema.default('kn-IN'),
+  targetLanguage: RegionalLanguageCodeSchema.optional(),
   dietaryPreference: z.string().optional(),
+  dietaryRestrictions: z.array(z.string().max(80)).max(10).optional(),
+  spotId: z.string().optional(),
+  spotName: z.string().optional(),
+  menuHints: z.array(z.string().max(120)).max(15).optional(),
+  allowCached: z.boolean().optional(),
 });
 export type OrderingAssistanceRequest = z.infer<typeof OrderingAssistanceRequestSchema>;
 

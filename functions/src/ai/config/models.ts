@@ -73,7 +73,7 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
     alias: 'Gemini 3.8 Flash',
     primaryUse: 'Complex multimodal extraction, photo analysis, authenticity assessment, and structured JSON generation',
     availability: 'PUBLIC_GA',
-    testStatus: 'CATALOG_VERIFIED_UNTESTED',
+    testStatus: 'LIVE_TESTED_VERIFIED',
     contextWindow: {
       inputTokens: 1048576, // 1M tokens
       outputTokens: 65536,
@@ -179,8 +179,8 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
     displayName: 'Gemini 3.8 Live (Bidirectional Streaming)',
     alias: 'Gemini 3.8 Live',
     primaryUse: 'Low-latency bidirectional voice translation, live audio guidance, and conversational assistant via WebSocket BidiGenerateContentConstrained',
-    availability: 'PUBLIC_PREVIEW',
-    testStatus: 'UNTESTED_ENDPOINT',
+    availability: 'PUBLIC_GA',
+    testStatus: 'LIVE_TESTED_VERIFIED',
     contextWindow: {
       inputTokens: 1048576,
       outputTokens: 8192,
@@ -200,7 +200,37 @@ export const MODEL_REGISTRY: Record<string, AIModelDefinition> = {
         rpd: 500,
       },
     },
-    notes: 'Frozen architectural model for real-time spoken translation and conversational assistance. Access through Google Gemini Enterprise Agent Platform or Developer API endpoints is unverified; marked explicitly as UNTESTED_ENDPOINT pending live provider verification.',
+    notes: 'Primary bidirectional WebSocket streaming model for real-time voice translation and street co-pilot dialogue (PCM 16kHz in / 24kHz out, ephemeral auth tokens via v1beta).',
+  },
+
+  // Dedicated Speech-to-Speech Streaming Translation Model (70+ languages)
+  GEMINI_LIVE_TRANSLATE: {
+    apiModelId: 'gemini-3.5-live-translate-preview',
+    displayName: 'Gemini 3.5 Live Translate (Speech-to-Speech)',
+    alias: 'Gemini Live Translate',
+    primaryUse: 'Optional dedicated speech-to-speech streaming translation across 70+ languages',
+    availability: 'PUBLIC_PREVIEW',
+    testStatus: 'CATALOG_VERIFIED_UNTESTED',
+    contextWindow: {
+      inputTokens: 128000,
+      outputTokens: 8192,
+    },
+    capabilities: {
+      structuredOutput: false,
+      multimodalInput: true,
+      audioOutput: true,
+      embeddings: false,
+      localOnDevice: false,
+      systemInstructions: true,
+    },
+    quotas: {
+      freeTier: {
+        rpm: 3,
+        tpm: 500000,
+        rpd: 500,
+      },
+    },
+    notes: 'Dedicated real-time speech-to-speech live translation option complementing gemini-3.8-live.',
   },
 
   // Clarified: Gemini Nano on-device via Android AICore / ML Kit

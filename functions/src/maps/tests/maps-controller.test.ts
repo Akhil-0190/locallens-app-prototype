@@ -12,6 +12,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import './fixtures/register.js';
 import {
   computeWalkingRoute,
   computeCapacityAwareRoute,

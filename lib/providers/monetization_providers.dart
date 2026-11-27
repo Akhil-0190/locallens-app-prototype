@@ -1,20 +1,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/contribution.dart';
 import '../models/monetization.dart';
-import '../providers/spot_providers.dart';
 import '../services/contribution_service.dart';
 import '../services/monetization_service.dart';
 
 /// Monetization service provider.
 final monetizationServiceProvider = Provider<MonetizationService>((ref) {
-  final isTest = ref.watch(isTestModeProvider);
-  return MonetizationService(isTestMode: isTest);
+  return MonetizationService();
 });
 
 /// Contribution service provider (supporting listMyContributions & pipeline tracking).
 final contributionServiceProvider = Provider<ContributionService>((ref) {
-  final isTest = ref.watch(isTestModeProvider);
-  return ContributionService(isTestMode: isTest);
+  return ContributionService();
 });
 
 /// Public attribution provider for a contributor by userId.
@@ -29,6 +26,13 @@ final contributorRewardSummaryProvider =
     FutureProvider.family<ContributorRewardLedger, String?>((ref, userId) async {
   final service = ref.watch(monetizationServiceProvider);
   return service.getContributorRewardSummary(userId: userId);
+});
+
+/// Contributor revenue share history from neighborhood Route Passes.
+final contributorRevenueSharesProvider =
+    FutureProvider.family<List<RevenueShareEntry>, String?>((ref, userId) async {
+  final service = ref.watch(monetizationServiceProvider);
+  return service.getContributorRevenueShares(userId: userId);
 });
 
 /// Lists all contributions authored by the current authenticated user.
@@ -175,12 +179,16 @@ class MonetizationNotifier extends StateNotifier<MonetizationUiState> {
   Future<bool> settleTip({
     required String tipId,
     String? simulatedOutcome,
+    String? providerPaymentId,
+    String? providerSignature,
   }) async {
     state = state.copyWith(isLoading: true, clearError: true, clearSuccess: true);
     try {
       final result = await _service.settleTip(
         tipId: tipId,
         simulatedOutcome: simulatedOutcome,
+        providerPaymentId: providerPaymentId,
+        providerSignature: providerSignature,
       );
       state = state.copyWith(
         isLoading: false,
@@ -232,20 +240,25 @@ class MonetizationNotifier extends StateNotifier<MonetizationUiState> {
   Future<bool> confirmPassPayment({
     required String passId,
     String? simulatedOutcome,
+    String? providerPaymentId,
+    String? providerSignature,
   }) async {
     state = state.copyWith(isLoading: true, clearError: true, clearSuccess: true);
     try {
       final result = await _service.confirmPassPayment(
         passId: passId,
         simulatedOutcome: simulatedOutcome,
+        providerPaymentId: providerPaymentId,
+        providerSignature: providerSignature,
       );
       state = state.copyWith(
         isLoading: false,
         lastActivatedPass: result.pass,
-        successMessage: '${result.pass.tier.displayName} is now ACTIVE! Audio guidance and offline maps unlocked.',
+        successMessage: '${result.pass.tier.displayName} is now ACTIVE! Audio guidance, offline maps unlocked & 20% shared with local contributors.',
         clearPendingIntent: true,
       );
       _ref.invalidate(userPassesProvider);
+      _ref.invalidate(contributorRevenueSharesProvider);
       return true;
     } catch (e) {
       state = state.copyWith(

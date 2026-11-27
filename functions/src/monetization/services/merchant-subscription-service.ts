@@ -44,6 +44,8 @@ export interface ConfirmSubscriptionPaymentInput {
   subscriptionId: string;
   callerUserId: string;
   simulatedOutcome?: 'SUCCESS' | 'FAILURE';
+  providerPaymentId?: string;
+  providerSignature?: string;
   isAdminOverride?: boolean;
 }
 
@@ -164,6 +166,8 @@ export class MerchantSubscriptionService {
       transactionId: sub.subscriptionId,
       gatewayReference: sub.paymentGatewayReference || '',
       simulatedOutcome: input.simulatedOutcome,
+      providerPaymentId: input.providerPaymentId,
+      providerSignature: input.providerSignature,
     });
 
     if (!verification.verified) {

@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../config/app_config.dart';
+import '../models/app_failure.dart';
 import '../models/contribution.dart';
 import '../models/spot_card.dart';
 
@@ -39,17 +41,11 @@ class ContributionService {
   final FirebaseStorage? _storageInstance;
   final FirebaseAuth? _authInstance;
 
-  /// Explicit flag for deterministic unit/widget test mode.
-  /// When true, deterministic in-memory fixtures are used without making live network calls.
-  /// In production, this flag is strictly false.
-  final bool isTestMode;
-
   ContributionService({
     FirebaseFunctions? functions,
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
     FirebaseAuth? auth,
-    this.isTestMode = false,
   })  : _functionsInstance = functions,
         _firestoreInstance = firestore,
         _storageInstance = storage,
@@ -58,7 +54,7 @@ class ContributionService {
   FirebaseFunctions? get _functions {
     if (_functionsInstance != null) return _functionsInstance;
     try {
-      return FirebaseFunctions.instanceFor(region: 'us-central1');
+      return FirebaseFunctions.instanceFor(region: AppConfig.apiRegion);
     } catch (_) {
       return null;
     }
@@ -91,35 +87,118 @@ class ContributionService {
     }
   }
 
-  // Static mock profile strictly restricted to isolated tests
-  static const ContributorVerificationProfile _testProfile = ContributorVerificationProfile(
-    userId: 'usr_blr_782914',
-    displayName: 'Aravinth S (Local Resident)',
-    contributorTier: 'LOCAL_RESIDENT',
-    reputationPoints: 175,
-    spotsSubmittedCount: 5,
-    spotsApprovedCount: 4,
-    accuracyRate: 0.80,
-    isVerifiedResident: true,
-    neighborhoodOfResidency: 'Malleshwaram',
-    earnedBadges: [
-      ContributorBadge(
-        badgeId: 'NEIGHBORHOOD_INSIDER',
-        title: 'Neighborhood Insider',
-        description: 'Verified authentic local spots in Malleshwaram',
-        awardedAt: '2026-11-01T00:00:00.000Z',
-      ),
-      ContributorBadge(
-        badgeId: 'FILTER_COFFEE_CONNOISSEUR',
-        title: 'Filter Coffee Sage',
-        description: 'Discovered hidden traditional roast house',
-        awardedAt: '2026-11-15T00:00:00.000Z',
-      ),
-    ],
-    totalTipsReceivedInr: 210,
-  );
+  ContributorVerificationProfile? _cachedLiveProfile;
 
-  ContributorVerificationProfile get currentProfile => _testProfile;
+  /// Returns the current authenticated contributor profile.
+  /// Always binds to the genuine FirebaseAuth UID (never a hardcoded user ID).
+  ContributorVerificationProfile get currentProfile {
+    if (_cachedLiveProfile != null) return _cachedLiveProfile!;
+    final user = _auth?.currentUser;
+    if (user == null) {
+      return const ContributorVerificationProfile(
+        userId: '',
+        displayName: 'Sign in required',
+        contributorTier: 'UNAUTHENTICATED',
+        reputationPoints: 0,
+        spotsSubmittedCount: 0,
+        spotsApprovedCount: 0,
+        accuracyRate: 0.0,
+        isVerifiedResident: false,
+        neighborhoodOfResidency: '',
+        earnedBadges: [],
+        totalTipsReceivedInr: 0,
+      );
+    }
+    return ContributorVerificationProfile(
+      userId: user.uid,
+      displayName: (user.displayName?.trim().isNotEmpty ?? false)
+          ? user.displayName!.trim()
+          : (user.email ?? 'Local Contributor (${user.uid.substring(0, user.uid.length >= 6 ? 6 : user.uid.length)})'),
+      contributorTier: 'LOCAL_CONTRIBUTOR',
+      reputationPoints: 0,
+      spotsSubmittedCount: 0,
+      spotsApprovedCount: 0,
+      accuracyRate: 0.0,
+      isVerifiedResident: false,
+      neighborhoodOfResidency: '',
+      earnedBadges: const [],
+      totalTipsReceivedInr: 0,
+    );
+  }
+
+  /// Loads the authenticated user's real contributor profile from Firestore `users/{uid}`
+  /// and `Monetization-getContributorAttribution`, caching it for synchronous getters.
+  Future<ContributorVerificationProfile> loadCurrentContributorProfile() async {
+    final user = _auth?.currentUser;
+    if (user == null) {
+      throw const AuthenticationRequiredException(
+        'Please sign in to load your contributor profile.',
+      );
+    }
+
+    String displayName = (user.displayName?.trim().isNotEmpty ?? false)
+        ? user.displayName!.trim()
+        : (user.email ?? 'Local Contributor (${user.uid.substring(0, user.uid.length >= 6 ? 6 : user.uid.length)})');
+    String tier = 'LOCAL_CONTRIBUTOR';
+    int reputationPoints = 0;
+    int submittedCount = 0;
+    int approvedCount = 0;
+    bool isVerifiedResident = false;
+    String neighborhood = '';
+    int totalTipsInr = 0;
+    final List<ContributorBadge> badges = [];
+
+    final firestore = _firestore;
+    if (firestore != null) {
+      try {
+        final userSnap = await firestore.collection('users').doc(user.uid).get();
+        if (userSnap.exists) {
+          final data = userSnap.data() ?? {};
+          displayName = (data['displayName'] as String?)?.trim().isNotEmpty == true
+              ? data['displayName'] as String
+              : displayName;
+          tier = (data['role'] as String?) ?? tier;
+          neighborhood = (data['neighborhoodOfResidency'] as String?) ?? '';
+          isVerifiedResident = data['isVerifiedResident'] as bool? ?? false;
+        }
+      } catch (_) {}
+    }
+
+    final functions = _functions;
+    if (functions != null) {
+      try {
+        final callable = functions.httpsCallable('Monetization-getContributorAttribution');
+        final res = await callable.call<Map<String, dynamic>>({'userId': user.uid});
+        final dataMap = Map<String, dynamic>.from(res.data['data'] as Map? ?? {});
+        if (dataMap.isNotEmpty) {
+          displayName = (dataMap['displayName'] as String?) ?? displayName;
+          tier = (dataMap['reputationTier'] as String?) ?? tier;
+          approvedCount = (dataMap['approvedGemsCount'] as num?)?.toInt() ?? approvedCount;
+          submittedCount = (dataMap['submittedGemsCount'] as num?)?.toInt() ?? approvedCount;
+          reputationPoints = (dataMap['reputationPoints'] as num?)?.toInt() ?? reputationPoints;
+          isVerifiedResident = (dataMap['isVerifiedResident'] as bool?) ?? isVerifiedResident;
+          totalTipsInr = (dataMap['totalTipsReceivedInr'] as num?)?.toInt() ?? totalTipsInr;
+        }
+      } catch (_) {}
+    }
+
+    final accuracy = submittedCount > 0 ? (approvedCount / submittedCount).clamp(0.0, 1.0) : 0.0;
+    final loaded = ContributorVerificationProfile(
+      userId: user.uid,
+      displayName: displayName,
+      contributorTier: tier,
+      reputationPoints: reputationPoints,
+      spotsSubmittedCount: submittedCount,
+      spotsApprovedCount: approvedCount,
+      accuracyRate: accuracy,
+      isVerifiedResident: isVerifiedResident,
+      neighborhoodOfResidency: neighborhood,
+      earnedBadges: badges,
+      totalTipsReceivedInr: totalTipsInr,
+    );
+    _cachedLiveProfile = loaded;
+    return loaded;
+  }
 
   // In-memory cache of recent contributions
   final List<ContributionDocument> _recentContributions = [];
@@ -130,10 +209,6 @@ class ContributionService {
   /// Throws AuthenticationRequiredException if no user is signed in.
   /// Throws ContributionPermissionDeniedException if the user has role 'TRAVELER'.
   Future<String> verifyContributorAuthorization() async {
-    if (isTestMode) {
-      return _testProfile.userId;
-    }
-
     final currentUser = _auth?.currentUser;
     if (currentUser == null) {
       throw const AuthenticationRequiredException(
@@ -169,25 +244,7 @@ class ContributionService {
   Future<ContributionDocument> submitContribution({
     required ContributorSubmissionInput input,
   }) async {
-    String effectiveContributorId;
-    try {
-      effectiveContributorId = await verifyContributorAuthorization();
-    } catch (_) {
-      effectiveContributorId = _testProfile.userId;
-    }
-
-    if (isTestMode) {
-      final contributionId = 'contrib_test_${DateTime.now().millisecondsSinceEpoch}';
-      final newDoc = ContributionDocument(
-        contributionId: contributionId,
-        submission: input,
-        status: ContributionStatus.submitted,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-      _recentContributions.insert(0, newDoc);
-      return newDoc;
-    }
+    final String effectiveContributorId = await verifyContributorAuthorization();
 
     final functions = _functions;
     if (functions == null) {
@@ -217,17 +274,17 @@ class ContributionService {
       final createdDoc = ContributionDocument.fromMap(contributionId, contributionMap);
       _recentContributions.insert(0, createdDoc);
       return createdDoc;
-    } catch (_) {
-      final contributionId = 'contrib_${DateTime.now().millisecondsSinceEpoch}';
-      final createdDoc = ContributionDocument(
-        contributionId: contributionId,
-        submission: input,
-        status: ContributionStatus.submitted,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
+    } on FirebaseFunctionsException catch (e) {
+      throw AppFailure.backend(
+        e.message ?? 'Contribution submission failed.',
+        code: e.code,
+        cause: e,
       );
-      _recentContributions.insert(0, createdDoc);
-      return createdDoc;
+    } catch (e) {
+      throw AppFailure.network(
+        'Could not submit contribution to cloud backend. Check connection and retry.',
+        e,
+      );
     }
   }
 
@@ -245,11 +302,6 @@ class ContributionService {
     String? localAudioPath,
     void Function(double progress, String statusMessage)? onProgress,
   }) async {
-    if (isTestMode) {
-      onProgress?.call(1.0, 'Upload complete (test simulation)');
-      return const [];
-    }
-
     final storage = _storage;
     final functions = _functions;
     final firestore = _firestore;
@@ -389,41 +441,6 @@ class ContributionService {
   Stream<ContributionDocument> trackContributionPipeline(ContributionDocument initialDoc) async* {
     yield initialDoc;
 
-    if (isTestMode) {
-      // Deterministic test simulation
-      await Future.delayed(const Duration(milliseconds: 600));
-      final aiAnalyzed = initialDoc.copyWith(
-        status: ContributionStatus.aiAnalyzed,
-        assets: [
-          VoicePhotoAsset(
-            assetId: 'asset_test_1',
-            contributionId: initialDoc.contributionId,
-            assetType: 'AUDIO_VOICE_NOTE',
-            storagePath: 'contributions/${initialDoc.contributionId}/audio/audio.m4a',
-            downloadUrl: 'https://storage.googleapis.com/test-bucket/audio.m4a',
-            mimeType: 'audio/x-m4a',
-            fileSizeBytes: 245000,
-            processingStatus: 'COMPLETED',
-            aiExtractionResult: const AiExtractionResult(
-              detectedLanguage: 'kn-IN',
-              transcription: 'Traditional filter coffee brewed fresh with chickory.',
-              practicalDetails: ExtractedPracticalDetails(
-                openingHoursMentioned: '6:30 AM – 8:30 PM',
-                signatureDishesOrItems: ['Filter Coffee', 'Podi Idli'],
-                cashOnlyWarning: true,
-                insiderTips: ['Visit before 9:00 AM for fresh brew'],
-              ),
-            ),
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ),
-        ],
-        updatedAt: DateTime.now(),
-      );
-      yield aiAnalyzed;
-      return;
-    }
-
     final firestore = _firestore;
     if (firestore == null) return;
 
@@ -481,49 +498,6 @@ class ContributionService {
   /// Lists all contributions authored by the current authenticated user.
   /// Calls A3 Cloud Function `Contributions-listMyContributions`.
   Future<List<ContributionDocument>> listMyContributions() async {
-    if (isTestMode) {
-      if (_recentContributions.isNotEmpty) {
-        return List.unmodifiable(_recentContributions);
-      }
-      return [
-        ContributionDocument(
-          contributionId: 'contrib_sample_1',
-          submission: const ContributorSubmissionInput(
-            mapsLink: 'https://maps.google.com/?cid=101',
-            infoParagraph: 'Historic filter coffee roaster established in 1948.',
-            contributorId: 'usr_blr_782914',
-          ),
-          status: ContributionStatus.verified,
-          groundedPlaceId: 'place_blr_coffee_101',
-          createdAt: DateTime.now().subtract(const Duration(days: 3)),
-          updatedAt: DateTime.now().subtract(const Duration(days: 2)),
-        ),
-        ContributionDocument(
-          contributionId: 'contrib_sample_2',
-          submission: const ContributorSubmissionInput(
-            mapsLink: 'https://maps.google.com/?cid=102',
-            infoParagraph: 'Authentic flower market alley near the temple.',
-            contributorId: 'usr_blr_782914',
-          ),
-          status: ContributionStatus.aiAnalyzed,
-          createdAt: DateTime.now().subtract(const Duration(days: 1)),
-          updatedAt: DateTime.now().subtract(const Duration(hours: 12)),
-        ),
-        ContributionDocument(
-          contributionId: 'contrib_sample_3',
-          submission: const ContributorSubmissionInput(
-            mapsLink: 'https://maps.google.com/?cid=103',
-            infoParagraph: 'Commercial chain store claiming heritage recipes.',
-            contributorId: 'usr_blr_782914',
-          ),
-          status: ContributionStatus.rejected,
-          rejectionReason: 'Does not meet local artisanal heritage threshold (commercial franchise).',
-          createdAt: DateTime.now().subtract(const Duration(days: 5)),
-          updatedAt: DateTime.now().subtract(const Duration(days: 4)),
-        ),
-      ];
-    }
-
     final functions = _functions;
     if (functions == null) {
       throw const AuthenticationRequiredException('Firebase Functions instance not available.');
@@ -544,37 +518,25 @@ class ContributionService {
           contributions.add(ContributionDocument.fromMap(id, cMap));
         }
       }
-      if (contributions.isNotEmpty) return contributions;
-    } catch (_) {}
-
-    if (_recentContributions.isNotEmpty) {
-      return List.unmodifiable(_recentContributions);
+      return contributions;
+    } on FirebaseFunctionsException catch (e) {
+      if (_recentContributions.isNotEmpty) {
+        return List.unmodifiable(_recentContributions);
+      }
+      throw AppFailure.backend(
+        e.message ?? 'Could not load your contributions.',
+        code: e.code,
+        cause: e,
+      );
+    } catch (e) {
+      if (_recentContributions.isNotEmpty) {
+        return List.unmodifiable(_recentContributions);
+      }
+      throw AppFailure.network(
+        'Unable to load your contributions right now.',
+        e,
+      );
     }
-    return [
-      ContributionDocument(
-        contributionId: 'contrib_sample_1',
-        submission: const ContributorSubmissionInput(
-          mapsLink: 'https://www.google.com/maps/search/?api=1&query=Central+Tiffin+Room+Malleshwaram+Bengaluru',
-          infoParagraph: 'Historic filter coffee roaster established in 1948.',
-          contributorId: 'usr_blr_782914',
-        ),
-        status: ContributionStatus.verified,
-        groundedPlaceId: 'place_blr_coffee_101',
-        createdAt: DateTime.now().subtract(const Duration(days: 3)),
-        updatedAt: DateTime.now().subtract(const Duration(days: 2)),
-      ),
-      ContributionDocument(
-        contributionId: 'contrib_sample_2',
-        submission: const ContributorSubmissionInput(
-          mapsLink: 'https://www.google.com/maps/search/?api=1&query=Veena+Stores+Malleshwaram+Bengaluru',
-          infoParagraph: 'Authentic flower market alley near the temple.',
-          contributorId: 'usr_blr_782914',
-        ),
-        status: ContributionStatus.aiAnalyzed,
-        createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        updatedAt: DateTime.now().subtract(const Duration(hours: 12)),
-      ),
-    ];
   }
 
   /// Fetches latest status of a specific contribution via `Contributions-getContributionStatus`.
@@ -583,29 +545,32 @@ class ContributionService {
     if (found.isNotEmpty) return found.first;
 
     final functions = _functions;
-    if (functions != null) {
-      try {
-        final callable = functions.httpsCallable('Contributions-getContributionStatus');
-        final result = await callable.call<Map<String, dynamic>>({
-          'contributionId': contributionId,
-        });
-        final responseMap = Map<String, dynamic>.from(result.data);
-        final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
-        final contributionMap = Map<String, dynamic>.from(dataMap['contribution'] as Map? ?? {});
-        return ContributionDocument.fromMap(contributionId, contributionMap);
-      } catch (_) {}
+    if (functions == null) {
+      throw AppFailure.network('Firebase Functions instance unavailable.');
     }
 
-    return ContributionDocument(
-      contributionId: contributionId,
-      submission: const ContributorSubmissionInput(
-        mapsLink: 'https://www.google.com/maps/search/?api=1&query=Malleshwaram+Bengaluru',
-        infoParagraph: 'Local spot details.',
-        contributorId: 'usr_blr_782914',
-      ),
-      status: ContributionStatus.submitted,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
+    try {
+      final callable = functions.httpsCallable('Contributions-getContributionStatus');
+      final result = await callable.call<Map<String, dynamic>>({
+        'contributionId': contributionId,
+      });
+      final responseMap = Map<String, dynamic>.from(result.data);
+      final dataMap = Map<String, dynamic>.from(responseMap['data'] as Map? ?? {});
+      final contributionMap = Map<String, dynamic>.from(dataMap['contribution'] as Map? ?? {});
+      if (contributionMap.isEmpty) {
+        throw AppFailure.notFound('Contribution $contributionId was not found.');
+      }
+      return ContributionDocument.fromMap(contributionId, contributionMap);
+    } on AppFailure {
+      rethrow;
+    } on FirebaseFunctionsException catch (e) {
+      throw AppFailure.backend(
+        e.message ?? 'Failed to fetch contribution status.',
+        code: e.code,
+        cause: e,
+      );
+    } catch (e) {
+      throw AppFailure.network('Could not refresh contribution status.', e);
+    }
   }
 }

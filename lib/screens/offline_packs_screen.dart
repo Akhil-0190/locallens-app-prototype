@@ -1,8 +1,10 @@
 // ignore_for_file: deprecated_member_use
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/offline_pack.dart';
 import '../providers/offline_providers.dart';
+import '../services/offline_model_manager.dart';
 
 class OfflinePacksScreen extends ConsumerStatefulWidget {
   const OfflinePacksScreen({super.key});
@@ -13,6 +15,94 @@ class OfflinePacksScreen extends ConsumerStatefulWidget {
 
 class _OfflinePacksScreenState extends ConsumerState<OfflinePacksScreen> {
   String? _errorMessage;
+  ModelDownloadProgress? _gemmaProgress;
+  StreamSubscription<ModelDownloadProgress>? _gemmaSub;
+  bool _isBuildingLivePack = false;
+  final TextEditingController _buildNeighborhoodController =
+      TextEditingController(text: 'Malleshwaram');
+
+  @override
+  void dispose() {
+    _gemmaSub?.cancel();
+    _buildNeighborhoodController.dispose();
+    super.dispose();
+  }
+
+  void _startGemmaDownload() {
+    final manager = ref.read(offlineModelManagerProvider);
+    _gemmaSub?.cancel();
+    setState(() {
+      _gemmaProgress = const ModelDownloadProgress(
+        status: ModelDownloadStatus.checkingStorage,
+      );
+    });
+    _gemmaSub = manager.downloadGemmaLiteRtModel().listen(
+      (progress) {
+        if (!mounted) return;
+        setState(() => _gemmaProgress = progress);
+        if (progress.status == ModelDownloadStatus.ready) {
+          ref.invalidate(edgeDeviceSupportProvider);
+          ref.invalidate(deviceStorageProvider);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Gemma 4 E2B ready on-device (${progress.backendLabel ?? "GPU/CPU"})!',
+              ),
+              backgroundColor: Colors.green[800],
+            ),
+          );
+        }
+      },
+      onError: (Object err) {
+        if (!mounted) return;
+        setState(() {
+          _gemmaProgress = ModelDownloadProgress(
+            status: ModelDownloadStatus.error,
+            errorMessage: err.toString(),
+          );
+        });
+      },
+    );
+  }
+
+  void _cancelGemmaDownload() {
+    ref.read(offlineModelManagerProvider).cancelDownload();
+  }
+
+  Future<void> _handleBuildLivePack() async {
+    final hood = _buildNeighborhoodController.text.trim();
+    if (hood.isEmpty) return;
+    setState(() {
+      _isBuildingLivePack = true;
+      _errorMessage = null;
+    });
+    try {
+      final service = ref.read(offlinePackServiceProvider);
+      final installed = await service.generateAndInstallLivePack(
+        neighborhood: hood,
+      );
+      ref.invalidate(availablePacksProvider);
+      ref.invalidate(downloadedPacksProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Built & installed live ${installed.neighborhood} pack (${installed.totalSpotsCount} spots, offline map tiles cached).',
+            ),
+            backgroundColor: Colors.green[800],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = 'Live pack build error: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBuildingLivePack = false);
+      }
+    }
+  }
 
   String _formatBytes(int bytes) {
     if (bytes <= 0) return '0 B';
@@ -126,6 +216,7 @@ class _OfflinePacksScreenState extends ConsumerState<OfflinePacksScreen> {
     final packsAsync = ref.watch(availablePacksProvider);
     final storageAsync = ref.watch(deviceStorageProvider);
     final aiCapsAsync = ref.watch(nativeAiCapabilitiesProvider);
+    final edgeSupportAsync = ref.watch(edgeDeviceSupportProvider);
     final progressMap = ref.watch(packDownloadProgressProvider);
 
     return Scaffold(
@@ -211,41 +302,190 @@ class _OfflinePacksScreenState extends ConsumerState<OfflinePacksScreen> {
           ),
           const SizedBox(height: 12),
 
-          // 2. Open Requirements Disclosures Card
+          // 2. Gemma 4 E2B Multimodal On-Device Edge AI Setup Card
+          edgeSupportAsync.when(
+            data: (support) {
+              final ramGb = (support.totalRamMb / 1024.0).toStringAsFixed(1);
+              final isDownloading =
+                  _gemmaProgress?.status == ModelDownloadStatus.downloading ||
+                      _gemmaProgress?.status ==
+                          ModelDownloadStatus.checkingStorage ||
+                      _gemmaProgress?.status ==
+                          ModelDownloadStatus.verifyingChecksum ||
+                      _gemmaProgress?.status ==
+                          ModelDownloadStatus.initializingRuntime;
+              final isReady = support.gemmaModelDownloaded ||
+                  _gemmaProgress?.status == ModelDownloadStatus.ready;
+
+              return Card(
+                elevation: 0,
+                color: support.gemmaE2bSupported
+                    ? Colors.teal.shade50
+                    : Colors.orange.shade50,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(
+                    color: support.gemmaE2bSupported
+                        ? Colors.teal.shade300
+                        : Colors.orange.shade300,
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            isReady ? Icons.verified : Icons.memory,
+                            color: support.gemmaE2bSupported
+                                ? Colors.teal.shade800
+                                : Colors.orange.shade900,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Gemma 4 E2B Edge AI (140+ Lang Vision & Q&A)',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: support.gemmaE2bSupported
+                                    ? Colors.teal.shade900
+                                    : Colors.orange.shade900,
+                              ),
+                            ),
+                          ),
+                          Chip(
+                            label: Text(
+                              isReady
+                                  ? 'Ready (${support.activeBackend != "NONE" ? support.activeBackend : support.recommendedBackend})'
+                                  : support.gemmaE2bSupported
+                                      ? '$ramGb GB • ${support.recommendedBackend}'
+                                      : '<6 GB Guard',
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        support.gemmaE2bSupported
+                            ? (isReady
+                                ? 'Gemma 4 E2B LiteRT-LM is installed on-device for 100% offline camera sign/menu translation and street tips.'
+                                : 'Eligible ($ramGb GB RAM). Automatically downloads over Wi-Fi or tap below for resumable setup (~2.6 GB, ${support.recommendedBackend} delegate).')
+                            : 'Hardware safety guard active ($ramGb GB RAM < 6 GB minimum). Offline packs, disk map tiles, and ML Kit OCR work safely without OOM risk.',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      if (isDownloading && _gemmaProgress != null) ...[
+                        const SizedBox(height: 10),
+                        LinearProgressIndicator(
+                          value: _gemmaProgress!.status ==
+                                  ModelDownloadStatus.downloading
+                              ? _gemmaProgress!.progressPercent
+                              : null,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _gemmaProgress!.status ==
+                                      ModelDownloadStatus.downloading
+                                  ? 'Downloading ${_formatBytes(_gemmaProgress!.bytesDownloaded)} / ${_formatBytes(_gemmaProgress!.totalBytes)} (${(_gemmaProgress!.progressPercent * 100).toStringAsFixed(1)}%)'
+                                  : _gemmaProgress!.status ==
+                                          ModelDownloadStatus.verifyingChecksum
+                                      ? 'Verifying checksum...'
+                                      : _gemmaProgress!.status ==
+                                              ModelDownloadStatus
+                                                  .initializingRuntime
+                                          ? 'Initializing LiteRT-LM runtime...'
+                                          : 'Checking storage...',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            TextButton(
+                              onPressed: _cancelGemmaDownload,
+                              child: const Text('Pause/Cancel'),
+                            ),
+                          ],
+                        ),
+                      ] else if (_gemmaProgress?.errorMessage != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _gemmaProgress!.errorMessage!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.red.shade800,
+                          ),
+                        ),
+                      ],
+                      if (support.gemmaE2bSupported &&
+                          !isReady &&
+                          !isDownloading) ...[
+                        const SizedBox(height: 10),
+                        FilledButton.icon(
+                          onPressed: _startGemmaDownload,
+                          icon: const Icon(Icons.download_for_offline, size: 18),
+                          label: const Text('Download Gemma 4 E2B (.litertlm)'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            },
+            loading: () => const SizedBox.shrink(),
+            error: (_, _) => const SizedBox.shrink(),
+          ),
+          const SizedBox(height: 12),
+
+          // 3. Build Live Offline Neighborhood Pack from Firestore + OSM Tiles
           Card(
             elevation: 0,
-            color: Colors.amber[50],
+            color: Colors.blueGrey.shade50,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: Colors.amber[300]!),
+              side: BorderSide(color: Colors.blueGrey.shade200),
             ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const Text(
+                    'Build Live Offline Pack (Spots + Routes + Disk Map Tiles)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
-                      Icon(Icons.info_outline, size: 18, color: Colors.amber[900]),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Status Disclosures',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.amber[900],
+                      Expanded(
+                        child: TextField(
+                          controller: _buildNeighborhoodController,
+                          decoration: const InputDecoration(
+                            hintText: 'Neighborhood (e.g., Malleshwaram, Indiranagar)',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonalIcon(
+                        onPressed:
+                            _isBuildingLivePack ? null : _handleBuildLivePack,
+                        icon: _isBuildingLivePack
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.cloud_download, size: 18),
+                        label: const Text('Build & Save'),
+                      ),
                     ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'â€¢ [Sample Offline Pack]: Malleshwaram bundle is a sample fixture while Developer A pack generator is pending.',
-                    style: TextStyle(fontSize: 12, color: Colors.amber[900]),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'â€¢ [Offline Maps Status]: Walking routes, turn-by-turn steps, and spot cards are 100% offline-cached. Full offline vector map tile caching remains an open requirement pending resolution with Developers C & A.',
-                    style: TextStyle(fontSize: 12, color: Colors.amber[900]),
                   ),
                 ],
               ),
@@ -318,7 +558,7 @@ class _OfflinePacksScreenState extends ConsumerState<OfflinePacksScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Pack Version: v${pack.version} â€¢ ${_formatBytes(pack.downloadSizeBytes)}',
+                                      'Pack Version: v${pack.version} • ${_formatBytes(pack.downloadSizeBytes)}',
                                       style: Theme.of(context).textTheme.bodySmall,
                                     ),
                                   ],

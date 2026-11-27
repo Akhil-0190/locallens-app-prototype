@@ -1,9 +1,8 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
 import '../services/photo_helper.dart';
+import '../services/spot_service.dart';
 
 /// Reusable Spot Card conforming to Domain 06 (`docs/contracts/06-places-and-spot-cards.md`).
 /// Displays authenticity scoring, crowd & capacity throttling, contributor attribution,
@@ -255,33 +254,10 @@ class SpotCardTile extends StatelessWidget {
                         ],
                       ),
                     ),
-                    // Verified / Contract Badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Platform.environment.containsKey('FLUTTER_TEST')
-                            ? Colors.amber.shade50
-                            : const Color(0xFFCCFBF1),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: Platform.environment.containsKey('FLUTTER_TEST')
-                              ? Colors.amber.shade300
-                              : const Color(0xFF14B8A6),
-                        ),
-                      ),
-                      child: Text(
-                        Platform.environment.containsKey('FLUTTER_TEST')
-                            ? 'Sample Data (Domain 06)'
-                            : 'Verified Local Spot',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: Platform.environment.containsKey('FLUTTER_TEST')
-                              ? Colors.amber.shade900
-                              : const Color(0xFF0F766E),
-                        ),
-                      ),
-                    ),
+                    // Safety & Hygiene Verification Tier Badge (Stage 1 Promise #6)
+                    _buildVerificationTierBadge(),
+                    // Earned Safety & Hygiene Badges
+                    ...spot.safetyHygieneBadges.map(_buildSafetyBadgeChip),
                   ],
                 ),
 
@@ -292,6 +268,97 @@ class SpotCardTile extends StatelessWidget {
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
                 ),
+
+                // 5b. Google Search Grounding: Heritage Context & Safety Notices (Stage 1 Promise #4)
+                if (spot.heritageContext.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.public, size: 14, color: Colors.amber.shade900),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Google Search Grounded Heritage & Context',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.amber.shade900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _safeText(spot.heritageContext, maxLength: 220),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade900),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (spot.safetyNotices.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: spot.safetyNotices.take(3).map((notice) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.blueGrey.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.blueGrey.shade200),
+                        ),
+                        child: Text(
+                          _safeText(notice, maxLength: 90),
+                          style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade900),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+
+                // 5c. Community Dialect Signals (Stage 1 Promise #5)
+                if (spot.dialectPhrases.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: spot.dialectPhrases.take(3).map((d) {
+                      final script = (d['script'] ?? '').toString();
+                      final translit = (d['transliteration'] ?? '').toString();
+                      final count = (d['verifiedByCount'] ?? 1).toString();
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.indigo.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.indigo.shade200),
+                        ),
+                        child: Text(
+                          'Dialect: $script ($translit) • ${count}x verified',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.indigo.shade900,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
 
                 // 6. Practical Tips
                 if (spot.practicalTips.isNotEmpty) ...[
@@ -419,14 +486,29 @@ class SpotCardTile extends StatelessWidget {
                   ),
                 ] else if (spot.mapsLink.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _launchMaps(context, spot.spotName, spot.formattedAddress, spot.mapsLink),
-                    icon: const Icon(Icons.map, size: 14),
-                    label: const Text('Open Maps', style: TextStyle(fontSize: 12)),
-                    style: OutlinedButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => _launchMaps(context, spot.spotName, spot.formattedAddress, spot.mapsLink),
+                        icon: const Icon(Icons.map, size: 14),
+                        label: const Text('Open Maps', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _openCommunitySignalSheet(context),
+                        icon: const Icon(Icons.verified_outlined, size: 14),
+                        label: const Text('Verify Hygiene / Dialect', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],
@@ -434,6 +516,261 @@ class SpotCardTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildVerificationTierBadge() {
+    final tier = spot.verificationTier;
+    final isCommunityVerified = tier == 'COMMUNITY_VERIFIED';
+    final isAiChecked = tier == 'AI_EVIDENCE_CHECKED';
+
+    final bgColor = isCommunityVerified
+        ? const Color(0xFFCCFBF1)
+        : isAiChecked
+            ? Colors.blue.shade50
+            : Colors.grey.shade100;
+    final borderColor = isCommunityVerified
+        ? const Color(0xFF14B8A6)
+        : isAiChecked
+            ? Colors.blue.shade200
+            : Colors.grey.shade300;
+    final textColor = isCommunityVerified
+        ? const Color(0xFF0F766E)
+        : isAiChecked
+            ? Colors.blue.shade900
+            : Colors.grey.shade800;
+
+    final label = isCommunityVerified
+        ? 'Community Verified Safety & Hygiene (${spot.hygieneEndorsementCount > 0 ? '${spot.hygieneEndorsementCount} peers' : 'Corroborated'})'
+        : isAiChecked
+            ? 'AI + Maps Evidence Checked'
+            : 'Pending Community Hygiene Verification';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: borderColor),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: textColor,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSafetyBadgeChip(String badgeCode) {
+    String label = badgeCode;
+    if (badgeCode == 'CLEAN_KITCHEN_VISIBLE') label = 'Clean Prep Area';
+    if (badgeCode == 'DAYTIME_SAFE') label = 'Safe Access';
+    if (badgeCode == 'FAIR_LOCAL_PRICING') label = 'Fair Local Price';
+    if (badgeCode == 'SOLO_FRIENDLY') label = 'Solo-Traveler Safe';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.green.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.health_and_safety, size: 11, color: Colors.green.shade800),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Colors.green.shade900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openCommunitySignalSheet(BuildContext context) {
+    bool cleanPrep = true;
+    bool safeAccess = true;
+    bool fairPricing = true;
+    bool soloSafe = true;
+    final scriptController = TextEditingController();
+    final translitController = TextEditingController();
+    final meaningController = TextEditingController();
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 18,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Community Verification: ${spot.spotName}',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Corroborate safety/hygiene or contribute a local dialect phrase to unlock Community Verified badges.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    ),
+                    const Divider(height: 20),
+                    const Text(
+                      '1. Safety & Hygiene Peer Check',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Clean preparation & serving area visible'),
+                      value: cleanPrep,
+                      onChanged: (v) => setModalState(() => cleanPrep = v ?? true),
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Well-lit, safe street access'),
+                      value: safeAccess,
+                      onChanged: (v) => setModalState(() => safeAccess = v ?? true),
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Fair local resident pricing (no tourist markup)'),
+                      value: fairPricing,
+                      onChanged: (v) => setModalState(() => fairPricing = v ?? true),
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Solo traveler friendly'),
+                      value: soloSafe,
+                      onChanged: (v) => setModalState(() => soloSafe = v ?? true),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '2. Optional Local Dialect / Ordering Phrase',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: scriptController,
+                      decoration: const InputDecoration(
+                        labelText: 'Regional Script (e.g. ಬೆಣ್ಣೆ ದೋಸೆ)',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: translitController,
+                      decoration: const InputDecoration(
+                        labelText: 'Phonetic Transliteration (e.g. Oru Benne Dose)',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: meaningController,
+                      decoration: const InputDecoration(
+                        labelText: 'English Meaning',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: isSubmitting
+                            ? null
+                            : () async {
+                                setModalState(() => isSubmitting = true);
+                                final service = SpotService();
+                                try {
+                                  await service.submitCommunityPlaceSignal(
+                                    placeId: spot.id,
+                                    signalType: 'SAFETY_HYGIENE',
+                                    hygieneChecks: {
+                                      'cleanPrepArea': cleanPrep,
+                                      'safeAccess': safeAccess,
+                                      'fairLocalPricing': fairPricing,
+                                      'soloTravelerSafe': soloSafe,
+                                    },
+                                  );
+                                  if (scriptController.text.trim().isNotEmpty &&
+                                      translitController.text.trim().isNotEmpty) {
+                                    await service.submitCommunityPlaceSignal(
+                                      placeId: spot.id,
+                                      signalType: 'DIALECT',
+                                      dialectNote: {
+                                        'language': 'kn-IN',
+                                        'script': scriptController.text.trim(),
+                                        'transliteration': translitController.text.trim(),
+                                        'meaning': meaningController.text.trim(),
+                                      },
+                                    );
+                                  }
+                                  if (ctx.mounted) {
+                                    Navigator.of(ctx).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Community safety/hygiene & dialect signal saved to Firestore!',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  setModalState(() => isSubmitting = false);
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Signal submission failed: $e')),
+                                    );
+                                  }
+                                }
+                              },
+                        icon: isSubmitting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.verified),
+                        label: Text(isSubmitting ? 'Submitting to Firestore...' : 'Submit Verification'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

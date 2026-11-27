@@ -14,7 +14,13 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import { randomUUID } from 'node:crypto';
+import { geminiApiKey, mapsApiKey } from '../../config/secrets.js';
 import { ApiSuccessResponse } from '../../types/contracts/index.js';
+
+const skillsCallableOptions = {
+  secrets: [geminiApiKey, mapsApiKey],
+  memory: '512MiB' as const,
+};
 import { assertRateLimit } from '../utils/rate-limiter.js';
 import {
   executeVoiceNoteExtractionSkill,
@@ -59,7 +65,7 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
 /**
  * Callable: executeVoiceNoteExtractionSkill
  */
-export const executeVoiceNoteExtraction = onCall(async (request) => {
+export const executeVoiceNoteExtraction = onCall(skillsCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -86,7 +92,7 @@ export const executeVoiceNoteExtraction = onCall(async (request) => {
 /**
  * Callable: executeTrapFilteringSkill
  */
-export const executeTrapFiltering = onCall(async (request) => {
+export const executeTrapFiltering = onCall(skillsCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -113,7 +119,7 @@ export const executeTrapFiltering = onCall(async (request) => {
 /**
  * Callable: executeGroupBlendingSkill
  */
-export const executeGroupBlending = onCall(async (request) => {
+export const executeGroupBlending = onCall(skillsCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -140,7 +146,7 @@ export const executeGroupBlending = onCall(async (request) => {
 /**
  * Callable: executePlanBReroutingSkill
  */
-export const executePlanBRerouting = onCall(async (request) => {
+export const executePlanBRerouting = onCall(skillsCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -167,7 +173,7 @@ export const executePlanBRerouting = onCall(async (request) => {
 /**
  * Callable: executeGeminiHandoffSkill
  */
-export const executeGeminiHandoffCallable = onCall(async (request) => {
+export const executeGeminiHandoffCallable = onCall(skillsCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;

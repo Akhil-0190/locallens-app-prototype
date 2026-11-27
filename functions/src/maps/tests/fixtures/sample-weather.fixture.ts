@@ -7,7 +7,7 @@
  * DO NOT TREAT AS REAL OR LIVE DATA.
  */
 
-import type { NormalizedWeather, VenueClosureSignal } from '../types/weather.types.js';
+import type { NormalizedWeather, VenueClosureSignal } from '../../types/weather.types.js';
 
 export const SAMPLE_WEATHER_FIXTURES: Record<string, NormalizedWeather> = {
   // Clear day in Malleswaram

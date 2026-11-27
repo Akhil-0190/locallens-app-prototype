@@ -5,11 +5,12 @@ import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart' as ll;
 import '../models/walking_route.dart';
 import '../services/native_platform_service.dart';
+import '../services/offline_tile_provider.dart';
 import '../utils/polyline_decoder.dart';
 
 /// Adaptive Route Map: Renders GoogleMap when online, and automatically
-/// falls back to an offline OpenStreetMap canvas (via flutter_map) when
-/// connectivity is unavailable.
+/// falls back to a 100% disk-backed offline OpenStreetMap canvas (via flutter_map)
+/// when connectivity is unavailable — making ZERO network calls offline.
 class AdaptiveRouteMap extends StatefulWidget {
   final WalkingRoute route;
   final gmaps.CameraPosition initialCameraPosition;
@@ -21,6 +22,7 @@ class AdaptiveRouteMap extends StatefulWidget {
   final bool zoomControlsEnabled;
   final DeviceNetworkStatus networkStatus;
   final bool enableTileNetworkLoading;
+  final String? offlinePackId;
 
   const AdaptiveRouteMap({
     super.key,
@@ -34,7 +36,17 @@ class AdaptiveRouteMap extends StatefulWidget {
     this.zoomControlsEnabled = true,
     this.networkStatus = DeviceNetworkStatus.wifi,
     this.enableTileNetworkLoading = true,
+    this.offlinePackId,
   });
+
+  static String derivePackId(String neighborhood) {
+    final slug = neighborhood
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return 'pack_${slug.isEmpty ? 'neighborhood' : slug}_v1';
+  }
 
   @override
   State<AdaptiveRouteMap> createState() => _AdaptiveRouteMapState();
@@ -42,6 +54,36 @@ class AdaptiveRouteMap extends StatefulWidget {
 
 class _AdaptiveRouteMapState extends State<AdaptiveRouteMap> {
   bool get _isOffline => widget.networkStatus == DeviceNetworkStatus.offline;
+  String? _resolvedTilesDir;
+
+  String get _effectivePackId =>
+      widget.offlinePackId ?? AdaptiveRouteMap.derivePackId(widget.route.neighborhood);
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveTilesDir();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdaptiveRouteMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.offlinePackId != widget.offlinePackId ||
+        oldWidget.route.neighborhood != widget.route.neighborhood) {
+      _resolveTilesDir();
+    }
+  }
+
+  Future<void> _resolveTilesDir() async {
+    try {
+      final dir = await OfflineTileDownloader.resolveTilesDirectory(
+        _effectivePackId,
+      );
+      if (mounted) {
+        setState(() => _resolvedTilesDir = dir);
+      }
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,12 +125,13 @@ class _AdaptiveRouteMapState extends State<AdaptiveRouteMap> {
               maxZoom: 18.0,
             ),
             children: [
-              // OpenStreetMap tile layer (cached locally when pack is installed)
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.innovotribe.locallens',
-                fallbackUrl: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-              ),
+              // Strictly disk-backed offline OSM tile layer (ZERO network requests offline)
+              if (_resolvedTilesDir != null)
+                TileLayer(
+                  tileProvider: LocalDiskFlutterMapTileProvider(
+                    tilesBasePath: _resolvedTilesDir!,
+                  ),
+                ),
               // Decoded Offline Polyline Layer
               PolylineLayer(
                 polylines: [

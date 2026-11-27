@@ -13,7 +13,7 @@ import type {
 } from '../types/places.types';
 import { NormalizationService } from './normalization.service';
 import { QuotaHandlerService } from './quota-handler.service';
-import { SAMPLE_PLACES_FIXTURE } from '../fixtures/sample-places.fixture';
+import { getMapsFixtures } from '../fixture-registry';
 
 export class PlacesService {
   private config: MapsPlatformConfig;
@@ -138,9 +138,10 @@ export class PlacesService {
    */
   public async getPlaceDetails(placeId: string): Promise<NormalizedPlace> {
     const key = this.config.placesApiKey || this.config.apiKey;
+    const fixturePlaces = getMapsFixtures().places;
     if (!key) {
-      if (this.config.allowMockFallback) {
-        const found = SAMPLE_PLACES_FIXTURE.find((p) => p.id === placeId) || SAMPLE_PLACES_FIXTURE[0]!;
+      if (this.config.allowMockFallback && fixturePlaces.length > 0) {
+        const found = fixturePlaces.find((p) => p.id === placeId) || fixturePlaces[0]!;
         return NormalizationService.normalizePlace(found, true);
       }
       throw new Error('Google Maps API Key is not configured.');
@@ -180,8 +181,8 @@ export class PlacesService {
 
       return NormalizationService.normalizePlace(raw, false);
     } catch (err: any) {
-      if (this.config.allowMockFallback && err.status === 403) {
-        const found = SAMPLE_PLACES_FIXTURE.find((p) => p.id === placeId) || SAMPLE_PLACES_FIXTURE[0]!;
+      if (this.config.allowMockFallback && err.status === 403 && fixturePlaces.length > 0) {
+        const found = fixturePlaces.find((p) => p.id === placeId) || fixturePlaces[0]!;
         return NormalizationService.normalizePlace(found, true);
       }
       throw err;
@@ -189,13 +190,15 @@ export class PlacesService {
   }
 
   /**
-   * Helper returning filtered mock places clearly marked as mock data.
+   * Helper returning filtered test-registered places clearly marked as mock data.
    */
   private getMockPlaces(query: string): NormalizedPlace[] {
+    const fixturePlaces = getMapsFixtures().places;
+    if (fixturePlaces.length === 0) return [];
     const qLower = query.toLowerCase();
     const tokens = qLower.split(/\s+/).filter((t) => t.length > 2);
 
-    const scored = SAMPLE_PLACES_FIXTURE.map((p) => {
+    const scored = fixturePlaces.map((p) => {
       const name = (p.displayName?.text || '').toLowerCase();
       const cat = (p.primaryType || '').toLowerCase();
       const addr = (p.formattedAddress || '').toLowerCase();
@@ -212,7 +215,7 @@ export class PlacesService {
 
     const positive = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
     const candidates =
-      positive.length > 0 ? positive.map((s) => s.place) : SAMPLE_PLACES_FIXTURE;
+      positive.length > 0 ? positive.map((s) => s.place) : fixturePlaces;
 
     return candidates.map((p) => NormalizationService.normalizePlace(p, true));
   }

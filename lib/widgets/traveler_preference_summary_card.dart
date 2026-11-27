@@ -1,8 +1,7 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/traveler_providers.dart';
+import 'group_session_sheet.dart';
 import 'traveler_onboarding_sheet.dart';
 
 /// Interactive summary card displayed on the Discovery screen.
@@ -15,6 +14,7 @@ class TravelerPreferenceSummaryCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = ref.watch(travelerPreferencesProvider);
     final isGroupMode = ref.watch(isGroupModeProvider);
+    final activeGroup = ref.watch(activeGroupSessionProvider);
 
     return Card(
       elevation: 0,
@@ -40,7 +40,10 @@ class TravelerPreferenceSummaryCard extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 6,
+                        runSpacing: 4,
                         children: [
                           Text(
                             isGroupMode ? 'Group Taste Matching' : 'Solo Explorer',
@@ -49,7 +52,6 @@ class TravelerPreferenceSummaryCard extends ConsumerWidget {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(width: 6),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
@@ -57,9 +59,7 @@ class TravelerPreferenceSummaryCard extends ConsumerWidget {
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              isGroupMode
-                                  ? (Platform.environment.containsKey('FLUTTER_TEST') ? 'Domain 09' : 'Squad Match')
-                                  : (Platform.environment.containsKey('FLUTTER_TEST') ? 'Domain 02' : 'Curated Palate'),
+                              isGroupMode ? 'Squad Match' : 'Curated Palate',
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
@@ -79,14 +79,33 @@ class TravelerPreferenceSummaryCard extends ConsumerWidget {
                     ],
                   ),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => TravelerOnboardingSheet.show(context),
-                  icon: const Icon(Icons.tune, size: 15),
-                  label: const Text('Preferences', style: TextStyle(fontSize: 12)),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    visualDensity: VisualDensity.compact,
-                  ),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => GroupSessionSheet.show(context),
+                      icon: const Icon(Icons.groups, size: 15),
+                      label: Text(
+                        activeGroup != null
+                            ? '${activeGroup.sessionCode} (${activeGroup.members.length})'
+                            : 'Group Mode',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => TravelerOnboardingSheet.show(context),
+                      icon: const Icon(Icons.tune, size: 15),
+                      label: const Text('Preferences', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

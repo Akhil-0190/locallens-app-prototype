@@ -2,10 +2,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:locallens/models/app_failure.dart';
 import 'package:locallens/models/contribution.dart';
 import 'package:locallens/models/monetization.dart';
 import 'package:locallens/providers/monetization_providers.dart';
-import 'package:locallens/providers/spot_providers.dart';
 import 'package:locallens/screens/contributor_content_management_screen.dart';
 import 'package:locallens/screens/contributor_profile_screen.dart';
 import 'package:locallens/screens/partner_subscription_screen.dart';
@@ -16,6 +16,7 @@ import 'package:locallens/widgets/guidance_request_sheet.dart';
 import 'package:locallens/widgets/id_verification_modal_sheet.dart';
 import 'package:locallens/widgets/pass_checkout_sheet.dart';
 import 'package:locallens/widgets/tipping_modal_sheet.dart';
+import 'fakes/fake_services.dart';
 
 void main() {
   group('Task D6 — Monetization Models JSON Serialization & Contracts', () {
@@ -173,11 +174,11 @@ void main() {
     });
   });
 
-  group('Task D6 — MonetizationService Backend Lifecycle Operations', () {
+  group('Task D6 — MonetizationService Lifecycle Operations (Test Fake)', () {
     late MonetizationService service;
 
     setUp(() {
-      service = MonetizationService(isTestMode: true);
+      service = FakeMonetizationService();
     });
 
     test('getContributorAttribution returns correct profile', () async {
@@ -215,7 +216,7 @@ void main() {
       expect(result.tip.platformFeeInr, 5.0);
       expect(result.tip.contributorNetInr, 95.0);
       expect(result.tip.paymentMode, PaymentMode.sandbox);
-      expect(result.paymentIntent.gatewayReference, startsWith('sandbox_sim_upi_'));
+      expect(result.paymentIntent.gatewayReference, startsWith('order_test_'));
     });
 
     test('settleTip handles success and failure outcomes', () async {
@@ -244,7 +245,7 @@ void main() {
       );
       expect(purchase.pass.status, PassStatus.pending);
       expect(purchase.pass.tier, PassTier.neighborhoodAllAccess);
-      expect(purchase.paymentIntent.gatewayReference, startsWith('sandbox_sim_pass_'));
+      expect(purchase.paymentIntent.gatewayReference, startsWith('order_pass_'));
 
       // Confirm payment success -> ACTIVE
       final activated = await service.confirmPassPayment(
@@ -304,9 +305,7 @@ void main() {
 
     test('MonetizationNotifier state transitions', () async {
       final container = ProviderContainer(
-        overrides: [
-          isTestModeProvider.overrideWith((ref) => true),
-        ],
+        overrides: buildTestProviderOverrides(),
       );
       addTearDown(container.dispose);
 
@@ -335,7 +334,7 @@ void main() {
     late ContributionService contributionService;
 
     setUp(() {
-      contributionService = ContributionService(isTestMode: true);
+      contributionService = FakeContributionService();
     });
 
     test('listMyContributions returns user-authored contributions', () async {
@@ -347,17 +346,15 @@ void main() {
     });
 
     test('getContributionStatus returns details', () async {
-      final doc = await contributionService.getContributionStatus('contrib_sample_1');
-      expect(doc.contributionId, 'contrib_sample_1');
+      final doc = await contributionService.getContributionStatus('contrib_fixture_1');
+      expect(doc.contributionId, 'contrib_fixture_1');
     });
   });
 
   group('Task D6 — UI Screen & Modal Sheet Widget Tests', () {
     Widget buildTestApp(Widget child) {
       return ProviderScope(
-        overrides: [
-          isTestModeProvider.overrideWith((ref) => true),
-        ],
+        overrides: buildTestProviderOverrides(),
         child: MaterialApp(
           home: child,
         ),
@@ -379,7 +376,7 @@ void main() {
       expect(find.text('Partner Subscriptions'), findsOneWidget);
     });
 
-    testWidgets('TippingModalSheet displays sandbox mode notice & fee breakdown', (tester) async {
+    testWidgets('TippingModalSheet displays Razorpay UPI disclosure & fee breakdown', (tester) async {
       await tester.pumpWidget(buildTestApp(
         Scaffold(
           body: TippingModalSheet(
@@ -393,33 +390,30 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Tip Aravinth S'), findsOneWidget);
-      expect(find.textContaining('[Sandbox Mode: Simulated Payment'), findsOneWidget);
+      expect(find.textContaining('Direct Digital Tipping via Razorpay'), findsOneWidget);
       expect(find.text('₹50'), findsOneWidget);
       expect(find.text('₹100'), findsOneWidget);
       expect(find.text('₹200'), findsOneWidget);
       expect(find.textContaining('Minimum ₹10, maximum ₹5,000'), findsOneWidget);
     });
 
-    testWidgets('RoutePassScreen renders passes and Pricing: Pending Commercial Confirmation', (tester) async {
+    testWidgets('RoutePassScreen renders passes and live Razorpay tier pricing', (tester) async {
       await tester.pumpWidget(buildTestApp(const RoutePassScreen()));
       await tester.pumpAndSettle();
 
       expect(find.text('Walking Route Passes'), findsOneWidget);
-      expect(find.textContaining('[Sandbox Mode: Simulated Payment'), findsOneWidget);
+      expect(find.textContaining('Walking Route Passes • Audio Co-Pilot'), findsOneWidget);
       expect(find.text('My Passes'), findsOneWidget);
       expect(find.text('Available Pass Tiers'), findsOneWidget);
       expect(find.textContaining('SINGLE_ROUTE'), findsWidgets);
       expect(find.textContaining('NEIGHBORHOOD_ALL_ACCESS'), findsWidgets);
       expect(find.textContaining('ANNUAL_EXPLORER'), findsOneWidget);
-
-      // Verify that no hardcoded prices (₹99 / ₹299 / ₹999) appear in the catalog
-      expect(find.textContaining('Pricing: Pending Commercial Confirmation'), findsWidgets);
-      expect(find.text('₹99'), findsNothing);
-      expect(find.text('₹299'), findsNothing);
-      expect(find.text('₹999'), findsNothing);
+      expect(find.textContaining('₹99'), findsWidgets);
+      expect(find.textContaining('₹299'), findsWidgets);
+      expect(find.textContaining('₹999'), findsWidgets);
     });
 
-    testWidgets('PassCheckoutSheet displays pending pricing & initiates checkout', (tester) async {
+    testWidgets('PassCheckoutSheet displays pricing & activates checkout flow', (tester) async {
       await tester.pumpWidget(buildTestApp(
         Scaffold(
           body: PassCheckoutSheet(
@@ -431,22 +425,21 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('NEIGHBORHOOD_ALL_ACCESS'), findsOneWidget);
-      expect(find.textContaining('[Sandbox Mode: Simulated Payment'), findsOneWidget);
-      expect(find.text('Pricing: Pending Commercial Confirmation'), findsOneWidget);
-      expect(find.text('Initiate Pass Purchase (Sandbox)'), findsOneWidget);
+      expect(find.textContaining('Instant Route Pass Activation'), findsOneWidget);
+      expect(find.textContaining('₹299 INR via Razorpay'), findsOneWidget);
+      expect(find.text('Activate Pass Now'), findsOneWidget);
 
       // Tap initiate pass purchase
-      final initiateBtn = find.text('Initiate Pass Purchase (Sandbox)');
+      final initiateBtn = find.text('Activate Pass Now');
       await tester.ensureVisible(initiateBtn);
       await tester.tap(initiateBtn);
       await tester.pumpAndSettle();
 
       // Expect pass confirmation step
-      expect(find.text('Complete Sandbox Payment (Activate Pass)'), findsOneWidget);
-      expect(find.text('Simulate Payment Failure'), findsOneWidget);
+      expect(find.text('Confirm & Activate Pass'), findsOneWidget);
 
-      // Tap complete sandbox payment
-      final activateBtn = find.text('Complete Sandbox Payment (Activate Pass)');
+      // Tap confirm & activate pass
+      final activateBtn = find.text('Confirm & Activate Pass');
       await tester.ensureVisible(activateBtn);
       await tester.tap(activateBtn);
       await tester.pumpAndSettle();
@@ -455,7 +448,7 @@ void main() {
       expect(find.text('Done'), findsOneWidget);
     });
 
-    testWidgets('IdVerificationModalSheet displays local draft notice and saves draft', (tester) async {
+    testWidgets('IdVerificationModalSheet submits verification and saves draft', (tester) async {
       await tester.pumpWidget(buildTestApp(
         const Scaffold(
           body: IdVerificationModalSheet(),
@@ -475,7 +468,7 @@ void main() {
       expect(find.textContaining('Draft saved locally on device'), findsOneWidget);
     });
 
-    testWidgets('GuidanceRequestSheet displays dispatch pending notice and saves draft', (tester) async {
+    testWidgets('GuidanceRequestSheet displays live guidance banner and saves draft', (tester) async {
       await tester.pumpWidget(buildTestApp(
         const Scaffold(
           body: GuidanceRequestSheet(
@@ -498,33 +491,30 @@ void main() {
       expect(find.textContaining('Guidance request drafted locally!'), findsOneWidget);
     });
 
-    test('MonetizationService handles live Cloud Function dispatches gracefully with fallback', () async {
+    test('Production MonetizationService fails honestly with AppFailure when offline/uninitialized', () async {
       final service = MonetizationService();
 
-      // Test live requestLocalGuidance dispatch
-      final guidanceResult = await service.requestLocalGuidance(
-        offeringId: 'offering_malleshwaram_heritage_walk',
-        scheduledDateTime: '2026-11-25',
-        specialNotes: 'Need early morning guidance',
+      expect(
+        () => service.requestLocalGuidance(
+          offeringId: 'offering_malleshwaram_heritage_walk',
+          scheduledDateTime: '2026-11-25',
+          specialNotes: 'Need early morning guidance',
+        ),
+        throwsA(isA<AppFailure>()),
       );
-      // Since Firebase app isn't initialized in pure unit test, it returns local fallback gracefully
-      expect(guidanceResult['bookingId'], isNotNull);
-      expect(guidanceResult['status'], isIn(['PENDING_PAYMENT', 'pending_escrow', 'local_draft']));
 
-      // Test live registerPartnerSubscription dispatch
-      final partnerResult = await service.registerPartnerSubscription(
-        merchantPlaceId: 'place_ctr_malleshwaram_01',
-        businessName: 'CTR Heritage Cafe',
-        contactEmail: 'contact@ctr.in',
-        subscriptionPlan: 'VERIFIED_PARTNER',
+      expect(
+        () => service.registerPartnerSubscription(
+          merchantPlaceId: 'place_ctr_malleshwaram_01',
+          businessName: 'CTR Heritage Cafe',
+          contactEmail: 'contact@ctr.in',
+          subscriptionPlan: 'VERIFIED_PARTNER',
+        ),
+        throwsA(isA<AppFailure>()),
       );
-      expect(partnerResult['subscription'], isNotNull);
-      final sub = partnerResult['subscription'] as Map<String, dynamic>;
-      expect(sub['subscriptionId'], isNotNull);
-      expect(sub['status'], isIn(['PENDING_PAYMENT', 'pending_payment', 'local_draft', 'ACTIVE']));
     });
 
-    testWidgets('PartnerSubscriptionScreen displays local draft notice and accommodation tiers', (tester) async {
+    testWidgets('PartnerSubscriptionScreen displays live partner tiers', (tester) async {
       await tester.pumpWidget(buildTestApp(const PartnerSubscriptionScreen()));
       await tester.pumpAndSettle();
 
@@ -533,7 +523,7 @@ void main() {
       expect(find.text('Community Free'), findsOneWidget);
       expect(find.text('Verified Partner'), findsOneWidget);
       expect(find.text('Featured Heritage'), findsOneWidget);
-      expect(find.textContaining('Pricing: Pending Commercial Confirmation'), findsWidgets);
+      expect(find.text('Partner Tier Benefits'), findsWidgets);
     });
 
     testWidgets('ContributorContentManagementScreen renders tabs and contributions list', (tester) async {
@@ -546,11 +536,11 @@ void main() {
       expect(find.text('Approved & Live'), findsOneWidget);
       expect(find.text('Needs Attention'), findsOneWidget);
 
-      expect(find.text('ID: contrib_sample_1'), findsOneWidget);
+      expect(find.text('ID: contrib_fixture_1'), findsOneWidget);
       expect(find.text('VERIFIED & LIVE'), findsOneWidget);
-      expect(find.text('ID: contrib_sample_2'), findsOneWidget);
+      expect(find.text('ID: contrib_fixture_2'), findsOneWidget);
       expect(find.text('AI ANALYZED'), findsOneWidget);
-      expect(find.text('ID: contrib_sample_3'), findsOneWidget);
+      expect(find.text('ID: contrib_fixture_3'), findsOneWidget);
       expect(find.text('REJECTED'), findsOneWidget);
     });
   });

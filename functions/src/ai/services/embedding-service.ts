@@ -19,6 +19,110 @@ import { EmbeddingVector, EmbeddingVectorSchema } from '../schemas/matching-sche
 
 export const GEMINI_EMBEDDING_MODEL_ID = 'gemini-embedding-2';
 export const EMBEDDING_DIMENSIONS = 3072;
+export const FIRESTORE_VECTOR_DIMENSIONS = 1536;
+
+export interface MultimodalEmbeddingInput {
+  text?: string;
+  media?: Array<{
+    base64Data: string;
+    mimeType: string;
+  }>;
+  outputDimensionality?: number;
+  forceOffline?: boolean;
+  allowTestAdapterFallback?: boolean;
+}
+
+/**
+ * Generates a unified multimodal embedding (text + street photo + audio voice note)
+ * via Gemini Embedding 2 (`gemini-embedding-2`), supporting MRL dimensionality reduction
+ * (default 1,536 dims for Firestore native vector search compatibility).
+ */
+export async function generateMultimodalEmbedding(
+  input: MultimodalEmbeddingInput
+): Promise<EmbeddingVector> {
+  const targetDims = input.outputDimensionality ?? FIRESTORE_VECTOR_DIMENSIONS;
+  const sanitizedText = (input.text || '').trim();
+  const validMedia = (input.media || []).filter(
+    (m) => m && typeof m.base64Data === 'string' && m.base64Data.length > 0 && m.mimeType
+  );
+
+  if (!sanitizedText && validMedia.length === 0) {
+    throw new Error('At least text or media input is required for multimodal embedding.');
+  }
+
+  const config = getAIConfig();
+  const nowIso = new Date().toISOString();
+
+  if (input.forceOffline || !config.hasApiKey) {
+    const seedText =
+      sanitizedText || validMedia.map((m) => `${m.mimeType}:${m.base64Data.slice(0, 64)}`).join(' ');
+    const fullVec = generateOfflineTestVector(seedText);
+    const sliced = fullVec.slice(0, targetDims);
+    return EmbeddingVectorSchema.parse({
+      model: `${GEMINI_EMBEDDING_MODEL_ID}-test-adapter`,
+      dimensions: sliced.length,
+      values: sliced,
+      isOfflineMock: true,
+      generatedAt: nowIso,
+    });
+  }
+
+  const parts: Array<Record<string, unknown>> = [];
+  if (sanitizedText) {
+    parts.push({ text: sanitizedText });
+  }
+  for (const m of validMedia) {
+    parts.push({
+      inlineData: {
+        mimeType: m.mimeType,
+        data: m.base64Data,
+      },
+    });
+  }
+
+  try {
+    const rawValues = await executeWithRetry(
+      GEMINI_EMBEDDING_MODEL_ID,
+      async (client: GoogleGenAI) => {
+        const response: any = await client.models.embedContent({
+          model: GEMINI_EMBEDDING_MODEL_ID,
+          contents: [{ role: 'user', parts }],
+          config: {
+            outputDimensionality: targetDims,
+          },
+        });
+
+        const values = response.embedding?.values || response.embeddings?.[0]?.values;
+        if (!values || !Array.isArray(values) || values.length === 0) {
+          throw new Error('Gemini Embedding 2 returned empty multimodal vector array.');
+        }
+        return values as number[];
+      },
+      config.maxRetries
+    );
+
+    return EmbeddingVectorSchema.parse({
+      model: GEMINI_EMBEDDING_MODEL_ID,
+      dimensions: rawValues.length,
+      values: rawValues,
+      isOfflineMock: false,
+      generatedAt: nowIso,
+    });
+  } catch (error: any) {
+    if (input.allowTestAdapterFallback) {
+      const seedText = sanitizedText || 'multimodal_fallback';
+      const sliced = generateOfflineTestVector(seedText).slice(0, targetDims);
+      return EmbeddingVectorSchema.parse({
+        model: `${GEMINI_EMBEDDING_MODEL_ID}-fallback-adapter`,
+        dimensions: sliced.length,
+        values: sliced,
+        isOfflineMock: true,
+        generatedAt: nowIso,
+      });
+    }
+    throw error;
+  }
+}
 
 /**
  * In-memory LRU cache for embeddings to reduce API calls and latency.

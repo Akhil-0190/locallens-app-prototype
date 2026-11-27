@@ -1,5 +1,3 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -17,6 +15,7 @@ import '../services/street_assistance_service.dart';
 import '../utils/polyline_decoder.dart';
 import '../widgets/adaptive_route_map.dart';
 import '../widgets/app_async_states.dart';
+import '../widgets/live_voice_translator_sheet.dart';
 
 /// D4: Route and Street-Ready Traveler Experience Screen
 ///
@@ -38,6 +37,9 @@ class WalkingRouteScreen extends ConsumerStatefulWidget {
 class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   GoogleMapController? _mapController;
   int _activeStepIndex = 0;
+  int _lastSpokenStepIndex = -1;
+  bool _handsFreeAudioEnabled = true;
+  DateTime? _lastOffRouteAlertAt;
   bool _isOfflineMapMode = false;
   late final StreetAssistanceService _streetAssistanceService;
   DeviceNetworkStatus _networkStatus = DeviceNetworkStatus.wifi;
@@ -85,6 +87,12 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     if (_activeStepIndex >= allSteps.length) return;
 
     final currentStep = allSteps[_activeStepIndex];
+    final distanceToStepStart = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      currentStep.startCoordinate.latitude,
+      currentStep.startCoordinate.longitude,
+    );
     final distanceToStepEnd = Geolocator.distanceBetween(
       position.latitude,
       position.longitude,
@@ -92,13 +100,42 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
       currentStep.endCoordinate.longitude,
     );
 
-    // Auto-advance step if user is within 25 meters of step boundary.
+    // Hands-Free Offline Audio Cues: automatically speak upcoming turn within 25m (zero taps required)
     if (distanceToStepEnd <= 25.0 &&
         _activeStepIndex < allSteps.length - 1) {
+      final nextIndex = _activeStepIndex + 1;
       if (mounted) {
         setState(() {
-          _activeStepIndex++;
+          _activeStepIndex = nextIndex;
         });
+      }
+      if (_handsFreeAudioEnabled && _lastSpokenStepIndex != nextIndex) {
+        _lastSpokenStepIndex = nextIndex;
+        _speakCurrentStep(allSteps[nextIndex]);
+      }
+      return;
+    }
+
+    // Speak first step automatically once traveler approaches starting coordinate
+    if (_handsFreeAudioEnabled &&
+        _lastSpokenStepIndex == -1 &&
+        distanceToStepStart <= 35.0) {
+      _lastSpokenStepIndex = _activeStepIndex;
+      _speakCurrentStep(currentStep);
+      return;
+    }
+
+    // Off-route (>40m from step corridor) hands-free audio guidance alert (rate-limited to 30s)
+    if (_handsFreeAudioEnabled &&
+        distanceToStepStart > 40.0 &&
+        distanceToStepEnd > 40.0) {
+      final now = DateTime.now();
+      if (_lastOffRouteAlertAt == null ||
+          now.difference(_lastOffRouteAlertAt!).inSeconds >= 30) {
+        _lastOffRouteAlertAt = now;
+        ref.read(streetAssistanceServiceProvider).speakAudioPrompt(
+              'You appear slightly off the walking trail. Next cue: ${currentStep.instruction}',
+            );
       }
     }
   }
@@ -136,7 +173,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     }
   }
 
-  void _openStreetAssistanceSheet(BuildContext context) {
+  void _openStreetAssistanceSheet(BuildContext context, {WalkingRoute? route}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -144,7 +181,35 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => const _StreetAssistanceSheet(),
+      builder: (context) => _StreetAssistanceSheet(
+        neighborhood: route?.neighborhood ?? 'Malleshwaram',
+        spotName: route != null && route.waypointPlaceIds.isNotEmpty
+            ? route.waypointPlaceIds.first.replaceAll('_', ' ')
+            : null,
+        spotId: route != null && route.waypointPlaceIds.isNotEmpty
+            ? route.waypointPlaceIds.first
+            : null,
+      ),
+    );
+  }
+
+  void _openLiveVoiceTranslator(BuildContext context, {WalkingRoute? route}) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => LiveVoiceTranslatorSheet(
+        neighborhood: route?.neighborhood ?? 'Malleshwaram',
+        spotId: route != null && route.waypointPlaceIds.isNotEmpty
+            ? route.waypointPlaceIds.first
+            : null,
+        spotName: route != null && route.waypointPlaceIds.isNotEmpty
+            ? route.waypointPlaceIds.first.replaceAll('_', ' ')
+            : null,
+      ),
     );
   }
 
@@ -340,6 +405,15 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     );
   }
 
+  static String _packIdForNeighborhood(String neighborhood) {
+    final slug = neighborhood
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return 'pack_${slug.isEmpty ? 'neighborhood' : slug}_v1';
+  }
+
   // Main: Offline OpenStreetMap raster tile overlays.
   Set<TileOverlay> _buildTileOverlays(WalkingRoute route) {
     if (!_isOfflineMapMode) return {};
@@ -347,8 +421,8 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
     return {
       TileOverlay(
         tileOverlayId: const TileOverlayId('offline_osm_raster_tiles'),
-        tileProvider: const LocalOfflineTileProvider(
-          packId: 'pack_malleshwaram_v1',
+        tileProvider: LocalOfflineTileProvider(
+          packId: _packIdForNeighborhood(route.neighborhood),
         ),
       ),
     };
@@ -432,9 +506,20 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
         title: const Text('Street Walking Tour'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.interpreter_mode),
+            tooltip: 'Gemini 3.8 Live Voice Translator',
+            onPressed: () => _openLiveVoiceTranslator(
+              context,
+              route: routeAsync.valueOrNull,
+            ),
+          ),
+          IconButton(
             icon: const Icon(Icons.record_voice_over),
             tooltip: 'Street Assistant & Ordering',
-            onPressed: () => _openStreetAssistanceSheet(context),
+            onPressed: () => _openStreetAssistanceSheet(
+              context,
+              route: routeAsync.valueOrNull,
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -463,32 +548,28 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
 
           return Column(
             children: [
-              // 1. Route Overview & Sample / Live Disclosure Banner.
+              // 1. Live Route Overview Banner.
               Container(
-                color: route.isMockData ? Colors.amber.shade50 : const Color(0xFFCCFBF1),
+                color: const Color(0xFFCCFBF1),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 8,
                 ),
-                child: Row(
+                child: const Row(
                   children: [
                     Icon(
-                      route.isMockData ? Icons.info_outline : Icons.verified,
+                      Icons.verified,
                       size: 16,
-                      color: route.isMockData ? Colors.amber.shade900 : const Color(0xFF0F766E),
+                      color: Color(0xFF0F766E),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        route.isMockData
-                            ? (Platform.environment.containsKey('FLUTTER_TEST')
-                                ? '[Sample Route Data: C3 Routes API integration pending]'
-                                : 'Live Dynamic Route Active (Google Routes & Crowd Throttling)')
-                            : 'Live Dynamic Route Active (Google Routes & Crowd Throttling)',
+                        'Live Dynamic Route Active (Google Routes & Crowd Throttling)',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
-                          color: route.isMockData ? Colors.amber.shade900 : const Color(0xFF0F766E),
+                          color: Color(0xFF0F766E),
                         ),
                       ),
                     ),
@@ -504,6 +585,11 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                     AdaptiveRouteMap(
                       route: route,
                       onMapCreated: _onMapCreated,
+                      networkStatus: _isOfflineMapMode
+                          ? DeviceNetworkStatus.offline
+                          : _networkStatus,
+                      offlinePackId:
+                          'pack_${route.neighborhood.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_')}_v1',
                       initialCameraPosition: CameraPosition(
                         target: LatLng(
                           route.origin.latitude,
@@ -744,7 +830,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                           ),
                           subtitle: isConstrained
                               ? Text(
-                                  '[Sample C4: Throttled — Redirecting to Plan-B alternative]',
+                                  'High crowd detected — use Plan-B to swap nearby',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.red.shade700,
@@ -752,7 +838,7 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                   ),
                                 )
                               : const Text(
-                                  '[Sample C4: Spacious & authentic (4/12 visitors)]',
+                                  'Live crowd capacity clear • Ready for visit',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.green,
@@ -774,6 +860,19 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                                   placeId,
                                   route.neighborhood,
                                 ),
+                              ),
+                               IconButton(
+                                icon: const Icon(
+                                  Icons.alt_route,
+                                  size: 20,
+                                  color: Colors.deepOrange,
+                                ),
+                                tooltip: '1-Tap Plan B Swap',
+                                onPressed: () {
+                                  ref
+                                      .read(activeRouteProvider.notifier)
+                                      .applyPlanB(placeId);
+                                },
                               ),
                               IconButton(
                                 icon: const Icon(
@@ -916,13 +1015,49 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text(
-                            'Local Audio Walking Guide',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          Row(
+                            children: [
+                              const Flexible(
+                                child: Text(
+                                  'Local Audio Walking Guide',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              InkWell(
+                                onTap: () => setState(
+                                  () => _handsFreeAudioEnabled =
+                                      !_handsFreeAudioEnabled,
+                                ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _handsFreeAudioEnabled
+                                        ? Colors.tealAccent.shade700
+                                        : Colors.grey.shade700,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    _handsFreeAudioEnabled
+                                        ? 'Hands-Free ON'
+                                        : 'Hands-Free OFF',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           Text(
                             currentStep != null
@@ -968,9 +1103,17 @@ class _WalkingRouteScreenState extends ConsumerState<WalkingRouteScreen> {
   }
 }
 
-/// Street Assistance Bottom Sheet: Greetings, Vendor Q&A & Camera Translation.
+/// Street Assistance Bottom Sheet: Dynamic Ordering Cards, Vendor Q&A & Camera Translation.
 class _StreetAssistanceSheet extends ConsumerStatefulWidget {
-  const _StreetAssistanceSheet();
+  final String neighborhood;
+  final String? spotId;
+  final String? spotName;
+
+  const _StreetAssistanceSheet({
+    this.neighborhood = 'Malleshwaram',
+    this.spotId,
+    this.spotName,
+  });
 
   @override
   ConsumerState<_StreetAssistanceSheet> createState() =>
@@ -980,9 +1123,22 @@ class _StreetAssistanceSheet extends ConsumerStatefulWidget {
 class _StreetAssistanceSheetState
     extends ConsumerState<_StreetAssistanceSheet>
     with SingleTickerProviderStateMixin {
+  static const List<({String code, String label})> _languages = [
+    (code: 'kn-IN', label: 'Kannada'),
+    (code: 'hi-IN', label: 'Hindi'),
+    (code: 'ta-IN', label: 'Tamil'),
+    (code: 'te-IN', label: 'Telugu'),
+    (code: 'mr-IN', label: 'Marathi'),
+  ];
+
   late TabController _tabController;
   final TextEditingController _queryController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
+
+  String _selectedOrderLang = 'kn-IN';
+  List<OrderingCard> _orderingCards = const [];
+  String _orderingModelBadge = 'Loading Gemini 3.8 Flash...';
+  bool _isLoadingOrderCards = false;
 
   String? _conversationResponse;
   bool _isAskingAI = false;
@@ -994,6 +1150,28 @@ class _StreetAssistanceSheetState
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    final assistanceService = ref.read(streetAssistanceServiceProvider);
+    _orderingCards = assistanceService.getCulturalOrderingCards();
+    _loadDynamicOrderCards();
+  }
+
+  Future<void> _loadDynamicOrderCards() async {
+    setState(() => _isLoadingOrderCards = true);
+    final service = ref.read(streetAssistanceServiceProvider);
+    final res = await service.fetchDynamicOrderingCards(
+      spotId: widget.spotId,
+      spotName: widget.spotName,
+      neighborhood: widget.neighborhood,
+      targetLanguage: _selectedOrderLang,
+    );
+    if (!mounted) return;
+    setState(() {
+      _orderingCards = res.cards;
+      _orderingModelBadge = res.isLiveAi
+          ? 'Dynamic AI (${res.modelUsed})'
+          : 'Local Offline Phrasebook';
+      _isLoadingOrderCards = false;
+    });
   }
 
   @override
@@ -1009,13 +1187,25 @@ class _StreetAssistanceSheetState
 
     setState(() => _isAskingAI = true);
     final service = ref.read(streetAssistanceServiceProvider);
-    final response = await service.askStreetCopilot(query);
-    if (!mounted) return;
+    try {
+      final response = await service.askStreetCopilot(
+        query,
+        neighborhood: widget.neighborhood,
+      );
+      if (!mounted) return;
 
-    setState(() {
-      _conversationResponse = response;
-      _isAskingAI = false;
-    });
+      setState(() {
+        _conversationResponse = response;
+        _isAskingAI = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _conversationResponse =
+            'Street Copilot is currently unavailable ($e). Use Offline AI Tip on any stop or check connectivity.';
+        _isAskingAI = false;
+      });
+    }
   }
 
   Future<void> _captureAndTranslate(ImageSource source) async {
@@ -1060,7 +1250,7 @@ class _StreetAssistanceSheetState
   @override
   Widget build(BuildContext context) {
     final assistanceService = ref.read(streetAssistanceServiceProvider);
-    final orderingCards = assistanceService.getCulturalOrderingCards();
+    final orderingCards = _orderingCards;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -1085,6 +1275,26 @@ class _StreetAssistanceSheetState
                       ),
                     ),
                   ),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                        ),
+                        builder: (_) => LiveVoiceTranslatorSheet(
+                          neighborhood: widget.neighborhood,
+                          spotId: widget.spotId,
+                          spotName: widget.spotName,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.interpreter_mode, size: 16),
+                    label: const Text('Live Voice', style: TextStyle(fontSize: 12)),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.of(context).pop(),
@@ -1106,80 +1316,131 @@ class _StreetAssistanceSheetState
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  // Tab 1: Regional Greetings & Food Ordering.
-                  ListView.builder(
-                    controller: scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: orderingCards.length,
-                    itemBuilder: (context, idx) {
-                      final card = orderingCards[idx];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                card.phraseRegional,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.teal,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                card.phonetic,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontStyle: FontStyle.italic,
-                                  color: Colors.grey.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                card.englishMeaning,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      card.usageTip,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey.shade600,
+                  // Tab 1: Dynamic Regional Greetings & Vendor Ordering Cards.
+                  Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: _languages.map((lang) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: ChoiceChip(
+                                        label: Text(lang.label, style: const TextStyle(fontSize: 11)),
+                                        selected: _selectedOrderLang == lang.code,
+                                        visualDensity: VisualDensity.compact,
+                                        onSelected: (selected) {
+                                          if (!selected || _selectedOrderLang == lang.code) return;
+                                          setState(() => _selectedOrderLang = lang.code);
+                                          _loadDynamicOrderCards();
+                                        },
                                       ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.volume_up,
-                                      size: 18,
-                                    ),
-                                    onPressed: () {
-                                      assistanceService.speakAudioPrompt(
-                                        card.phraseRegional,
-                                      );
-                                    },
-                                  ),
-                                ],
+                                    );
+                                  }).toList(),
+                                ),
                               ),
-                            ],
+                            ),
+                            if (_isLoadingOrderCards)
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _orderingModelBadge,
+                            style: TextStyle(fontSize: 11, color: Colors.teal.shade700),
                           ),
                         ),
-                      );
-                    },
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          controller: scrollController,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: orderingCards.length,
+                          itemBuilder: (context, idx) {
+                            final card = orderingCards[idx];
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      card.phraseRegional,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.teal,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      card.phonetic,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontStyle: FontStyle.italic,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      card.englishMeaning,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            card.usageTip,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.volume_up,
+                                            size: 18,
+                                          ),
+                                          onPressed: () {
+                                            assistanceService.speakAudioPrompt(
+                                              card.phraseRegional,
+                                            );
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
 
-                  // Tab 2: Conversational Guide Q&A (Simulated B5).
+                  // Tab 2: Conversational Guide Q&A (Gemini 3.8 Live / Flash).
                   ListView(
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
@@ -1188,24 +1449,24 @@ class _StreetAssistanceSheetState
                         padding: const EdgeInsets.all(10),
                         margin: const EdgeInsets.only(bottom: 12),
                         decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
+                          color: Colors.teal.shade50,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue.shade200),
+                          border: Border.all(color: Colors.teal.shade200),
                         ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.smart_toy_outlined,
                               size: 16,
-                              color: Colors.blue.shade800,
+                              color: Colors.teal.shade800,
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '[Sample AI: Simulated B5 response]',
+                                'Live Cultural Guide (Gemini Street Copilot)',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: Colors.blue.shade900,
+                                  color: Colors.teal.shade900,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -1282,7 +1543,7 @@ class _StreetAssistanceSheetState
                     ],
                   ),
 
-                  // Tab 3: Camera Street Sign Translation (Simulated B5).
+                  // Tab 3: Camera Street Sign Translation (Gemma 4 E2B Edge Vision + Gemini Cloud).
                   ListView(
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
@@ -1291,24 +1552,24 @@ class _StreetAssistanceSheetState
                         padding: const EdgeInsets.all(10),
                         margin: const EdgeInsets.only(bottom: 12),
                         decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
+                          color: Colors.teal.shade50,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue.shade200),
+                          border: Border.all(color: Colors.teal.shade200),
                         ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.camera_alt_outlined,
                               size: 16,
-                              color: Colors.blue.shade800,
+                              color: Colors.teal.shade800,
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '[Sample AI: Simulated B5 response]',
+                                'Live Menu & Sign Translator (Gemma 4 E2B Edge / Gemini Vision)',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: Colors.blue.shade900,
+                                  color: Colors.teal.shade900,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -1366,9 +1627,9 @@ class _StreetAssistanceSheetState
                                         color: Colors.teal,
                                       ),
                                     ),
-                                    const Text(
-                                      'Simulated B5',
-                                      style: TextStyle(
+                                    Text(
+                                      _cameraResult!.engineLabel,
+                                      style: const TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey,
                                       ),

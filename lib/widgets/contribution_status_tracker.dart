@@ -1,5 +1,6 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/contribution.dart';
 import '../models/spot_card.dart';
 import 'spot_card_tile.dart';
@@ -71,7 +72,15 @@ class ContributionStatusTracker extends StatelessWidget {
                   statusText: '${spot.currentVisitors}/${spot.hourlyLimit}',
                   actions: [
                     FilledButton.icon(
-                      onPressed: () {},
+                      onPressed: () async {
+                        final link = spot.mapsLink.isNotEmpty
+                            ? spot.mapsLink
+                            : 'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent('${spot.spotName} ${spot.formattedAddress}')}';
+                        final uri = Uri.tryParse(link);
+                        if (uri != null) {
+                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        }
+                      },
                       icon: const Icon(Icons.directions, size: 16),
                       label: const Text('Open in Maps'),
                     ),
@@ -433,12 +442,12 @@ class ContributionStatusTracker extends StatelessWidget {
             ),
             _buildStepItem(
               stepNumber: 3,
-              title: 'Google Maps Place Grounding (C1/C2)',
+              title: 'Google Maps Place Grounding',
               subtitle: isMapsComplete
-                  ? 'Resolved placeId and neighborhood boundaries.'
-                  : '[Downstream C2 Integration Pending] Grounding service exists in C2; trigger connection pending.',
+                  ? 'Resolved Google Place ID, opening hours, and review sentiment.'
+                  : 'Queued for Google Maps Platform grounding after AI extraction completes.',
               isComplete: isMapsComplete,
-              isInProgress: false,
+              isInProgress: status == ContributionStatus.aiAnalyzed,
               isFailed: isFailed,
               isPendingExternal: !isMapsComplete,
             ),

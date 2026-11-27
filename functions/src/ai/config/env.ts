@@ -19,8 +19,8 @@ export interface AIEnvironmentConfig {
 
 export function getAIConfig(): AIEnvironmentConfig {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || '';
-  const defaultModel = process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.5-flash-lite';
-  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite';
+  const defaultModel = process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.8-flash';
+  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite';
   const embeddingModel = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
   const requestTimeoutMs = parseInt(process.env.GEMINI_REQUEST_TIMEOUT_MS || '30000', 10);
   const maxRetries = parseInt(process.env.GEMINI_MAX_RETRIES || '3', 10);

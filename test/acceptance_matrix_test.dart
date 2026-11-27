@@ -22,11 +22,9 @@ import 'package:locallens/screens/partner_subscription_screen.dart';
 import 'package:locallens/screens/pocket_guide_screen.dart';
 import 'package:locallens/screens/route_pass_screen.dart';
 import 'package:locallens/screens/walking_route_screen.dart';
-import 'package:locallens/services/monetization_service.dart';
-import 'package:locallens/services/native_platform_service.dart';
 import 'package:locallens/services/offline_pack_service.dart';
-import 'package:locallens/services/route_service.dart';
 import 'package:locallens/services/street_assistance_service.dart';
+import 'fakes/fake_services.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +39,7 @@ void main() {
 
       await tester.pumpWidget(
         ProviderScope(
+          overrides: buildTestProviderOverrides(),
           child: MaterialApp.router(
             routerConfig: appRouter,
           ),
@@ -159,9 +158,9 @@ void main() {
     // -------------------------------------------------------------------------
     // TEST 6: Walking Routes & Map Metrics
     // -------------------------------------------------------------------------
-    test('Test 6: RouteService returns CanonicalRouteDocument conforming to Domain 08',
+    test('Test 6: RouteService contract conforms to Domain 08',
         () async {
-      final service = RouteService();
+      final service = FakeRouteService();
       final route = await service.getPersonalizedRoute(
         placeIds: [
           'place_ctr_malleshwaram_01',
@@ -185,7 +184,7 @@ void main() {
     // -------------------------------------------------------------------------
     test('Test 7: Plan-B Rerouting preserves unaffected stops and substitutes capacity-saturated venues',
         () async {
-      final service = RouteService();
+      final service = FakeRouteService();
       final original = await service.getPersonalizedRoute(
         placeIds: [
           'place_ctr_malleshwaram_01',
@@ -239,7 +238,7 @@ void main() {
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(() => db.close());
 
-      final packService = OfflinePackService(db: db);
+      final packService = OfflinePackService(db: db, enableTileDownloads: false);
 
       const spot = OfflineSpotItem(
         id: 'spot_verified_dose',
@@ -298,7 +297,7 @@ void main() {
     // -------------------------------------------------------------------------
     test('Test 10: NativePlatformService honest local inference handling',
         () async {
-      final nativeService = NativePlatformService(isTestMode: true);
+      final nativeService = FakeNativePlatformService();
 
       // Check AICore availability
       final aicore = await nativeService.checkAICoreAvailability();
@@ -324,7 +323,7 @@ void main() {
     // -------------------------------------------------------------------------
     test('Test 11: MonetizationService tipping, route pass purchase & activation',
         () async {
-      final service = MonetizationService(isTestMode: true);
+      final service = FakeMonetizationService();
 
       // Tipping
       final tipResult = await service.initiateTip(

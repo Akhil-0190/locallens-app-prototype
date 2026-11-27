@@ -3,11 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/offline_pack.dart';
 import '../providers/spot_providers.dart';
 import '../services/native_platform_service.dart';
+import '../services/offline_model_manager.dart';
 import '../services/offline_pack_service.dart';
 
 final nativePlatformServiceProvider = Provider<NativePlatformService>((ref) {
-  final isTest = ref.watch(isTestModeProvider);
-  return NativePlatformService(isTestMode: isTest);
+  return NativePlatformService();
 });
 
 final offlinePackServiceProvider = Provider<OfflinePackService>((ref) {
@@ -61,3 +61,15 @@ final nativeAiStatusProvider =
 /// Map of packId -> download progress percentage (0.0 to 1.0)
 final packDownloadProgressProvider =
     StateProvider<Map<String, double>>((ref) => {});
+
+/// Real Android RAM, storage, GPU/CPU delegate, and Gemma 4 E2B LiteRT-LM status
+final edgeDeviceSupportProvider =
+    FutureProvider.autoDispose<EdgeDeviceSupport>((ref) async {
+  final nativeService = ref.watch(nativePlatformServiceProvider);
+  return nativeService.checkEdgeDeviceSupport();
+});
+
+final offlineModelManagerProvider = Provider<OfflineModelManager>((ref) {
+  final nativeService = ref.watch(nativePlatformServiceProvider);
+  return OfflineModelManager(platformService: nativeService);
+});

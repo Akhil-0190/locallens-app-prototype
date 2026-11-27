@@ -35,6 +35,7 @@ import {
   CameraVisualTranslationResponse,
   CameraVisualTranslationResponseSchema,
   CulturalOrderingCard,
+  CulturalOrderingCardSchema,
   EtiquetteGuidanceRequest,
   EtiquetteGuidanceResponse,
   EtiquetteGuidanceResponseSchema,
@@ -81,9 +82,18 @@ export async function initializeLiveSession(
   const targetModel = 'gemini-3.8-live';
 
   const neighborhood = request.neighborhoodHint || 'Bengaluru Neighborhoods';
-  const systemInstructionsApplied = `You are the Neighborhood Guide Street Assistant for ${neighborhood}.
+  const sourceLang = request.sourceLanguage || 'en-IN';
+  const targetLang = request.targetLanguage || request.preferredLanguage || 'kn-IN';
+  const spotContext = request.spotName ? ` at ${request.spotName}` : '';
+
+  const systemInstructionsApplied =
+    request.mode === 'BIDI_VOICE_TRANSLATION'
+      ? `You are a real-time bidirectional street voice interpreter in ${neighborhood}${spotContext}.
+Listen carefully to the speaker. If they speak ${sourceLang}, immediately speak a natural, culturally respectful translation in ${targetLang}. If they speak ${targetLang}, immediately speak a natural translation in ${sourceLang}.
+Preserve exact prices, quantities, spice levels, and dietary cues. Speak ONLY the translation without meta commentary.`
+      : `You are the Neighborhood Guide Street Assistant for ${neighborhood}${spotContext}.
 Speak naturally, warmly, and concisely. Keep spoken replies under 3 sentences for walking travelers.
-Support regional languages (${request.preferredLanguage}) and English interchangeably.`;
+Support regional languages (${targetLang}) and English (${sourceLang}) interchangeably.`;
 
   const config = getAIConfig();
   let ephemeralToken: string | null = null;
@@ -233,36 +243,10 @@ Provide an authentic, culturally respectful, and concise walking-guide answer. R
       modelUsed: modelId,
       respondedAt,
     });
-  } catch {
-    // Offline / Fallback Adapter using authentic neighborhood knowledge base
-    const queryLower = request.query.toLowerCase();
-    let answer = 'You are exploring the vibrant streets of Malleshwaram. Traditional tiffin stalls, fresh flower markets, and heritage temples are all within walking distance.';
-    let culturalContext = 'Malleshwaram was planned in the 1890s and retains its traditional grid layout named after tree avenues (Sampige and Margosa roads).';
-    const suggestedFollowUps = ['Where can I find traditional filter coffee nearby?', 'What is the etiquette for entering temples here?'];
-
-    if (queryLower.includes('coffee') || queryLower.includes('ctr') || queryLower.includes('benne') || queryLower.includes('dosa')) {
-      answer = 'Shri Sagar (CTR) has been serving crisp benne dose since the 1920s. Pay at the front counter first, collect your paper token, and take a seat in the heritage hall.';
-      culturalContext = 'Benne dose in Bengaluru is uniquely crisp on the exterior and fluffy inside, served with coconut chutney and spiced potato saagu.';
-      suggestedFollowUps.indexOf('Is cash accepted?') === -1 && suggestedFollowUps.push('Is cash accepted?');
-    } else if (queryLower.includes('temple') || queryLower.includes('dress') || queryLower.includes('shoes') || queryLower.includes('footwear')) {
-      answer = 'At Kadu Malleshwara Temple, footwear must be removed at the courtyard gateway before entering. Modest attire covering shoulders and knees is customary.';
-      culturalContext = 'The temple dates back to the 17th century Maratha rule and gives Malleshwaram its name.';
-      suggestedFollowUps.push('Are photos allowed inside?');
-    } else if (queryLower.includes('rain') || queryLower.includes('water') || queryLower.includes('wet') || queryLower.includes('alley')) {
-      answer = 'During heavy downpours, 8th Cross market lanes can be crowded and slick. Use Margosa Road for wide, paved, and covered pedestrian walkways.';
-      culturalContext = 'Street vendors often place tarps along 8th cross during sudden monsoon bursts.';
-    }
-
-    return StreetCopilotResponseSchema.parse({
-      answer: `[Street Copilot] ${answer}`,
-      localLanguageSpoken: 'Kannada / English',
-      culturalContext,
-      suggestedFollowUps,
-      deliveryMode: 'OFFLINE_MOCK_ADAPTER',
-      confidenceScore: 0.88,
-      modelUsed: 'offline-cultural-adapter',
-      respondedAt,
-    });
+  } catch (err: any) {
+    throw new Error(
+      `Street Copilot AI service is unavailable (${err?.message || 'Gemini request failed'}). Use on-device AI when offline or retry.`
+    );
   }
 }
 
@@ -340,64 +324,10 @@ Return strict JSON:
       modelUsed: modelId,
       translatedAt,
     });
-  } catch {
-    // Offline / Fallback translation handler with accurate cultural phrase mapping
-    const text = request.sourceText.trim();
-    let translated = text;
-    let phonetic: string | undefined;
-    let detectedLang = request.sourceLanguage === 'auto' ? 'kn-IN' : request.sourceLanguage;
-    const quantities: string[] = [];
-    const prices: string[] = [];
-    const dietary: string[] = [];
-
-    // Detect numbers/quantities
-    const priceMatch = text.match(/(\d+)\s*(?:rupees|rs|r|bucks)?/i);
-    if (priceMatch) {
-      prices.push(`₹${priceMatch[1]}`);
-    }
-
-    if (text.toLowerCase().includes('coffee') || text.includes('ಕಾಫಿ')) {
-      if (request.targetLanguage.startsWith('en')) {
-        translated = 'One cup of hot filter coffee, please.';
-        detectedLang = 'kn-IN';
-        quantities.push('1 cup');
-      } else {
-        translated = 'ಒಂದು ಕಪ್ ಬಿಸಿ ಫಿಲ್ಟರ್ ಕಾಫಿ ಕೊಡಿ';
-        phonetic = 'Ondu cup bisi filter coffee kodi';
-        quantities.push('1 cup');
-      }
-    } else if (text.toLowerCase().includes('how much') || text.includes('ಎಷ್ಟು')) {
-      if (request.targetLanguage.startsWith('en')) {
-        translated = 'How much does this cost?';
-        detectedLang = 'kn-IN';
-      } else {
-        translated = 'ಇದು ಎಷ್ಟು ಆಯ್ತು?';
-        phonetic = 'Idu eshtu aaythu?';
-      }
-    } else if (text.toLowerCase().includes('less spicy') || text.toLowerCase().includes('khar')) {
-      translated = 'ಖಾರ ಕಡಿಮೆ ಮಾಡಿ (Make it less spicy)';
-      phonetic = 'Khaara kadime maadi';
-      dietary.push('Low spice requested');
-    } else {
-      translated = `[Translation] ${text}`;
-    }
-
-    return TranslationResponseSchema.parse({
-      detectedSourceLanguage: detectedLang,
-      translatedText: translated,
-      phoneticTranscription: phonetic,
-      preservedPracticalDetails: {
-        extractedQuantities: quantities,
-        extractedPrices: prices,
-        dietaryCuesDetected: dietary,
-      },
-      isLiteralTranslation: true,
-      culturalNuanceNote: 'Translated via offline street dialogue phrase dictionary.',
-      deliveryMode: 'OFFLINE_MOCK_ADAPTER',
-      confidenceScore: 0.85,
-      modelUsed: 'offline-translation-engine',
-      translatedAt,
-    });
+  } catch (err: any) {
+    throw new Error(
+      `Translation service is unavailable (${err?.message || 'Gemini translation failed'}). Retry or switch to on-device translation.`
+    );
   }
 }
 
@@ -471,10 +401,178 @@ const CURATED_CULTURAL_CARDS: CulturalOrderingCard[] = [
   },
 ];
 
+const LANGUAGE_LABELS: Record<string, string> = {
+  'kn-IN': 'Kannada (ಕನ್ನಡ)',
+  'ta-IN': 'Tamil (தமிழ்)',
+  'hi-IN': 'Hindi (हिन्दी)',
+  'te-IN': 'Telugu (తెలుగు)',
+  'mr-IN': 'Marathi (मराठी)',
+  'bn-IN': 'Bengali (বাংলা)',
+  'en-IN': 'Indian English',
+  en: 'English',
+  auto: 'Kannada (ಕನ್ನಡ)',
+};
+
 export async function getOrderingPhrases(
   request: Partial<OrderingAssistanceRequest> = {}
 ): Promise<OrderingAssistanceResponse> {
   const generatedAt = new Date().toISOString();
+  const neighborhood = request.neighborhood || 'Malleshwaram';
+  const targetLanguage = request.targetLanguage || request.language || 'kn-IN';
+  const config = getAIConfig();
+
+  const wantsDynamicGeneration =
+    Boolean(request.spotName) ||
+    Boolean(request.spotId) ||
+    (Array.isArray(request.menuHints) && request.menuHints.length > 0) ||
+    (Array.isArray(request.dietaryRestrictions) && request.dietaryRestrictions.length > 0) ||
+    Boolean(request.dietaryPreference) ||
+    targetLanguage !== 'kn-IN';
+
+  if (config.hasApiKey && config.apiKey && wantsDynamicGeneration) {
+    const cacheSeed = JSON.stringify({
+      spotId: request.spotId || '',
+      spotName: request.spotName || '',
+      neighborhood,
+      targetVendorType: request.targetVendorType || 'GENERAL',
+      targetLanguage,
+      category: request.category || '',
+      dietaryPreference: request.dietaryPreference || '',
+      dietaryRestrictions: request.dietaryRestrictions || [],
+      menuHints: request.menuHints || [],
+    });
+    const cacheKey = `${targetLanguage}_${createHash('sha256').update(cacheSeed).digest('hex').slice(0, 12)}`;
+
+    // 1. Check Firestore cache if spotId is present
+    if (request.spotId && request.allowCached !== false) {
+      try {
+        const cacheSnap = await db
+          .collection('places')
+          .doc(request.spotId)
+          .collection('order_cards')
+          .doc(cacheKey)
+          .get();
+        if (cacheSnap.exists) {
+          const cached = cacheSnap.data() as Record<string, any>;
+          if (Array.isArray(cached.cards) && cached.cards.length > 0) {
+            const validatedCards = cached.cards
+              .map((c: unknown) => CulturalOrderingCardSchema.safeParse(c))
+              .filter((r) => r.success)
+              .map((r) => (r as { success: true; data: CulturalOrderingCard }).data);
+            if (validatedCards.length > 0) {
+              return OrderingAssistanceResponseSchema.parse({
+                cards: validatedCards,
+                neighborhood,
+                targetLanguage,
+                deliveryMode: 'REQUEST_RESPONSE_FALLBACK',
+                modelUsed: String(cached.modelUsed || `${config.defaultModel} (cached)`),
+                generatedAt: String(cached.generatedAt || generatedAt),
+              });
+            }
+          }
+        }
+      } catch {
+        // Cache read failure is non-fatal; proceed to fresh Gemini generation
+      }
+    }
+
+    // 2. Generate dynamic vendor order cards via Gemini 3.8 Flash
+    try {
+      const modelId = config.defaultModel;
+      const langLabel = LANGUAGE_LABELS[targetLanguage] || targetLanguage;
+      const dietaryList = [
+        ...(request.dietaryRestrictions || []),
+        ...(request.dietaryPreference ? [request.dietaryPreference] : []),
+      ];
+
+      const rawText = await executeWithRetry(
+        modelId,
+        async (client: GoogleGenAI) => {
+          const prompt = `Generate 5 authentic, practical, culturally respectful street-vendor ordering phrase cards for a traveler visiting:
+- Spot Name: ${request.spotName || `Local ${request.targetVendorType || 'heritage stall'}`}
+- Neighborhood: ${neighborhood}
+- Vendor Type: ${request.targetVendorType || 'GENERAL'}
+- Target Local Language: ${langLabel} (${targetLanguage})
+- Menu / Specialty Hints: ${(request.menuHints || []).join(', ') || 'Local signature specialties'}
+- Dietary Needs: ${dietaryList.join(', ') || 'None specified'}
+${request.category ? `- Required Category Focus: ${request.category}` : '- Include a balanced mix of GREETING, FOOD_ORDER, DIETARY, PRICING, and GRATITUDE'}
+
+Return strict JSON matching:
+{
+  "cards": [
+    {
+      "phraseRegional": "Phrase in authentic ${langLabel} script",
+      "phonetic": "Easy-to-pronounce Romanized transliteration for a traveler",
+      "englishMeaning": "Natural English meaning",
+      "category": "GREETING" | "FOOD_ORDER" | "PRICING" | "DIETARY" | "DIRECTIONS" | "GRATITUDE",
+      "usageTip": "Practical street-level tip for saying/showing this to the vendor",
+      "formalityLevel": "INFORMAL_WARM" | "POLITE_RESPECTFUL" | "FORMAL",
+      "contextSuitability": "When/where at this venue to use it"
+    }
+  ]
+}`;
+
+          const response = await client.models.generateContent({
+            model: modelId,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+              temperature: 0.25,
+              responseMimeType: 'application/json',
+            },
+          });
+          return response.text || '';
+        },
+        config.maxRetries
+      );
+
+      const parsed = JSON.parse(cleanJsonResponseText(rawText));
+      const rawCards = Array.isArray(parsed?.cards) ? parsed.cards : [];
+      const validatedCards: CulturalOrderingCard[] = [];
+      for (const candidate of rawCards) {
+        const res = CulturalOrderingCardSchema.safeParse(candidate);
+        if (res.success) {
+          if (!request.category || res.data.category === request.category) {
+            validatedCards.push(res.data);
+          }
+        }
+      }
+
+      if (validatedCards.length > 0) {
+        // Persist in Firestore cache (best-effort)
+        if (request.spotId) {
+          try {
+            await db
+              .collection('places')
+              .doc(request.spotId)
+              .collection('order_cards')
+              .doc(cacheKey)
+              .set({
+                cards: validatedCards,
+                neighborhood,
+                targetLanguage,
+                spotName: request.spotName || null,
+                modelUsed: modelId,
+                generatedAt,
+              });
+          } catch {
+            // Non-fatal cache write error
+          }
+        }
+
+        return OrderingAssistanceResponseSchema.parse({
+          cards: validatedCards,
+          neighborhood,
+          targetLanguage,
+          deliveryMode: 'REQUEST_RESPONSE_FALLBACK',
+          modelUsed: modelId,
+          generatedAt,
+        });
+      }
+    } catch {
+      // Fall through to curated cultural reference when Gemini call fails or offline
+    }
+  }
+
   let cards = [...CURATED_CULTURAL_CARDS];
 
   if (request.category) {
@@ -483,8 +581,8 @@ export async function getOrderingPhrases(
 
   return OrderingAssistanceResponseSchema.parse({
     cards,
-    neighborhood: request.neighborhood || 'Malleshwaram',
-    targetLanguage: request.language || 'kn-IN',
+    neighborhood,
+    targetLanguage,
     deliveryMode: 'REQUEST_RESPONSE_FALLBACK',
     modelUsed: 'curated-cultural-repository',
     generatedAt,
@@ -683,28 +781,10 @@ Return JSON:
       modelUsed: modelId,
       processedAt,
     });
-  } catch {
-    // Deterministic Offline Adapter matching Developer D's client test fixture
-    return CameraVisualTranslationResponseSchema.parse({
-      detectedScript: 'Kannada (ಕನ್ನಡ)',
-      originalText: 'ಶ್ರೀ ಸಾಗರ್ ಉಪಹಾರ ಗೃಹ — ಶುದ್ಧ ತುಪ್ಪ ಮತ್ತು ಬೆಣ್ಣೆ ದೋಸೆ',
-      translatedText: 'Shri Sagar Refreshments — Pure Ghee & Butter Dose',
-      culturalContext: 'Heritage signage of Central Tiffin Room (CTR) dating back to 1920s Bengaluru.',
-      menuItemsDetected: [
-        {
-          itemName: 'Benne Masala Dose',
-          description: 'Crisp golden crepe made with fresh country butter and potato filling',
-          priceDetected: '₹75',
-          dietaryFlags: ['Vegetarian'],
-        },
-      ],
-      instructionsOrWarnings: ['Tokens must be purchased at the entrance cash register.'],
-      readabilityAssessment: 'CLEAR_READABLE',
-      deliveryMode: 'OFFLINE_MOCK_ADAPTER',
-      confidenceScore: 0.9,
-      modelUsed: 'offline-camera-ocr-adapter',
-      processedAt,
-    });
+  } catch (err: any) {
+    throw new Error(
+      `Cloud camera signage translation failed (${err?.message || 'Gemini vision unavailable'}). Use on-device Gemma 4 E2B or ML Kit offline translation.`
+    );
   }
 }
 

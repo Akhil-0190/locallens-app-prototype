@@ -18,10 +18,7 @@ import type { CanonicalRouteDocument, RouteLeg, RouteNavigationStep } from '../.
 import { validateCanonicalRoute } from '../../types/contracts';
 import { NormalizationService } from './normalization.service';
 import { QuotaHandlerService } from './quota-handler.service';
-import {
-  SAMPLE_NORMALIZED_WALKING_ROUTE,
-  SAMPLE_CANONICAL_WALKING_ROUTE,
-} from '../fixtures/sample-routes.fixture';
+import { getMapsFixtures } from '../fixture-registry';
 
 export class RoutesService {
   private config: MapsPlatformConfig;
@@ -358,9 +355,10 @@ export class RoutesService {
       Math.abs(normalizedStops[0]!.coordinate.latitude - 13.003185) < 0.001 &&
       Math.abs(normalizedStops[2]!.coordinate.latitude - 13.00725) < 0.001;
 
-    if (isMalleshwaramSample && paceMultiplier === 1.0 && !request.title) {
+    const canonicalFixture = getMapsFixtures().canonicalWalkingRoute;
+    if (isMalleshwaramSample && paceMultiplier === 1.0 && !request.title && canonicalFixture) {
       return {
-        ...SAMPLE_CANONICAL_WALKING_ROUTE,
+        ...canonicalFixture,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -629,8 +627,9 @@ export class RoutesService {
       Math.abs(origin.latitude - 13.003185) < 0.01 &&
       Math.abs(origin.longitude - 77.570258) < 0.01;
 
-    if (isMalleshwaramSample && !intermediates) {
-      return SAMPLE_NORMALIZED_WALKING_ROUTE;
+    const normalizedFixture = getMapsFixtures().normalizedWalkingRoute;
+    if (isMalleshwaramSample && !intermediates && normalizedFixture) {
+      return normalizedFixture;
     }
 
     let totalDist = 0;

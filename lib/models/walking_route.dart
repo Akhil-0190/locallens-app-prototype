@@ -163,7 +163,7 @@ class WalkingRoute {
     required this.formattedDuration,
     required this.encodedPolyline,
     required this.legs,
-    this.isMockData = true,
+    this.isMockData = false,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -201,7 +201,7 @@ class WalkingRoute {
       legs: rawLegs
           .map((l) => RouteLeg.fromMap(Map<String, dynamic>.from(l)))
           .toList(),
-      isMockData: map['isMockData'] as bool? ?? true,
+      isMockData: map['isMockData'] as bool? ?? false,
       createdAt: map['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
       updatedAt: map['updatedAt']?.toString() ?? DateTime.now().toIso8601String(),
     );

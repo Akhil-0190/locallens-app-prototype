@@ -13,7 +13,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    service = OfflinePackService(db: db);
+    service = OfflinePackService(db: db, enableTileDownloads: false);
   });
 
   tearDown(() async {

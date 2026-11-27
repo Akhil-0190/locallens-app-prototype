@@ -6,8 +6,11 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/spot_card.dart';
 import '../models/traveler_preferences.dart';
+import '../providers/route_providers.dart';
 import '../providers/spot_providers.dart';
+import '../services/street_assistance_service.dart';
 import '../widgets/app_async_states.dart';
+import '../widgets/live_voice_translator_sheet.dart';
 import '../widgets/spot_card_tile.dart';
 import '../widgets/tipping_modal_sheet.dart';
 
@@ -24,6 +27,8 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
   String _selectedNeighborhood = 'All';
   String _selectedVibe = 'All';
   final TextEditingController _customLocationController = TextEditingController();
+  final Map<String, SpotCard> _planBSwaps = {};
+  final Map<String, String> _planBReasons = {};
 
   @override
   void initState() {
@@ -64,80 +69,95 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
     }
   }
 
-  void _showLocalPhraseDialog(SpotCard spot) {
-    final phrase = spot.greetingCard.isNotEmpty
-        ? spot.greetingCard
-        : 'Namaskara! Oru filter coffee, please.';
-    showDialog(
+  void _openLiveVoiceTranslator({SpotCard? spot}) {
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.translate, color: Color(0xFF0F766E)),
-            SizedBox(width: 8),
-            Text('Vendor Order Card', style: TextStyle(fontSize: 16)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Show this to the vendor or tap speaker to listen:',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFCCFBF1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF14B8A6)),
-              ),
-              child: Text(
-                phrase,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF0F766E),
-                ),
-              ),
-            ),
-            if (spot.practicalTips.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.tips_and_updates, size: 14, color: Colors.amber),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Insider Tip: ${spot.practicalTips}',
-                      style: const TextStyle(fontSize: 12, color: Colors.black87),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.volume_up, color: Color(0xFF0F766E)),
-            tooltip: 'Listen to Pronunciation',
-            onPressed: () => _tts.speak(phrase),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        ],
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => LiveVoiceTranslatorSheet(
+        neighborhood: _selectedNeighborhood != 'All'
+            ? _selectedNeighborhood
+            : (spot?.formattedAddress.isNotEmpty == true
+                ? spot!.formattedAddress
+                : 'Malleshwaram'),
+        spotId: spot?.id,
+        spotName: spot?.spotName,
       ),
     );
   }
 
-  void _handlePlanB(SpotCard spot) {
+  void _showLocalPhraseDialog(SpotCard spot) {
+    final neighborhood = _selectedNeighborhood != 'All'
+        ? _selectedNeighborhood
+        : (spot.formattedAddress.isNotEmpty ? spot.formattedAddress : 'Malleshwaram');
+    showDialog(
+      context: context,
+      builder: (ctx) => _DynamicOrderCardDialog(
+        spot: spot,
+        neighborhood: neighborhood,
+        assistanceService: ref.read(streetAssistanceServiceProvider),
+        onOpenLiveVoice: () {
+          Navigator.pop(ctx);
+          _openLiveVoiceTranslator(spot: spot);
+        },
+      ),
+    );
+  }
+
+  Future<void> _handlePlanB(SpotCard spot, List<SpotCard> allSpots) async {
+    // Select a real, uncrowded verified alternative spot (preferring overlapping vibe tags)
+    final excludedIds = <String>{
+      spot.id,
+      ..._planBSwaps.values.map((s) => s.id),
+    };
+    final candidates = allSpots
+        .where((s) => !excludedIds.contains(s.id))
+        .toList()
+      ..sort((a, b) {
+        final aRatio = a.hourlyLimit > 0 ? a.currentVisitors / a.hourlyLimit : 1.0;
+        final bRatio = b.hourlyLimit > 0 ? b.currentVisitors / b.hourlyLimit : 1.0;
+        final aVibeOverlap =
+            a.vibeTags.where((t) => spot.vibeTags.contains(t)).length;
+        final bVibeOverlap =
+            b.vibeTags.where((t) => spot.vibeTags.contains(t)).length;
+        final aScore = (1.0 - aRatio) + aVibeOverlap * 0.25;
+        final bScore = (1.0 - bRatio) + bVibeOverlap * 0.25;
+        return bScore.compareTo(aScore);
+      });
+
+    if (candidates.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No quieter verified alternative is currently available for ${spot.spotName}.',
+          ),
+          backgroundColor: Colors.orange.shade800,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final replacement = candidates.first;
+    final originalKey = _planBSwaps.entries
+        .firstWhere(
+          (e) => e.value.id == spot.id,
+          orElse: () => MapEntry(spot.id, spot),
+        )
+        .key;
+
+    setState(() {
+      _planBSwaps[originalKey] = replacement;
+      _planBReasons[originalKey] =
+          'Plan-B swapped from ${spot.spotName} (${spot.currentVisitors}/${spot.hourlyLimit}) → '
+          '${replacement.spotName} (${replacement.currentVisitors}/${replacement.hourlyLimit})';
+    });
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -146,11 +166,23 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '1-Tap Plan B Activated: Swapped ${spot.spotName} with uncrowded alternative nearby!',
+                'Plan B Applied: Replaced ${spot.spotName} with quieter ${replacement.spotName} (${replacement.currentVisitors}/${replacement.hourlyLimit}).',
                 style: const TextStyle(fontSize: 12),
               ),
             ),
           ],
+        ),
+        action: SnackBarAction(
+          label: 'Undo',
+          textColor: Colors.amber.shade200,
+          onPressed: () {
+            if (mounted) {
+              setState(() {
+                _planBSwaps.remove(originalKey);
+                _planBReasons.remove(originalKey);
+              });
+            }
+          },
         ),
         backgroundColor: const Color(0xFF0F766E),
         behavior: SnackBarBehavior.floating,
@@ -200,6 +232,11 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
       appBar: AppBar(
         title: const Text('Street Pocket Guide'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.interpreter_mode),
+            onPressed: () => _openLiveVoiceTranslator(),
+            tooltip: 'Live Voice Translator (Gemini 3.8 Live)',
+          ),
           IconButton(
             icon: const Icon(Icons.alt_route),
             onPressed: () => context.push('/route'),
@@ -503,73 +540,120 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
               }
 
               return Column(
-                children: filtered.map((spot) {
-                  return SpotCardTile(
-                    spot: spot,
-                    statusText: '${spot.currentVisitors}/${spot.hourlyLimit}',
-                    actions: [
-                      FilledButton.tonalIcon(
-                        onPressed: () => _openInMaps(spot),
-                        icon: const Icon(Icons.directions, size: 15),
-                        label: const Text('Directions', style: TextStyle(fontSize: 12)),
-                        style: FilledButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                children: filtered.map((originalSpot) {
+                  final spot = _planBSwaps[originalSpot.id] ?? originalSpot;
+                  final swapBanner = _planBReasons[originalSpot.id];
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (swapBanner != null)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.teal.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.alt_route, size: 14, color: Color(0xFF0F766E)),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  swapBanner,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF0F766E),
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => setState(() {
+                                  _planBSwaps.remove(originalSpot.id);
+                                  _planBReasons.remove(originalSpot.id);
+                                }),
+                                style: TextButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                                ),
+                                child: const Text('Revert', style: TextStyle(fontSize: 11)),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => _toggleAudioCue(spot),
-                        icon: Icon(
-                          _playingSpotId == spot.id ? Icons.stop : Icons.headphones,
-                          size: 15,
-                          color: _playingSpotId == spot.id ? Colors.red : null,
-                        ),
-                        label: Text(
-                          _playingSpotId == spot.id ? 'Stop Audio' : 'Audio Cue',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => _showLocalPhraseDialog(spot),
-                        icon: const Icon(Icons.translate, size: 15),
-                        label: const Text('Order Card', style: TextStyle(fontSize: 12)),
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => _handlePlanB(spot),
-                        icon: const Icon(Icons.alt_route, size: 15),
-                        label: const Text('Plan B', style: TextStyle(fontSize: 12)),
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            builder: (ctx) => TippingModalSheet(
-                              recipientUserId: spot.contributedBy?.userId ?? 'usr_blr_782914',
-                              recipientName: spot.contributedBy?.displayName ?? 'Local Contributor',
-                              spotId: spot.id,
-                              spotName: spot.spotName,
+                      SpotCardTile(
+                        spot: spot,
+                        statusText: '${spot.currentVisitors}/${spot.hourlyLimit}',
+                        actions: [
+                          FilledButton.tonalIcon(
+                            onPressed: () => _openInMaps(spot),
+                            icon: const Icon(Icons.directions, size: 15),
+                            label: const Text('Directions', style: TextStyle(fontSize: 12)),
+                            style: FilledButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                             ),
-                          );
-                        },
-                        icon: const Icon(Icons.volunteer_activism_outlined, size: 15),
-                        label: const Text('Tip', style: TextStyle(fontSize: 12)),
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => _toggleAudioCue(spot),
+                            icon: Icon(
+                              _playingSpotId == spot.id ? Icons.stop : Icons.headphones,
+                              size: 15,
+                              color: _playingSpotId == spot.id ? Colors.red : null,
+                            ),
+                            label: Text(
+                              _playingSpotId == spot.id ? 'Stop Audio' : 'Audio Cue',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => _showLocalPhraseDialog(spot),
+                            icon: const Icon(Icons.translate, size: 15),
+                            label: const Text('Order Card', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => _handlePlanB(spot, spots),
+                            icon: const Icon(Icons.alt_route, size: 15),
+                            label: const Text('Plan B', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                builder: (ctx) => TippingModalSheet(
+                                  recipientUserId: spot.contributedBy?.userId ?? 'usr_blr_782914',
+                                  recipientName: spot.contributedBy?.displayName ?? 'Local Contributor',
+                                  spotId: spot.id,
+                                  spotName: spot.spotName,
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.volunteer_activism_outlined, size: 15),
+                            label: const Text('Tip', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   );
@@ -579,6 +663,223 @@ class _PocketGuideScreenState extends ConsumerState<PocketGuideScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DynamicOrderCardDialog extends StatefulWidget {
+  final SpotCard spot;
+  final String neighborhood;
+  final StreetAssistanceService assistanceService;
+  final VoidCallback onOpenLiveVoice;
+
+  const _DynamicOrderCardDialog({
+    required this.spot,
+    required this.neighborhood,
+    required this.assistanceService,
+    required this.onOpenLiveVoice,
+  });
+
+  @override
+  State<_DynamicOrderCardDialog> createState() => _DynamicOrderCardDialogState();
+}
+
+class _DynamicOrderCardDialogState extends State<_DynamicOrderCardDialog> {
+  static const List<({String code, String label})> _languages = [
+    (code: 'kn-IN', label: 'Kannada'),
+    (code: 'hi-IN', label: 'Hindi'),
+    (code: 'ta-IN', label: 'Tamil'),
+    (code: 'te-IN', label: 'Telugu'),
+    (code: 'mr-IN', label: 'Marathi'),
+  ];
+
+  String _selectedLang = 'kn-IN';
+  bool _isLoading = true;
+  DynamicOrderingCardsResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCards();
+  }
+
+  Future<void> _loadCards() async {
+    setState(() => _isLoading = true);
+    final res = await widget.assistanceService.fetchDynamicOrderingCards(
+      spotId: widget.spot.id,
+      spotName: widget.spot.spotName,
+      neighborhood: widget.neighborhood,
+      targetLanguage: _selectedLang,
+      menuHints: [
+        if (widget.spot.greetingCard.isNotEmpty) widget.spot.greetingCard,
+        ...widget.spot.vibeTags,
+      ],
+    );
+    if (!mounted) return;
+    setState(() {
+      _result = res;
+      _isLoading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = _result?.cards ?? const <OrderingCard>[];
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Icon(Icons.translate, color: Color(0xFF0F766E)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Order Cards • ${widget.spot.spotName}',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (_result != null)
+                  Text(
+                    _result!.isLiveAi
+                        ? 'Powered by ${_result!.modelUsed}'
+                        : 'Offline Local Phrasebook',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _languages.map((lang) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(lang.label, style: const TextStyle(fontSize: 11)),
+                        selected: _selectedLang == lang.code,
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (selected) {
+                          if (!selected || _selectedLang == lang.code) return;
+                          setState(() => _selectedLang = lang.code);
+                          _loadCards();
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (_isLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 8),
+                        Text(
+                          'Generating local vendor order cards...',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                ...cards.map((card) => Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCCFBF1),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF14B8A6)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  card.phraseRegional,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0F766E),
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.volume_up,
+                                  size: 18,
+                                  color: Color(0xFF0F766E),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Pronounce',
+                                onPressed: () => widget.assistanceService
+                                    .speakAudioPrompt(card.phraseRegional),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            card.phonetic,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.teal.shade900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            card.englishMeaning,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (card.usageTip.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              card.usageTip,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    )),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton.icon(
+          onPressed: widget.onOpenLiveVoice,
+          icon: const Icon(Icons.interpreter_mode, size: 16),
+          label: const Text('Live Voice'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }

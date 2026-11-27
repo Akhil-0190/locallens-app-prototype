@@ -52,6 +52,8 @@ export interface ConfirmGuidancePaymentInput {
   bookingId: string;
   callerUserId: string;
   simulatedOutcome?: 'SUCCESS' | 'FAILURE';
+  providerPaymentId?: string;
+  providerSignature?: string;
   isAdminOverride?: boolean;
 }
 
@@ -242,6 +244,8 @@ export class GuidanceService {
       transactionId: input.bookingId,
       gatewayReference: booking.paymentGatewayReference || '',
       simulatedOutcome: input.simulatedOutcome,
+      providerPaymentId: input.providerPaymentId,
+      providerSignature: input.providerSignature,
     });
 
     if (!verification.verified) {

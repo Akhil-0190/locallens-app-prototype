@@ -8,7 +8,7 @@
 import { getMapsConfig, type MapsPlatformConfig } from '../config.js';
 import type { LatLng } from '../types/coordinates.types.js';
 import type { NormalizedWeather, WeatherSeverity, WeatherConditionType } from '../types/weather.types.js';
-import { SAMPLE_WEATHER_FIXTURES } from '../fixtures/sample-weather.fixture.js';
+import { getMapsFixtures } from '../fixture-registry.js';
 
 export class WeatherService {
   private config: MapsPlatformConfig;
@@ -64,10 +64,11 @@ export class WeatherService {
       }
     }
 
-    // 2. Mock Fallback if allowed
+    // 2. Test-registered fallback if explicitly allowed
     if (allowMockFallback) {
-      if (mockScenarioKey && SAMPLE_WEATHER_FIXTURES[mockScenarioKey]) {
-        const fixture = SAMPLE_WEATHER_FIXTURES[mockScenarioKey];
+      const scenarios = getMapsFixtures().weatherScenarios;
+      if (mockScenarioKey && scenarios[mockScenarioKey]) {
+        const fixture = scenarios[mockScenarioKey];
         return {
           ...fixture,
           location,

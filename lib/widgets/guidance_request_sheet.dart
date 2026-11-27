@@ -4,8 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/monetization.dart';
 import '../providers/monetization_providers.dart';
 
-/// Modal sheet for drafting 1-on-1 Local Guidance requests.
-/// Discloses: Guidance dispatch callable pending Developer A.
+/// Modal sheet for requesting 1-on-1 Local Guidance sessions via `Monetization-requestLocalGuidance`.
 class GuidanceRequestSheet extends ConsumerStatefulWidget {
   final String guideUserId;
   final String guideName;
@@ -70,11 +69,14 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
         specialNotes: notes.isNotEmpty ? notes : null,
       );
 
-      final bookingId = result['bookingId']?.toString() ?? 'book_${DateTime.now().millisecondsSinceEpoch}';
-      
-      // Auto-confirm payment in sandbox escrow
-      await service.confirmGuidancePayment(bookingId: bookingId, simulatedOutcome: 'SUCCESS');
+      final bookingId = result['bookingId']?.toString() ?? '';
+      if (bookingId.isEmpty) {
+        throw Exception('Missing booking ID from server.');
+      }
 
+      await service.confirmGuidancePayment(bookingId: bookingId);
+
+      if (!mounted) return;
       setState(() {
         _isDispatching = false;
         _confirmedBookingId = bookingId;
@@ -83,9 +85,10 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
     } catch (e) {
       // Offline fallback: save as local draft
       _handleSaveDraft();
+      if (!mounted) return;
       setState(() {
         _isDispatching = false;
-        _dispatchError = 'Cloud dispatch pending ($e). Saved locally as draft with sync pending.';
+        _dispatchError = 'Could not complete live booking ($e). Saved locally as draft.';
       });
     }
   }
@@ -159,9 +162,7 @@ class _GuidanceRequestSheetState extends ConsumerState<GuidanceRequestSheet> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '[Guidance Booking: Dispatch Callable Pending Developer A. This request will be drafted locally.]\n'
-                      'The backend scheduling and dispatch callable is pending deployment. '
-                      'This draft will be saved locally on your device and will not trigger a live booking dispatch.',
+                      'Book a live 1-on-1 local cultural walkthrough with ${widget.guideName}. Funds are held in escrow until session completion.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.blue.shade900,

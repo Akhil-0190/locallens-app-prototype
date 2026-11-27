@@ -31,6 +31,20 @@ class SpotCard {
   final double? latitude;
   final double? longitude;
 
+  // Stage 1 Grounding, Safety/Hygiene & Community Signals
+  final String neighborhood;
+  final String verificationTier; // 'UNVERIFIED', 'AI_EVIDENCE_CHECKED', 'COMMUNITY_VERIFIED'
+  final List<String> safetyHygieneBadges;
+  final int hygieneEndorsementCount;
+  final String heritageContext;
+  final List<String> safetyNotices;
+  final List<String> searchGroundingUrls;
+  final List<String> mustTryItems;
+  final List<Map<String, dynamic>> dialectPhrases;
+  final double? rating;
+  final int? userRatingCount;
+  final bool? isOpenNow;
+
   SpotCard({
     required this.id,
     required this.mapsLink,
@@ -56,9 +70,21 @@ class SpotCard {
     this.primaryCategory = '',
     this.categories = const [],
     this.isVerified = true,
-    this.isMockData = true,
+    this.isMockData = false,
     this.latitude,
     this.longitude,
+    this.neighborhood = 'Malleshwaram',
+    this.verificationTier = 'UNVERIFIED',
+    this.safetyHygieneBadges = const [],
+    this.hygieneEndorsementCount = 0,
+    this.heritageContext = '',
+    this.safetyNotices = const [],
+    this.searchGroundingUrls = const [],
+    this.mustTryItems = const [],
+    this.dialectPhrases = const [],
+    this.rating,
+    this.userRatingCount,
+    this.isOpenNow,
   });
 
   factory SpotCard.fromMap(String id, Map<String, dynamic> data) {
@@ -75,17 +101,44 @@ class SpotCard {
     final remaining = (capacity?['remainingCapacity'] as num?)?.toInt() ?? (hourly - visitors);
 
     final rawContributed = data['contributorAttribution'] ?? data['contributedBy'];
+    final safetyHygiene = data['safetyHygiene'] is Map
+        ? Map<String, dynamic>.from(data['safetyHygiene'] as Map)
+        : null;
+    final communitySignals = data['communitySignals'] is Map
+        ? Map<String, dynamic>.from(data['communitySignals'] as Map)
+        : null;
+    final aiSynthesis = data['aiSynthesis'] is Map
+        ? Map<String, dynamic>.from(data['aiSynthesis'] as Map)
+        : null;
+    final mapsGrounding = data['mapsGrounding'] is Map
+        ? Map<String, dynamic>.from(data['mapsGrounding'] as Map)
+        : null;
+    final coordMap = data['coordinate'] is Map
+        ? Map<String, dynamic>.from(data['coordinate'] as Map)
+        : (data['location'] is Map ? Map<String, dynamic>.from(data['location'] as Map) : null);
+
+    final rawDialects = communitySignals?['dialectPhrases'] as List? ?? [];
+    final parsedDialects = rawDialects
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
 
     return SpotCard(
       id: id,
       mapsLink: data['mapsLink'] ?? '',
-      infoParagraph: data['infoParagraph'] ?? '',
+      infoParagraph: data['infoParagraph'] ?? aiSynthesis?['storySummary'] ?? '',
       photoUrls: List<String>.from(data['photoUrls'] ?? []),
-      spotName: data['spotName'] ?? 'Verified Local Spot',
-      openHours: data['openHours'] ?? 'Check Maps for hours',
+      spotName: data['spotName'] ?? data['name'] ?? 'Verified Local Spot',
+      openHours: data['openHours'] ??
+          (mapsGrounding?['regularHours'] is List && (mapsGrounding!['regularHours'] as List).isNotEmpty
+              ? (mapsGrounding['regularHours'] as List).join(' | ')
+              : 'Check Maps for hours'),
       practicalTips: authenticity?['practicalTips'] ?? data['practicalTips'] ?? '',
       greetingCard: authenticity?['greetingCard'] ?? data['greetingCard'] ?? '',
-      isTouristTrap: authenticity?['isTouristTrap'] ?? data['isTouristTrap'] ?? false,
+      isTouristTrap: authenticity?['isTouristTrap'] ??
+          mapsGrounding?['isTouristTrap'] ??
+          data['isTouristTrap'] ??
+          false,
       hourlyLimit: hourly,
       currentVisitors: visitors,
       vibeTags: List<String>.from(authenticity?['vibeTags'] ?? data['vibeTags'] ?? []),
@@ -102,15 +155,39 @@ class SpotCard {
       recommendedTiming: authenticity?['recommendedTiming'] ??
           data['recommendedTiming'] ?? '',
       remainingCapacity: remaining,
-      crowdLevel: capacity?['crowdLevel'] ?? data['crowdLevel'] ?? 'MODERATE',
+      crowdLevel: capacity?['crowdLevel'] ??
+          communitySignals?['latestCrowdLevel'] ??
+          data['crowdLevel'] ??
+          'MODERATE',
       isThrottled: capacity?['isThrottled'] ?? (remaining <= 0),
       formattedAddress: data['formattedAddress'] ?? '',
       primaryCategory: data['primaryCategory'] ?? '',
       categories: List<String>.from(data['categories'] ?? []),
       isVerified: data['isVerified'] ?? true,
-      isMockData: data['isMockData'] ?? true,
-      latitude: (data['location']?['latitude'] ?? data['latitude'] as num?)?.toDouble(),
-      longitude: (data['location']?['longitude'] ?? data['longitude'] as num?)?.toDouble(),
+      isMockData: data['isMockData'] ?? false,
+      latitude: (coordMap?['latitude'] ?? data['latitude'] as num?)?.toDouble(),
+      longitude: (coordMap?['longitude'] ?? data['longitude'] as num?)?.toDouble(),
+      neighborhood: data['neighborhood'] as String? ?? 'Malleshwaram',
+      verificationTier: safetyHygiene?['verificationTier'] as String? ??
+          (data['isVerified'] == true ? 'AI_EVIDENCE_CHECKED' : 'UNVERIFIED'),
+      safetyHygieneBadges: List<String>.from(safetyHygiene?['badges'] ?? []),
+      hygieneEndorsementCount: (safetyHygiene?['endorsementCount'] as num?)?.toInt() ?? 0,
+      heritageContext: data['heritageContext'] as String? ??
+          aiSynthesis?['heritageContext'] as String? ??
+          '',
+      safetyNotices: List<String>.from(
+        data['safetyNotices'] ?? aiSynthesis?['safetyNotices'] ?? const [],
+      ),
+      searchGroundingUrls: List<String>.from(
+        data['searchGroundingUrls'] ?? aiSynthesis?['searchGroundingUrls'] ?? const [],
+      ),
+      mustTryItems: List<String>.from(
+        data['mustTryItems'] ?? aiSynthesis?['mustTryItems'] ?? const [],
+      ),
+      dialectPhrases: parsedDialects,
+      rating: (data['rating'] ?? mapsGrounding?['rating'] as num?)?.toDouble(),
+      userRatingCount: (data['userRatingCount'] ?? mapsGrounding?['userRatingCount'] as num?)?.toInt(),
+      isOpenNow: (data['isOpenNow'] ?? mapsGrounding?['isOpenNow']) as bool?,
     );
   }
 

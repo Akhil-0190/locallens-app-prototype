@@ -110,13 +110,14 @@ export async function executePlanBReroutingSkill(
     };
   });
 
+  const hasLiveMapsKey = Boolean(process.env.MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY);
   const rerouteRequest: PlanBRerouteRequest = {
     originalRoute: parsedInput.originalRoute,
     disruptions: mappedDisruptions,
     walkingPace: parsedInput.walkingPace,
     preferredIndoorAlternatives: parsedInput.preferredIndoorAlternatives,
     stopVisitDurationsMinutes: parsedInput.stopVisitDurationsMinutes,
-    allowMockFallback: true,
+    allowMockFallback: !hasLiveMapsKey,
   };
 
   // Step 1: Execute Developer C's verified spatial Plan-B recalculation engine

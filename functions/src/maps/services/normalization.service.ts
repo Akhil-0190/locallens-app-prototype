@@ -133,6 +133,17 @@ export class NormalizationService {
 
     const summary = raw.editorialSummary?.text || '';
     const mapsUrl = raw.googleMapsUri || `https://maps.google.com/?q=${encodeURIComponent(name)}`;
+    const reviews = Array.isArray(raw.reviews)
+      ? raw.reviews
+          .map((r) => ({
+            rating: typeof r.rating === 'number' ? r.rating : rating,
+            text: (r.text?.text || r.originalText?.text || '').trim(),
+            relativePublishTimeDescription: r.relativePublishTimeDescription,
+            authorDisplayName: r.authorAttribution?.displayName,
+            publishTime: r.publishTime,
+          }))
+          .filter((r) => r.text.length > 0)
+      : undefined;
 
     return {
       placeId: raw.id,
@@ -145,6 +156,10 @@ export class NormalizationService {
       reviewCount,
       isOpenNow,
       openingHoursDescriptions,
+      ...(raw.businessStatus ? { businessStatus: raw.businessStatus } : {}),
+      ...(raw.priceLevel ? { priceLevel: raw.priceLevel } : {}),
+      ...(typeof raw.goodForGroups === 'boolean' ? { goodForGroups: raw.goodForGroups } : {}),
+      ...(reviews && reviews.length > 0 ? { reviews } : {}),
       summary,
       mapsUrl,
       isMockData: isMock,

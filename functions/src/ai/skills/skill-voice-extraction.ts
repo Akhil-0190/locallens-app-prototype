@@ -13,6 +13,9 @@ import {
   ExtractedPracticalDetails,
   ExtractedPracticalDetailsSchema,
 } from '../../types/contracts/index.js';
+import { getAIConfig } from '../config/env.js';
+import { extractVoiceNoteDetails } from '../services/voice-extraction-service.js';
+import { extractPhotoDetails } from '../services/photo-extraction-service.js';
 
 export const VoicePhotoExtractionInputSchema = z.object({
   audioBase64: z.string().optional(),
@@ -170,8 +173,14 @@ export async function executeVoiceNoteExtractionSkill(
   // Validate input
   const parsedInput = VoicePhotoExtractionInputSchema.parse(input);
 
-  // Check for noisy / empty / corrupted audio indicator
-  const isNoisyOrEmpty = !parsedInput.audioMimeType && !parsedInput.photoMimeType;
+  // Check for noisy / empty / corrupted media indicator
+  const hasAudio = Boolean(parsedInput.audioBase64 && parsedInput.audioMimeType);
+  const hasPhoto = Boolean(parsedInput.photoBase64 && parsedInput.photoMimeType);
+  const hasTranscriptOrNotes = Boolean(
+    (parsedInput.rawTranscript && parsedInput.rawTranscript.trim().length > 0) ||
+      (parsedInput.contributorNotes && parsedInput.contributorNotes.trim().length > 0)
+  );
+  const isNoisyOrEmpty = !parsedInput.audioMimeType && !parsedInput.photoMimeType && !hasTranscriptOrNotes;
   if (isNoisyOrEmpty) {
     const emptyDetails: ExtractedPracticalDetails = {
       openingHoursMentioned: undefined,
@@ -203,44 +212,102 @@ export async function executeVoiceNoteExtractionSkill(
     };
   }
 
-  // Deterministic vernacular sample fixtures for testing & offline execution
-  let transcript = '';
-  let translation = '';
-  let spotName = 'Local Heritage Venue';
+  const config = getAIConfig();
+  let transcript = (parsedInput.rawTranscript || parsedInput.contributorNotes || '').trim();
+  let translation = transcript;
+  let detectedLanguage = parsedInput.languageHint || 'en';
+  let spotName = 'Unknown Spot';
   let hours: string | undefined = undefined;
   let price: string | undefined = undefined;
   let cashOnly = false;
   let dishes: string[] = [];
+  let insiderTips: string[] = [];
+  let executionProvenance: 'GEMINI_MULTIMODAL_EXTRACTION' | 'DETERMINISTIC_EXTRACTION_FALLBACK' =
+    'DETERMINISTIC_EXTRACTION_FALLBACK';
   const uncertainties: string[] = [];
 
-  const lang = (parsedInput.languageHint || 'kn-IN').toLowerCase();
+  // 1. Live Gemini 3.8 Flash Multimodal Voice & Photo Extraction when API key is configured
+  if (config.hasApiKey && (hasAudio || hasPhoto || hasTranscriptOrNotes)) {
+    const skillRunId = `skill_${Date.now()}`;
+    if (hasAudio || hasTranscriptOrNotes) {
+      const voiceRes = await extractVoiceNoteDetails({
+        assetId: `${skillRunId}_audio`,
+        contributionId: skillRunId,
+        contributorId: 'agent_skill_caller',
+        transcriptText: hasAudio ? undefined : transcript,
+        languageHint: parsedInput.languageHint,
+        media: hasAudio
+          ? {
+              base64Data: parsedInput.audioBase64!,
+              mimeType: parsedInput.audioMimeType!,
+            }
+          : undefined,
+      });
 
-  if (lang.includes('kn') || lang.includes('kannada')) {
-    transcript = 'ಇಲ್ಲಿ ಮಲ್ಲೇಶ್ವರಂನಲ್ಲಿರೋ ಶ್ರೀ ಸಾಗರ್ ಸಿಟಿಆರ್ ಬೆಣ್ಣೆ ದೋಸೆ ತುಂಬಾ ಫೇಮಸ್. ಬೆಳಗ್ಗೆ 7:30 ರಿಂದ 12:30 ವರೆಗೆ ಇರುತ್ತೆ. ಒಂದು ದೋಸೆಗೆ 80 ರೂಪಾಯಿ, ಕಾರ್ಡ್ ತಗಳಲ್ಲ, ಕ್ಯಾಶ್ ಅಥವಾ ಯುಪಿಐ ಮಾತ್ರ.';
-    translation = 'Here in Malleshwaram, Shri Sagar CTR butter dose is very famous. Open morning 7:30 AM to 12:30 PM. 80 rupees per dose. No cards accepted, only cash or UPI.';
-    spotName = 'Shri Sagar (CTR)';
-    hours = '7:30 AM - 12:30 PM';
-    price = '₹80 per dose (Budget)';
-    cashOnly = true;
-    dishes = ['Benne Masala Dose', 'Filter Coffee'];
-  } else if (lang.includes('ta') || lang.includes('tamil')) {
-    transcript = 'இந்த கடைல பில்டர் காபி ரொம்ப நல்லா இருக்கும். காலையில 6 மணிக்கே தொறந்துடுவாங்க. 30 ரூவா தான்.';
-    translation = 'Filter coffee is very good at this stall. They open early at 6 AM. Only 30 rupees.';
-    spotName = 'Brahmin Coffee Bar';
-    hours = 'Opens 6:00 AM';
-    price = '₹30 per coffee';
-    cashOnly = false;
-    dishes = ['Filter Coffee', 'Crisp Vada'];
+      if (voiceRes.processingStatus === 'COMPLETED' && voiceRes.aiExtractionResult) {
+        const res = voiceRes.aiExtractionResult;
+        transcript = res.transcription || transcript;
+        translation = res.englishTranslation || res.transcription || translation;
+        detectedLanguage = res.detectedLanguage || detectedLanguage;
+        hours = res.practicalDetails?.openingHoursMentioned || hours;
+        price = res.practicalDetails?.priceLevelNote || price;
+        cashOnly = Boolean(res.practicalDetails?.cashOnlyWarning);
+        dishes = res.practicalDetails?.signatureDishesOrItems || [];
+        insiderTips = res.practicalDetails?.insiderTips || [];
+        executionProvenance = 'GEMINI_MULTIMODAL_EXTRACTION';
+      }
+    }
+
+    if (hasPhoto) {
+      const photoRes = await extractPhotoDetails({
+        assetId: `${skillRunId}_photo`,
+        contributionId: skillRunId,
+        assetType: 'STREET_PHOTO',
+        media: {
+          base64Data: parsedInput.photoBase64!,
+          mimeType: parsedInput.photoMimeType!,
+        },
+      });
+
+      if (photoRes.processingStatus === 'COMPLETED' && photoRes.aiExtractionResult) {
+        const res = photoRes.aiExtractionResult;
+        if (res.ocrDetectedText && res.ocrDetectedText.length > 0 && spotName === 'Unknown Spot') {
+          spotName = res.ocrDetectedText[0]!.slice(0, 60);
+        }
+        hours = hours || res.practicalDetails?.openingHoursMentioned;
+        price = price || res.practicalDetails?.priceLevelNote;
+        cashOnly = cashOnly || Boolean(res.practicalDetails?.cashOnlyWarning);
+        dishes = Array.from(new Set([...dishes, ...(res.practicalDetails?.signatureDishesOrItems || [])]));
+        insiderTips = Array.from(new Set([...insiderTips, ...(res.practicalDetails?.insiderTips || [])]));
+        executionProvenance = 'GEMINI_MULTIMODAL_EXTRACTION';
+      }
+    }
   } else {
-    // English or generic regional
-    transcript = 'Legendary Brahmin Coffee Bar on Shankar Mutt road. Hot filter coffee and piping hot uddin vada. Standing counter only.';
-    translation = 'Legendary Brahmin Coffee Bar on Shankar Mutt road. Hot filter coffee and piping hot uddin vada. Standing counter only.';
-    spotName = 'Brahmin Coffee Bar';
-    hours = undefined; // Missing hours case
-    price = 'Under ₹100 per person';
-    cashOnly = true;
-    dishes = ['Uddin Vada', 'Filter Coffee', 'Khara Bath'];
-    uncertainties.push('Opening hours were not mentioned in audio note');
+    // Offline/unauthenticated honest text parser — NEVER fabricates CTR or Brahmin Coffee Bar
+    uncertainties.push(
+      'GEMINI_API_KEY unavailable; executed deterministic parser without live multimodal transcription.'
+    );
+    if (transcript) {
+      if (/cash\s*only|upi\s*only|no\s*card/i.test(transcript)) cashOnly = true;
+      const hourMatch = transcript.match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*(?:to|-|–)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i);
+      if (hourMatch) hours = hourMatch[0];
+      const priceMatch = transcript.match(/(?:₹|rs\.?\s*)\d+(?:\s*-\s*\d+)?/i);
+      if (priceMatch) price = priceMatch[0];
+    }
+  }
+
+  if (spotName === 'Unknown Spot') {
+    const candidateSource = (translation || parsedInput.contributorNotes || '').trim();
+    const firstClause = candidateSource.split(/[.!?\n]/)[0]?.trim() || '';
+    if (firstClause.length > 0 && firstClause.length <= 55) {
+      spotName = firstClause;
+    } else if (parsedInput.neighborhoodContext) {
+      spotName = `${parsedInput.neighborhoodContext} Spot`;
+    }
+  }
+
+  if (!hours) {
+    uncertainties.push('Opening hours were not explicitly stated in provided media.');
   }
 
   const practicalDetails: ExtractedPracticalDetails = {
@@ -248,7 +315,7 @@ export async function executeVoiceNoteExtractionSkill(
     signatureDishesOrItems: dishes,
     priceLevelNote: price,
     cashOnlyWarning: cashOnly,
-    insiderTips: ['Collect your paper token at the front counter before joining the coffee queue'],
+    insiderTips,
   };
 
   const factClassification = classifyExtractionFacts(spotName, practicalDetails, transcript, translation);
@@ -258,11 +325,11 @@ export async function executeVoiceNoteExtractionSkill(
     spotName,
     vernacularTranscription: transcript,
     translatedEnglish: translation,
-    languageDetected: parsedInput.languageHint || 'kn-IN',
+    languageDetected: detectedLanguage,
     practicalDetails,
     factClassification,
     unresolvedAmbiguities: uncertainties,
-    executionProvenance: 'GEMINI_MULTIMODAL_EXTRACTION',
+    executionProvenance,
     isLowQualityOrNoisy: false,
   };
 }

@@ -18,6 +18,8 @@
 import { randomUUID } from 'node:crypto';
 import { RoutesService } from './routes.service.js';
 import { CrowdManagementService } from './crowd-management.service.js';
+import { WeatherService } from './weather.service.js';
+import { PlacesService } from './places.service.js';
 import type {
   PlanBRerouteRequest,
   PlanBRerouteResponse,
@@ -26,7 +28,7 @@ import type {
   DisruptionType,
 } from '../types/weather.types.js';
 import type { RouteStopInput } from '../types/routes.types.js';
-import { SAMPLE_CLOSURE_FIXTURES } from '../fixtures/sample-weather.fixture.js';
+import { getMapsFixtures } from '../fixture-registry.js';
 
 interface ResolvedStopItem {
   placeId: string;
@@ -37,23 +39,14 @@ interface ResolvedStopItem {
 
 export class PlanBReroutingService {
   private static routesService = new RoutesService();
+  private static weatherService = new WeatherService();
+  private static placesService = new PlacesService({ allowMockFallback: false });
 
   /**
-   * Helper to resolve genuine venue name from known fixtures, leg metadata, or clean placeId.
+   * Helper to resolve genuine venue name from leg metadata, registered test names, or clean placeId.
    */
   public static resolveVenueName(placeId: string, fallbackName?: string): string {
-    const knownNames: Record<string, string> = {
-      place_ctr_shri_sagar: 'CTR Shri Sagar',
-      place_kadu_malleshwara: 'Kadu Malleshwara Temple',
-      place_veena_stores: 'Veena Stores',
-      place_janatha_hotel: 'Janatha Hotel',
-      place_closed_stall_01: 'Heritage Spice Stall',
-      ChIJN1t_tDeuEmsRUsoyG83frY4_sample_1: 'CTR Shri Sagar (Malleshwaram)',
-      ChIJN1t_tDeuEmsRUsoyG83frY4_sample_2: 'Malleshwaram 8th Cross Flower Market',
-      ChIJN1t_tDeuEmsRUsoyG83frY4_sample_3: 'Kadu Malleshwara Temple',
-      ChIJN1t_tDeuEmsRUsoyG83frY4_sample_4: 'Sankey Tank Forest Walk',
-      ChIJN1t_tDeuEmsRUsoyG83frY4_sample_5: 'Veena Stores (Malleshwaram)',
-    };
+    const knownNames = getMapsFixtures().venueNames;
 
     if (fallbackName && fallbackName !== 'Start Stop' && !fallbackName.startsWith('Stop ')) {
       return fallbackName;
@@ -156,6 +149,28 @@ export class PlanBReroutingService {
     // Track running arrival time strictly from actual leg durations and visit durations
     let currentStopArrivalMs = baseStartTimeMs;
 
+    // Live Weather Check (Stage 2 Promise #10): when running live (allowMockFallback: false),
+    // automatically query Google Weather API at traveler's active coordinate.
+    let liveWeatherImpaired = false;
+    if (!allowMockFallback) {
+      try {
+        const weather = await PlanBReroutingService.weatherService.getWeatherCondition({
+          location: startCoord,
+          intendedVisitTime: new Date(baseStartTimeMs).toISOString(),
+          allowMockFallback: false,
+        });
+        if (weather.isWalkingImpaired) {
+          liveWeatherImpaired = true;
+          hasWeatherImpact = true;
+          warnings.push(
+            `Live Weather Alert (${weather.condition}, ${weather.temperatureCelsius}°C): ${weather.advisory || 'Preferring indoor/covered alternatives.'}`
+          );
+        }
+      } catch {
+        // Non-blocking if Weather API is transiently unreachable
+      }
+    }
+
     // 2. Evaluate each stop in the original sequence
     for (let i = 0; i < orderedStops.length; i++) {
       const stop = orderedStops[i];
@@ -173,14 +188,37 @@ export class PlanBReroutingService {
         (d) =>
           d.affectedPlaceId === placeId ||
           d.affectedStopIndex === i ||
-          (d.type === 'HEAVY_RAIN' && preferredIndoorAlternatives)
+          ((d.type === 'HEAVY_RAIN' || d.type === 'THUNDERSTORM') && preferredIndoorAlternatives)
       );
 
-      // Evaluate closure
-      const closureSignal = SAMPLE_CLOSURE_FIXTURES[placeId];
-      const isConfirmedClosed = closureSignal?.isClosed || matchedDisruption?.type === 'VENUE_CLOSED';
+      // Evaluate venue closure:
+      // - In live mode (allowMockFallback === false): query live Google Places API (New) businessStatus & currentOpeningHours.
+      // - In test mode (allowMockFallback === true): check test-registered closures.
+      let isConfirmedClosed = matchedDisruption?.type === 'VENUE_CLOSED';
+      if (allowMockFallback) {
+        const closureSignal = getMapsFixtures().closures[placeId];
+        if (closureSignal?.isClosed) isConfirmedClosed = true;
+      } else if (!isConfirmedClosed && placeId.startsWith('ChIJ')) {
+        try {
+          const livePlace = await PlanBReroutingService.placesService.getPlaceDetails(placeId);
+          if (
+            livePlace.businessStatus === 'CLOSED_TEMPORARILY' ||
+            livePlace.businessStatus === 'CLOSED_PERMANENTLY' ||
+            livePlace.isOpenNow === false
+          ) {
+            isConfirmedClosed = true;
+            warnings.push(`Live Google Maps status indicates ${stop.spotName} is currently closed.`);
+          }
+        } catch {
+          // Non-blocking if live place lookup fails
+        }
+      }
 
-      if (matchedDisruption?.type === 'HEAVY_RAIN' || matchedDisruption?.type === 'THUNDERSTORM') {
+      if (
+        matchedDisruption?.type === 'HEAVY_RAIN' ||
+        matchedDisruption?.type === 'THUNDERSTORM' ||
+        (liveWeatherImpaired && preferredIndoorAlternatives)
+      ) {
         hasWeatherImpact = true;
       }
 

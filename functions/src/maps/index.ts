@@ -23,9 +23,4 @@ export * from './services/weather.service';
 export * from './services/plan-b.service';
 
 export * from './maps-controller';
-
-export * from './fixtures/sample-places.fixture';
-export * from './fixtures/sample-routes.fixture';
-export * from './fixtures/sample-evidence.fixture';
-export * from './fixtures/sample-crowd.fixture';
-export * from './fixtures/sample-weather.fixture';
+export * from './fixture-registry';

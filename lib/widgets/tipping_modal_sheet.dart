@@ -1,11 +1,10 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
+import '../models/monetization.dart';
 import '../providers/monetization_providers.dart';
 
-/// Modal sheet for sending micro-tips to local community contributors.
-/// Operates strictly under Sandbox Payment rails with mandatory simulation disclosure.
+/// Modal sheet for sending micro-tips to local community contributors via Razorpay UPI / Cards.
 class TippingModalSheet extends ConsumerStatefulWidget {
   final String recipientUserId;
   final String recipientName;
@@ -29,11 +28,80 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
   final TextEditingController _customAmountController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
   bool _isCustomAmount = false;
+  Razorpay? _razorpay;
+  String? _activeRazorpayTipId;
 
   final List<double> _presetAmounts = [50.0, 100.0, 200.0];
 
   @override
+  void initState() {
+    super.initState();
+    try {
+      _razorpay = Razorpay();
+      _razorpay!.on(Razorpay.EVENT_PAYMENT_SUCCESS, _onRazorpaySuccess);
+      _razorpay!.on(Razorpay.EVENT_PAYMENT_ERROR, _onRazorpayError);
+      _razorpay!.on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
+    } catch (_) {}
+  }
+
+  void _onRazorpaySuccess(PaymentSuccessResponse response) {
+    final tipId = _activeRazorpayTipId ??
+        ref.read(monetizationNotifierProvider).pendingTip?.tipId;
+    if (tipId == null) return;
+    ref.read(monetizationNotifierProvider.notifier).settleTip(
+          tipId: tipId,
+          providerPaymentId: response.paymentId,
+          providerSignature: response.signature,
+        );
+  }
+
+  void _onRazorpayError(PaymentFailureResponse response) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Razorpay payment cancelled or failed: ${response.message ?? 'Error code ${response.code}'}',
+        ),
+        backgroundColor: Colors.red.shade700,
+      ),
+    );
+  }
+
+  void _onExternalWallet(ExternalWalletResponse response) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Redirecting to wallet: ${response.walletName}')),
+    );
+  }
+
+  void _openRazorpayCheckout(ContributorTip tip, PaymentIntent intent) {
+    final keyId = intent.razorpayKeyId;
+    final orderId = intent.orderId ?? intent.gatewayReference;
+    if (_razorpay == null || keyId == null || keyId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Razorpay key not returned by backend order intent.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    _activeRazorpayTipId = tip.tipId;
+    final options = <String, dynamic>{
+      'key': keyId,
+      'amount': (tip.amountInr * 100).round(),
+      'currency': 'INR',
+      'order_id': orderId,
+      'name': 'LocalLens',
+      'description': 'Micro-tip for ${widget.recipientName} (${widget.spotName})',
+      'theme': {'color': '#0F766E'},
+    };
+    _razorpay!.open(options);
+  }
+
+  @override
   void dispose() {
+    _razorpay?.clear();
     _customAmountController.dispose();
     _noteController.dispose();
     super.dispose();
@@ -102,11 +170,8 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? '[Sandbox Mode: Simulated Payment - No Real Money Charged]\n'
-                              'Live banking rails are currently inactive. All payment intents and settlements are executed in sandbox mode via backend simulation.'
-                          : '⚡ Instant Digital Tipping • 100% Direct to Everyday Resident\n'
-                              'Empower local community members who curated this spot. Zero commission cut.',
+                      'Direct Digital Tipping via Razorpay (UPI / Cards)\n'
+                      '95% goes directly to the local resident who curated this spot (5% platform rail fee, min ₹5).',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.deepPurple.shade900,
@@ -244,35 +309,24 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                     ),
                     icon: const Icon(Icons.payment),
                     label: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? 'Complete Sandbox Payment (Success)'
-                          : 'Confirm & Send ₹${uiState.pendingTip!.amountInr.toStringAsFixed(0)} via UPI',
+                      uiState.pendingPaymentIntent!.mode == PaymentMode.live &&
+                              uiState.pendingPaymentIntent!.razorpayKeyId != null
+                          ? 'Pay ₹${uiState.pendingTip!.amountInr.toStringAsFixed(0)} via Razorpay (UPI / Card)'
+                          : 'Confirm & Send ₹${uiState.pendingTip!.amountInr.toStringAsFixed(0)}',
                     ),
                     onPressed: () {
-                      notifier.settleTip(
-                        tipId: uiState.pendingTip!.tipId,
-                        simulatedOutcome: 'SUCCESS',
-                      );
+                      final intent = uiState.pendingPaymentIntent!;
+                      final tip = uiState.pendingTip!;
+                      if (intent.mode == PaymentMode.live &&
+                          intent.razorpayKeyId != null &&
+                          intent.razorpayKeyId!.isNotEmpty) {
+                        _openRazorpayCheckout(tip, intent);
+                      } else {
+                        notifier.settleTip(tipId: tip.tipId);
+                      }
                     },
                   ),
                 ),
-                if (Platform.environment.containsKey('FLUTTER_TEST')) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                      icon: const Icon(Icons.cancel_outlined),
-                      label: const Text('Simulate Payment Failure'),
-                      onPressed: () {
-                        notifier.settleTip(
-                          tipId: uiState.pendingTip!.tipId,
-                          simulatedOutcome: 'FAILURE',
-                        );
-                      },
-                    ),
-                  ),
-                ],
               ],
             ]
             // Step 1: Select Amount & Initiate
@@ -373,11 +427,7 @@ class _TippingModalSheetState extends ConsumerState<TippingModalSheet> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.send),
-                    label: Text(
-                      Platform.environment.containsKey('FLUTTER_TEST')
-                          ? 'Initiate Tip of ₹${_currentAmount.toStringAsFixed(0)} (Sandbox)'
-                          : 'Send Instant Tip of ₹${_currentAmount.toStringAsFixed(0)}',
-                    ),
+                    label: Text('Send Instant Tip of ₹${_currentAmount.toStringAsFixed(0)}'),
                     onPressed: _currentAmount > 0
                         ? () {
                             notifier.initiateTip(

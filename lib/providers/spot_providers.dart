@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../models/contribution.dart';
@@ -7,21 +5,14 @@ import '../models/spot_card.dart';
 import '../services/contribution_service.dart';
 import '../services/spot_service.dart';
 
-/// Explicit flag controlling test mode vs live production backend execution.
-/// In automated flutter test environments, FLUTTER_TEST is detected automatically.
-final isTestModeProvider = StateProvider<bool>((ref) {
-  return Platform.environment.containsKey('FLUTTER_TEST');
-});
-
 /// Database provider for offline SQLite/Drift storage.
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
-  final isTest = ref.watch(isTestModeProvider);
-  final db = isTest ? AppDatabase(NativeDatabase.memory()) : AppDatabase();
+  final db = AppDatabase();
   ref.onDispose(() => db.close());
   return db;
 });
 
-/// Service provider for spot queries (mock, live Firestore, or local SQLite Drift).
+/// Service provider for live Firestore / local SQLite Drift spot queries.
 final spotServiceProvider = Provider<SpotService>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return SpotService(db: db);
@@ -54,13 +45,18 @@ final hasGeneratedRouteProvider = StateProvider<bool>((ref) => false);
 
 /// Service provider for contributor submissions and status pipeline.
 final contributionServiceProvider = Provider<ContributionService>((ref) {
-  final isTest = ref.watch(isTestModeProvider);
-  return ContributionService(isTestMode: isTest);
+  return ContributionService();
 });
 
 /// Contributor profile provider (Domain 05).
+/// Synchronous snapshot bound to FirebaseAuth UID; watch [liveContributorProfileProvider] for Firestore-hydrated data.
 final contributorProfileProvider = Provider<ContributorVerificationProfile>((ref) {
   return ref.watch(contributionServiceProvider).currentProfile;
+});
+
+/// Async Firestore-hydrated contributor profile provider.
+final liveContributorProfileProvider = FutureProvider<ContributorVerificationProfile>((ref) async {
+  return ref.watch(contributionServiceProvider).loadCurrentContributorProfile();
 });
 
 /// Active contribution currently being tracked through pipeline.

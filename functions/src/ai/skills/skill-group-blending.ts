@@ -17,6 +17,11 @@ import {
 import {
   blendGroupPreferences,
 } from '../services/preference-matching-service.js';
+import {
+  generateMultimodalEmbedding,
+  computeCosineSimilarity,
+} from '../services/embedding-service.js';
+import { getAIConfig } from '../config/env.js';
 
 export const SkillMemberInputSchema = z.object({
   userId: z.string().min(1),
@@ -152,11 +157,42 @@ export async function executeGroupBlendingSkill(
     });
   }
 
-  // Step 4: Calculate group cohesion score
+  // Step 4: Calculate group cohesion score (enhanced with Gemini Embedding 2 pairwise vibe similarity when live)
   let cohesionScore = 90;
   if (hasBudgetConflict) cohesionScore -= 15;
   if (hasPaceConflict) cohesionScore -= 10;
   if (inputMembers.length === 1) cohesionScore = 95;
+
+  const aiConfig = getAIConfig();
+  if (aiConfig.hasApiKey && inputMembers.length >= 2) {
+    try {
+      const memberVectors = await Promise.all(
+        inputMembers.map((m) => {
+          const vibeStr = [
+            ...(m.vibes || m.interestTags || []),
+            ...(m.dietaryRestrictions || []),
+            m.budgetTier,
+            m.preferredPace,
+          ].join(' ');
+          return generateMultimodalEmbedding({ text: vibeStr || 'local explorer', outputDimensionality: 1536 });
+        })
+      );
+      let simSum = 0;
+      let pairCount = 0;
+      for (let i = 0; i < memberVectors.length; i++) {
+        for (let j = i + 1; j < memberVectors.length; j++) {
+          simSum += computeCosineSimilarity(memberVectors[i]!.values, memberVectors[j]!.values);
+          pairCount++;
+        }
+      }
+      if (pairCount > 0) {
+        const embeddingCohesion = Math.round((simSum / pairCount) * 100);
+        cohesionScore = Math.round((cohesionScore * 0.5) + (embeddingCohesion * 0.5));
+      }
+    } catch {
+      // Keep deterministic cohesion score if embedding call fails
+    }
+  }
   cohesionScore = Math.max(40, Math.min(100, cohesionScore));
 
   const explanationSummary = `Blended preferences for ${inputMembers.length} traveler(s): ${dietaryUnion.length} non-negotiable dietary restriction(s) accommodated with strict safety union; budget consensus set at ${consensusBudgetTier}.`;

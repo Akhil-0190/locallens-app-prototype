@@ -197,8 +197,12 @@ export async function assessPlaceAuthenticity(
           rating: matched.rating,
           reviewCount: matched.reviewCount,
           isOpenNow: matched.isOpenNow,
+          businessStatus: (matched as any).businessStatus ?? null,
+          priceLevel: (matched as any).priceLevel ?? null,
+          goodForGroups: (matched as any).goodForGroups ?? null,
           openingHoursDescriptions: matched.openingHoursDescriptions,
           summary: matched.summary,
+          reviews: Array.isArray((matched as any).reviews) ? (matched as any).reviews : [],
         }
       : null,
     discrepancies: evidence.discrepancies || [],

@@ -6,6 +6,8 @@
  * Never commit keys or hardcode them in client apps.
  */
 
+import { hasMapsFixtures } from './fixture-registry';
+
 export interface MapsPlatformConfig {
   apiKey: string;
   placesApiKey?: string;
@@ -57,7 +59,7 @@ export function getMapsConfig(): MapsPlatformConfig {
     requestTimeoutMs: 10000,
     maxRetryAttempts: 3,
     retryInitialDelayMs: 500,
-    allowMockFallback: true, // Gracefully use labeled sample data when live API is unconfigured/denied
+    allowMockFallback: hasMapsFixtures(),
     fieldMasks: {
       placesSearch: [
         'places.id',
@@ -69,7 +71,12 @@ export function getMapsConfig(): MapsPlatformConfig {
         'places.rating',
         'places.userRatingCount',
         'places.currentOpeningHours',
-        'places.editorialSummary'
+        'places.regularOpeningHours',
+        'places.businessStatus',
+        'places.priceLevel',
+        'places.goodForGroups',
+        'places.editorialSummary',
+        'places.reviews'
       ].join(','),
       placeDetails: [
         'id',
@@ -82,7 +89,11 @@ export function getMapsConfig(): MapsPlatformConfig {
         'userRatingCount',
         'regularOpeningHours',
         'currentOpeningHours',
+        'businessStatus',
+        'priceLevel',
+        'goodForGroups',
         'editorialSummary',
+        'reviews',
         'googleMapsUri'
       ].join(','),
       routesCompute: [

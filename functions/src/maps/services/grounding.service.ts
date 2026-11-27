@@ -22,8 +22,7 @@ import { CanonicalPlaceDocument } from '../../types/contracts';
 import { PlacesService } from './places.service';
 import { NormalizationService } from './normalization.service';
 import { MapsUrlParserService } from './url-parser.service';
-import { SAMPLE_PLACES_FIXTURE } from '../fixtures/sample-places.fixture';
-import { SAMPLE_HOURLY_CAPACITIES_FIXTURE } from '../fixtures/sample-crowd.fixture';
+import { getMapsFixtures } from '../fixture-registry';
 
 export class GroundingService {
   private placesService: PlacesService;
@@ -172,10 +171,10 @@ export class GroundingService {
           : undefined,
       });
     } catch {
-      // If live API unavailable, use mock candidates
-      candidates = SAMPLE_PLACES_FIXTURE.map((p) =>
-        NormalizationService.normalizePlace(p, true)
-      );
+      // If live API unavailable and test fixtures are registered, use registered candidates
+      candidates = this.config.allowMockFallback
+        ? getMapsFixtures().places.map((p) => NormalizationService.normalizePlace(p, true))
+        : [];
     }
 
     if (candidates.length === 0) {
@@ -480,9 +479,10 @@ export class GroundingService {
       matched?.openingHoursDescriptions?.join('; ') || 'Check Maps for hours';
 
     const currentSlotId = `${nowIso.substring(0, 13)}:00:00Z`;
+    const hourlyCaps = getMapsFixtures().hourlyCapacities;
     const knownCapacity =
-      matched?.placeId && SAMPLE_HOURLY_CAPACITIES_FIXTURE[matched.placeId]
-        ? Object.values(SAMPLE_HOURLY_CAPACITIES_FIXTURE[matched.placeId])[0]
+      matched?.placeId && hourlyCaps[matched.placeId]
+        ? Object.values(hourlyCaps[matched.placeId])[0]
         : null;
 
     const capacityState = knownCapacity

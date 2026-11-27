@@ -1,22 +1,25 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../database/app_database.dart';
+import '../models/app_failure.dart';
+import '../models/spot_card.dart';
 import '../models/walking_route.dart';
 
 /// Client route service providing walking routes and alternative (Plan-B) paths.
 ///
-/// INTEGRATION BOUNDARY:
-/// - Developer C owns Google Routes API generation and stop sequencing (`Maps-computeCapacityAwareRoute`).
-/// - Developer C owns venue hourly capacity and rerouting decision logic (`Maps-computePlanBReroute`).
-/// - Developer C owns crowd reporting (`Maps-reportVenueCrowd`).
-/// - Developer D presents supplied route responses, manages offline SQLite caching,
-///   and triggers crowd report callables with graceful offline fallback.
+/// Calls `Maps-computeCapacityAwareRoute`, `Maps-computePlanBReroute`,
+/// `Maps-reportVenueCrowd`, and `Maps-evaluateVenueCapacity`, with Drift SQLite
+/// offline route cache fallback when downloaded packs exist.
 class RouteService {
   final FirebaseFunctions? _functionsInstance;
-  final bool isTestMode;
+  final AppDatabase? _db;
 
   RouteService({
     FirebaseFunctions? functions,
-    this.isTestMode = false,
-  }) : _functionsInstance = functions;
+    AppDatabase? db,
+  })  : _functionsInstance = functions,
+        _db = db;
 
   FirebaseFunctions? get _functions {
     if (_functionsInstance != null) return _functionsInstance;
@@ -27,300 +30,249 @@ class RouteService {
     }
   }
 
-  /// Returns canonical walking route matching C3 SAMPLE_NORMALIZED_WALKING_ROUTE fixture.
-  /// Calls Developer C's callable `Maps-computeCapacityAwareRoute` when live,
-  /// with automatic fallback to sample canonical route if offline or uninitialized.
+  String get _callerUid {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? 'guest_traveler';
+    } catch (_) {
+      return 'guest_traveler';
+    }
+  }
+
+  Future<void> _cacheRouteLocally(WalkingRoute route) async {
+    if (_db == null) return;
+    try {
+      await _db.into(_db.localRoutes).insertOnConflictUpdate(route.toCompanion());
+    } catch (_) {}
+  }
+
+  /// Resolves real Firestore coordinates for stops when SpotCards are not explicitly supplied.
+  Future<List<Map<String, dynamic>>> _resolveStopsPayload({
+    required List<String> placeIds,
+    List<SpotCard>? spots,
+  }) async {
+    if (spots != null && spots.length >= 2) {
+      final valid = spots
+          .where((s) => s.latitude != null && s.longitude != null)
+          .map((s) => {
+                'placeId': s.id,
+                'spotName': s.spotName,
+                'coordinate': {
+                  'latitude': s.latitude!,
+                  'longitude': s.longitude!,
+                },
+              })
+          .toList();
+      if (valid.length >= 2) return valid;
+    }
+
+    // Query live verified places from Firestore if coordinates aren't already in memory
+    final resolved = <Map<String, dynamic>>[];
+    try {
+      final firestore = FirebaseFirestore.instance;
+      for (final id in placeIds) {
+        final placeDoc = await firestore.collection('places').doc(id).get();
+        Map<String, dynamic>? data = placeDoc.exists ? placeDoc.data() : null;
+        if (data == null) {
+          final spotDoc = await firestore.collection('spots').doc(id).get();
+          data = spotDoc.exists ? spotDoc.data() : null;
+        }
+        if (data != null) {
+          final coords = data['coordinates'] is Map
+              ? Map<String, dynamic>.from(data['coordinates'] as Map)
+              : null;
+          final lat = (coords?['latitude'] ?? data['latitude']) as num?;
+          final lng = (coords?['longitude'] ?? data['longitude']) as num?;
+          if (lat != null && lng != null) {
+            resolved.add({
+              'placeId': id,
+              'spotName': (data['spotName'] ?? data['name'] ?? id).toString(),
+              'coordinate': {
+                'latitude': lat.toDouble(),
+                'longitude': lng.toDouble(),
+              },
+            });
+          }
+        }
+      }
+
+      // If requested placeIds weren't in Firestore yet, fetch top verified places with real coordinates
+      if (resolved.length < 2) {
+        final topSnap = await firestore.collection('places').limit(6).get();
+        for (final doc in topSnap.docs) {
+          final data = doc.data();
+          final coords = data['coordinates'] is Map
+              ? Map<String, dynamic>.from(data['coordinates'] as Map)
+              : null;
+          final lat = (coords?['latitude'] ?? data['latitude']) as num?;
+          final lng = (coords?['longitude'] ?? data['longitude']) as num?;
+          if (lat != null && lng != null) {
+            resolved.add({
+              'placeId': doc.id,
+              'spotName': (data['spotName'] ?? data['name'] ?? doc.id).toString(),
+              'coordinate': {
+                'latitude': lat.toDouble(),
+                'longitude': lng.toDouble(),
+              },
+            });
+            if (resolved.length >= 3) break;
+          }
+        }
+      }
+    } catch (_) {
+      // Firestore unavailable in isolated test environment
+    }
+
+    return resolved;
+  }
+
+  /// Calls `Maps-computeCapacityAwareRoute` with full stop coordinates, caching
+  /// successful routes into Drift `LocalRoutes`. Falls back strictly to cached
+  /// SQLite offline routes if offline; throws [AppFailure] if unavailable.
   Future<WalkingRoute> getPersonalizedRoute({
     required List<String> placeIds,
-    String routeTitle = 'Malleshwaram Heritage & Coffee Trail',
+    List<SpotCard>? spots,
+    String routeTitle = 'Walking Trail',
     String neighborhood = 'Malleshwaram',
   }) async {
+    Object? remoteError;
     final functions = _functions;
-    if (!isTestMode && functions != null) {
+    if (functions != null) {
       try {
-        final callable = functions.httpsCallable('Maps-computeCapacityAwareRoute');
-        final response = await callable.call<Map<String, dynamic>>({
-          'title': routeTitle,
-          'neighborhood': neighborhood,
-          'stops': placeIds.map((id) => {'placeId': id}).toList(),
-          'optimizeStopOrder': true,
-          'walkingPace': 'MODERATE',
-          'autoSubstituteFullStops': true,
-          'allowMockFallback': true,
-          'isGuestAccess': true,
-          'userId': 'guest_traveler',
-        });
+        final stopsPayload = await _resolveStopsPayload(
+          placeIds: placeIds,
+          spots: spots,
+        );
+        if (stopsPayload.length >= 2) {
+          final callable = functions.httpsCallable('Maps-computeCapacityAwareRoute');
+          final response = await callable.call<Map<String, dynamic>>({
+            'title': routeTitle,
+            'neighborhood': neighborhood,
+            'stops': stopsPayload,
+            'optimizeStopOrder': true,
+            'walkingPace': 'MODERATE',
+            'autoSubstituteFullStops': true,
+            'allowMockFallback': false,
+            'isGuestAccess': true,
+            'userId': _callerUid,
+          });
 
-        final data = Map<String, dynamic>.from(response.data);
-        if (data.containsKey('route') && data['route'] != null) {
-          return WalkingRoute.fromMap(Map<String, dynamic>.from(data['route'] as Map));
-        } else if (data.containsKey('routeId')) {
-          return WalkingRoute.fromMap(data);
+          final envelope = Map<String, dynamic>.from(response.data);
+          final inner = envelope['data'] is Map
+              ? Map<String, dynamic>.from(envelope['data'] as Map)
+              : envelope;
+          if (inner['route'] is Map) {
+            final liveRoute = WalkingRoute.fromMap(
+              Map<String, dynamic>.from(inner['route'] as Map),
+            );
+            await _cacheRouteLocally(liveRoute);
+            return liveRoute;
+          } else if (inner.containsKey('routeId')) {
+            final liveRoute = WalkingRoute.fromMap(inner);
+            await _cacheRouteLocally(liveRoute);
+            return liveRoute;
+          }
         }
-      } catch (_) {
-        // Fall back gracefully to canonical sample fixture
+      } catch (e) {
+        remoteError = e;
       }
     }
 
-    // Simulate network delay
-    await Future.delayed(const Duration(milliseconds: 300));
+    // Read cached route directly from Drift SQLite `LocalRoutes` when offline
+    if (_db != null) {
+      try {
+        final rows = await _db.select(_db.localRoutes).get();
+        if (rows.isNotEmpty) {
+          final hoodLower = neighborhood.toLowerCase();
+          final matched = rows.firstWhere(
+            (r) => r.neighborhood.toLowerCase().contains(hoodLower),
+            orElse: () => rows.first,
+          );
+          return WalkingRoute.fromLocalRoute(matched);
+        }
+      } catch (_) {}
+    }
 
-    // Canonical Malleshwaram Heritage & Coffee Trail matching Domain 08 contract sample
-    return WalkingRoute(
-      routeId: 'route_malleshwaram_heritage_01',
-      title: 'Malleshwaram Heritage & Coffee Trail',
-      neighborhood: 'Malleshwaram',
-      theme: 'Heritage / Culinary Walking Trail',
-      origin: const NormalizedCoordinate(
-        latitude: 12.998242,
-        longitude: 77.570953,
-        precision: 6,
-        formatted: '12.998242, 77.570953',
-      ),
-      destination: const NormalizedCoordinate(
-        latitude: 13.007250,
-        longitude: 77.571890,
-        precision: 6,
-        formatted: '13.007250, 77.571890',
-      ),
-      waypoints: const [
-        NormalizedCoordinate(
-          latitude: 13.000851,
-          longitude: 77.569421,
-          precision: 6,
-          formatted: '13.000851, 77.569421',
-        ),
-        NormalizedCoordinate(
-          latitude: 13.004120,
-          longitude: 77.571430,
-          precision: 6,
-          formatted: '13.004120, 77.571430',
-        ),
-      ],
-      waypointPlaceIds: const [
-        'place_ctr_malleshwaram_01',
-        'place_veena_stores_02',
-        'place_kadu_temple_03',
-      ],
-      optimizedWaypointOrder: const [0, 1, 2],
-      totalDistanceMeters: 1150,
-      totalDurationSeconds: 870,
-      formattedDistance: '1.1 km',
-      formattedDuration: '15 mins',
-      encodedPolyline: '_{znAw`~xMg@g@eAo@m@e@u@o@_Am@wA}@y@w@u@aAk@q@k@_Am@g@_{~jA}w_sMrAiB`@q@nAoBvB}CxAgBh@_@dAs@nBy@',
-      legs: const [
-        RouteLeg(
-          startPlaceId: 'place_ctr_malleshwaram_01',
-          endPlaceId: 'place_veena_stores_02',
-          distanceMeters: 450,
-          durationSeconds: 340,
-          startCoordinate: NormalizedCoordinate(
-            latitude: 12.998242,
-            longitude: 77.570953,
-            formatted: '12.998242, 77.570953',
-          ),
-          endCoordinate: NormalizedCoordinate(
-            latitude: 13.000851,
-            longitude: 77.569421,
-            formatted: '13.000851, 77.569421',
-          ),
-          steps: [
-            RouteStep(
-              instruction: 'Head north on Margosa Rd toward 7th Cross Rd',
-              distanceMeters: 200,
-              durationSeconds: 150,
-              startCoordinate: NormalizedCoordinate(
-                latitude: 12.998242,
-                longitude: 77.570953,
-                formatted: '12.998242, 77.570953',
-              ),
-              endCoordinate: NormalizedCoordinate(
-                latitude: 12.999900,
-                longitude: 77.570400,
-                formatted: '12.999900, 77.570400',
-              ),
-            ),
-            RouteStep(
-              instruction: 'Turn left onto 8th Cross Rd into Flower Market',
-              distanceMeters: 250,
-              durationSeconds: 190,
-              startCoordinate: NormalizedCoordinate(
-                latitude: 12.999900,
-                longitude: 77.570400,
-                formatted: '12.999900, 77.570400',
-              ),
-              endCoordinate: NormalizedCoordinate(
-                latitude: 13.000851,
-                longitude: 77.569421,
-                formatted: '13.000851, 77.569421',
-              ),
-            ),
-          ],
-        ),
-        RouteLeg(
-          startPlaceId: 'place_veena_stores_02',
-          endPlaceId: 'place_kadu_temple_03',
-          distanceMeters: 700,
-          durationSeconds: 530,
-          startCoordinate: NormalizedCoordinate(
-            latitude: 13.000851,
-            longitude: 77.569421,
-            formatted: '13.000851, 77.569421',
-          ),
-          endCoordinate: NormalizedCoordinate(
-            latitude: 13.007250,
-            longitude: 77.571890,
-            formatted: '13.007250, 77.571890',
-          ),
-          steps: [
-            RouteStep(
-              instruction: 'Walk north on Temple St toward Kadu Malleshwara Temple',
-              distanceMeters: 700,
-              durationSeconds: 530,
-              startCoordinate: NormalizedCoordinate(
-                latitude: 13.000851,
-                longitude: 77.569421,
-                formatted: '13.000851, 77.569421',
-              ),
-              endCoordinate: NormalizedCoordinate(
-                latitude: 13.007250,
-                longitude: 77.571890,
-                formatted: '13.007250, 77.571890',
-              ),
-            ),
-          ],
-        ),
-      ],
-      isMockData: true,
-      createdAt: '2026-11-20T08:30:00.000Z',
-      updatedAt: '2026-11-20T08:30:00.000Z',
+    throw AppFailure.network(
+      'No live route or offline pack route available for $neighborhood. Check connectivity or download an offline pack.',
+      remoteError,
     );
   }
 
-  /// Requests a Plan-B alternative route from supplied C4 disruption response.
-  /// Calls Developer C's callable `Maps-computePlanBReroute` when live,
-  /// with automatic fallback to sample Plan-B route if offline or uninitialized.
+  /// Requests a live 1-tap Plan-B alternative route via `Maps-computePlanBReroute`.
   Future<WalkingRoute> requestPlanBAlternative({
     required String originalRouteId,
     required String constrainedPlaceId,
+    WalkingRoute? originalRoute,
+    String disruptionType = 'VENUE_OVERCROWDED',
+    String? disruptionDescription,
+    bool preferIndoorAlternatives = false,
   }) async {
     final functions = _functions;
-    if (!isTestMode && functions != null) {
-      try {
-        final callable = functions.httpsCallable('Maps-computePlanBReroute');
-        final response = await callable.call<Map<String, dynamic>>({
-          'originalRouteId': originalRouteId,
-          'constrainedPlaceId': constrainedPlaceId,
-          'allowMockFallback': true,
-          'isGuestAccess': true,
-          'userId': 'guest_traveler',
-        });
-
-        final data = Map<String, dynamic>.from(response.data);
-        if (data.containsKey('route') && data['route'] != null) {
-          return WalkingRoute.fromMap(Map<String, dynamic>.from(data['route'] as Map));
-        } else if (data.containsKey('routeId')) {
-          return WalkingRoute.fromMap(data);
-        }
-      } catch (_) {
-        // Fall back gracefully to canonical sample fixture
-      }
+    if (functions == null || originalRoute == null) {
+      throw AppFailure.network(
+        'Cannot compute live Plan-B detour without network connectivity and an active route.',
+      );
     }
 
-    await Future.delayed(const Duration(milliseconds: 400));
+    try {
+      final callable = functions.httpsCallable('Maps-computePlanBReroute');
+      final response = await callable.call<Map<String, dynamic>>({
+        'originalRoute': originalRoute.toMap(),
+        'disruptions': [
+          {
+            'type': disruptionType,
+            'affectedPlaceId': constrainedPlaceId,
+            'description': disruptionDescription ??
+                '1-tap Plan B requested because venue is crowded or disrupted.',
+            'severity': 'MODERATE',
+            'signalTimestamp': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+        'preferredIndoorAlternatives': preferIndoorAlternatives,
+        'allowMockFallback': false,
+        'isGuestAccess': true,
+        'userId': _callerUid,
+      });
 
-    return WalkingRoute(
-      routeId: 'route_malleshwaram_plan_b_02',
-      title: 'Malleshwaram Uncrowded Garden & Coffee Bypass',
-      neighborhood: 'Malleshwaram',
-      theme: 'Quiet Alley & Filter Coffee Detour',
-      origin: const NormalizedCoordinate(
-        latitude: 12.998242,
-        longitude: 77.570953,
-        precision: 6,
-        formatted: '12.998242, 77.570953',
-      ),
-      destination: const NormalizedCoordinate(
-        latitude: 13.007250,
-        longitude: 77.571890,
-        precision: 6,
-        formatted: '13.007250, 77.571890',
-      ),
-      waypoints: const [
-        NormalizedCoordinate(
-          latitude: 13.001500,
-          longitude: 77.568900,
-          precision: 6,
-          formatted: '13.001500, 77.568900',
-        ),
-      ],
-      waypointPlaceIds: const [
-        'place_janatha_deluxe_alt',
-        'place_kadu_temple_03',
-      ],
-      optimizedWaypointOrder: const [0, 1],
-      totalDistanceMeters: 950,
-      totalDurationSeconds: 720,
-      formattedDistance: '950 m',
-      formattedDuration: '12 mins',
-      encodedPolyline: '_{znAw`~xMg@g@eAo@m@e@u@o@_Am@wA}@y@w@u@aAk@q@k@_Am@g@',
-      legs: const [
-        RouteLeg(
-          startPlaceId: 'place_janatha_deluxe_alt',
-          endPlaceId: 'place_kadu_temple_03',
-          distanceMeters: 950,
-          durationSeconds: 720,
-          startCoordinate: NormalizedCoordinate(
-            latitude: 13.001500,
-            longitude: 77.568900,
-            formatted: '13.001500, 77.568900',
-          ),
-          endCoordinate: NormalizedCoordinate(
-            latitude: 13.007250,
-            longitude: 77.571890,
-            formatted: '13.007250, 77.571890',
-          ),
-          steps: [
-            RouteStep(
-              instruction: 'Diverted via 9th Cross residential alley to avoid CTR queue',
-              distanceMeters: 400,
-              durationSeconds: 300,
-              startCoordinate: NormalizedCoordinate(
-                latitude: 13.001500,
-                longitude: 77.568900,
-                formatted: '13.001500, 77.568900',
-              ),
-              endCoordinate: NormalizedCoordinate(
-                latitude: 13.003500,
-                longitude: 77.570200,
-                formatted: '13.003500, 77.570200',
-              ),
-            ),
-            RouteStep(
-              instruction: 'Continue north to Kadu Malleshwara Temple court',
-              distanceMeters: 550,
-              durationSeconds: 420,
-              startCoordinate: NormalizedCoordinate(
-                latitude: 13.003500,
-                longitude: 77.570200,
-                formatted: '13.003500, 77.570200',
-              ),
-              endCoordinate: NormalizedCoordinate(
-                latitude: 13.007250,
-                longitude: 77.571890,
-                formatted: '13.007250, 77.571890',
-              ),
-            ),
-          ],
-        ),
-      ],
-      isMockData: true,
-      createdAt: '2026-11-20T08:35:00.000Z',
-      updatedAt: '2026-11-20T08:35:00.000Z',
-    );
+      final envelope = Map<String, dynamic>.from(response.data);
+      final inner = envelope['data'] is Map
+          ? Map<String, dynamic>.from(envelope['data'] as Map)
+          : envelope;
+      if (inner['updatedRoute'] is Map) {
+        final alt = WalkingRoute.fromMap(
+          Map<String, dynamic>.from(inner['updatedRoute'] as Map),
+        );
+        await _cacheRouteLocally(alt);
+        return alt;
+      } else if (inner['route'] is Map) {
+        final alt = WalkingRoute.fromMap(
+          Map<String, dynamic>.from(inner['route'] as Map),
+        );
+        await _cacheRouteLocally(alt);
+        return alt;
+      } else if (inner.containsKey('routeId')) {
+        final alt = WalkingRoute.fromMap(inner);
+        await _cacheRouteLocally(alt);
+        return alt;
+      }
+      throw AppFailure.backend('Plan-B service did not return an updated route.');
+    } on AppFailure {
+      rethrow;
+    } on FirebaseFunctionsException catch (e) {
+      throw AppFailure.backend(
+        e.message ?? 'Plan-B rerouting failed on server.',
+        code: e.code,
+        cause: e,
+      );
+    } catch (e) {
+      throw AppFailure.network(
+        'Unable to reach Plan-B routing service. Try again when online.',
+        e,
+      );
+    }
   }
 
-  /// Reports real-time venue crowd level via Developer C's callable `Maps-reportVenueCrowd`.
+  /// Reports real-time venue crowd level via `Maps-reportVenueCrowd`.
   Future<Map<String, dynamic>> reportVenueCrowd({
     required String placeId,
     required String crowdLevel, // 'LOW', 'MODERATE', 'HIGH', 'AT_CAPACITY'
@@ -328,59 +280,91 @@ class RouteService {
     bool isVerifiedResident = false,
   }) async {
     final functions = _functions;
-    if (!isTestMode && functions != null) {
-      try {
-        final callable = functions.httpsCallable('Maps-reportVenueCrowd');
-        final response = await callable.call<Map<String, dynamic>>({
-          'placeId': placeId,
-          'crowdLevel': crowdLevel,
-          'estimatedWaitMinutes': estimatedWaitMinutes,
-          'reporterType': isVerifiedResident ? 'LOCAL_RESIDENT' : 'VISITING_TRAVELER',
-        });
-        return Map<String, dynamic>.from(response.data);
-      } catch (_) {
-        // Fall back to local simulated response
-      }
+    if (functions == null) {
+      throw AppFailure.network('Crowd reporting requires an active network connection.');
     }
 
-    return {
-      'status': 'SUCCESS',
-      'placeId': placeId,
-      'crowdLevel': crowdLevel,
-      'pointsAwarded': isVerifiedResident ? 25 : 10,
-      'isSimulated': true,
-      'reportedAt': DateTime.now().toIso8601String(),
-    };
+    try {
+      final callable = functions.httpsCallable('Maps-reportVenueCrowd');
+      final response = await callable.call<Map<String, dynamic>>({
+        'placeId': placeId,
+        'crowdLevel': crowdLevel,
+        'estimatedWaitMinutes': estimatedWaitMinutes,
+        'reporterType': isVerifiedResident ? 'LOCAL_RESIDENT' : 'VISITING_TRAVELER',
+        'isGuestAccess': true,
+        'userId': _callerUid,
+      });
+      final envelope = Map<String, dynamic>.from(response.data);
+      final inner = envelope['data'] is Map
+          ? Map<String, dynamic>.from(envelope['data'] as Map)
+          : envelope;
+      return {
+        ...inner,
+        'pointsAwarded': inner['rewardPointsEarned'] ?? inner['pointsAwarded'] ?? 10,
+      };
+    } on FirebaseFunctionsException catch (e) {
+      throw AppFailure.backend(
+        e.message ?? 'Failed to submit crowd report.',
+        code: e.code,
+        cause: e,
+      );
+    } catch (e) {
+      throw AppFailure.network('Could not submit crowd report.', e);
+    }
   }
 
-  /// Returns sample active venue disruptions matching Domain 07 contract.
-  Future<List<DisruptionAlert>> getActiveDisruptions() async {
-    return const [
-      DisruptionAlert(
-        disruptionId: 'disrupt_ctr_crowd_01',
-        impactedPlaceId: 'place_ctr_malleshwaram_01',
-        impactedRouteIds: ['route_malleshwaram_heritage_01'],
-        type: 'OVERCROWDED_THROTTLED',
-        severity: 'REROUTE_RECOMMENDED',
-        description:
-            'Central Tiffin Room is currently at full capacity (12/12 visitors). 45-min queue on sidewalk.',
-        alternativeOptions: [
-          AlternativeOption(
-            alternativePlaceId: 'place_veena_stores_02',
-            alternativePlaceName: 'Veena Stores (Margosa Rd)',
-            detourDistanceMeters: 180,
-            indoorAlternative: false,
-          ),
-          AlternativeOption(
-            alternativePlaceId: 'place_janatha_deluxe_alt',
-            alternativePlaceName: 'Hotel Janatha (8th Cross)',
-            detourDistanceMeters: 220,
-            indoorAlternative: true,
-          ),
-        ],
-        activeFrom: '2026-11-20T08:00:00.000Z',
-        expiresAt: '2026-11-20T10:00:00.000Z',
-      ),
-    ];
+  /// Queries live venue capacity & throttling disruptions for active route stops via
+  /// `Maps-evaluateVenueCapacity`. Returns empty list when offline or all stops are clear.
+  Future<List<DisruptionAlert>> getActiveDisruptions({
+    WalkingRoute? route,
+  }) async {
+    if (_functions != null && route != null && route.waypointPlaceIds.isNotEmpty) {
+      final alerts = <DisruptionAlert>[];
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      final expiresIso = DateTime.now().toUtc().add(const Duration(hours: 1)).toIso8601String();
+      final callable = _functions!.httpsCallable('Maps-evaluateVenueCapacity');
+
+      for (final placeId in route.waypointPlaceIds) {
+        try {
+          final response = await callable.call<Map<String, dynamic>>({
+            'placeId': placeId,
+            'intendedVisitTime': nowIso,
+            'partySize': 1,
+            'allowMockFallback': false,
+            'isGuestAccess': true,
+            'userId': _callerUid,
+          });
+          final envelope = Map<String, dynamic>.from(response.data);
+          final eval = envelope['data'] is Map
+              ? Map<String, dynamic>.from(envelope['data'] as Map)
+              : envelope;
+          final status = eval['status']?.toString() ?? '';
+          final isThrottled = eval['isThrottled'] == true;
+          final crowdLevel = eval['crowdLevel']?.toString() ?? '';
+
+          if (isThrottled || status == 'AT_CAPACITY' || crowdLevel == 'HIGH') {
+            final current = eval['currentVisitorsCount'] ?? 0;
+            final max = eval['maxCapacity'] ?? 15;
+            alerts.add(DisruptionAlert(
+              disruptionId: 'live_crowd_${placeId}_${DateTime.now().millisecondsSinceEpoch}',
+              impactedPlaceId: placeId,
+              impactedRouteIds: [route.routeId],
+              type: 'OVERCROWDED_THROTTLED',
+              severity: isThrottled ? 'REROUTE_RECOMMENDED' : 'WARNING',
+              description: eval['notes']?.toString() ??
+                  '${placeId.replaceAll('_', ' ')} is currently busy ($current/$max visitors). Tap Plan-B to swap to a quieter nearby spot.',
+              alternativeOptions: const [],
+              activeFrom: nowIso,
+              expiresAt: expiresIso,
+            ));
+          }
+        } catch (_) {
+          // Non-fatal per-stop check: continue evaluating remaining stops
+        }
+      }
+      return alerts;
+    }
+
+    return const [];
   }
 }

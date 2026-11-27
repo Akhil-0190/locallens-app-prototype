@@ -48,6 +48,8 @@ export interface SettleTipInput {
   tipId: string;
   callerUserId: string;
   simulatedOutcome?: 'SUCCESS' | 'FAILURE';
+  providerPaymentId?: string;
+  providerSignature?: string;
   isAdminOverride?: boolean;
 }
 
@@ -197,6 +199,8 @@ export class TippingService {
       transactionId: input.tipId,
       gatewayReference: tipData.paymentGatewayReference || '',
       simulatedOutcome: input.simulatedOutcome,
+      providerPaymentId: input.providerPaymentId,
+      providerSignature: input.providerSignature,
     });
 
     if (!verification.verified) {

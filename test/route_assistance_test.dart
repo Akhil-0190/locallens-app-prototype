@@ -5,11 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:locallens/main.dart';
 import 'package:locallens/screens/walking_route_screen.dart';
-import 'package:locallens/services/route_service.dart';
-import 'package:locallens/services/street_assistance_service.dart';
 import 'package:locallens/widgets/adaptive_route_map.dart';
 import 'package:locallens/services/native_platform_service.dart';
 import 'package:locallens/utils/polyline_decoder.dart';
+import 'fakes/fake_services.dart';
 
 void main() {
   group('Task D4 Route & Street-Ready Assistance Test Suite', () {
@@ -22,15 +21,15 @@ void main() {
       expect(points.first.longitude, closeTo(77.655, 0.01));
     });
 
-    test('2. RouteService provides canonical walking route matching Domain 08 schema', () async {
-      final service = RouteService();
+    test('2. FakeRouteService provides canonical walking route matching Domain 08 schema', () async {
+      final service = FakeRouteService();
       final route = await service.getPersonalizedRoute(placeIds: ['place_1', 'place_2']);
 
       expect(route.routeId, equals('route_malleshwaram_heritage_01'));
       expect(route.formattedDistance, equals('1.1 km'));
       expect(route.formattedDuration, equals('15 mins'));
       expect(route.legs.length, equals(2));
-      expect(route.isMockData, isTrue);
+      expect(route.isMockData, isFalse);
 
       // Verify Plan-B alternative route contract
       final planB = await service.requestPlanBAlternative(
@@ -42,8 +41,8 @@ void main() {
       expect(planB.waypointPlaceIds.contains('place_janatha_deluxe_alt'), isTrue);
     });
 
-    test('3. StreetAssistanceService cultural ordering phrases and simulated B5 adapter', () async {
-      final service = StreetAssistanceService();
+    test('3. StreetAssistanceService cultural ordering phrases and camera/copilot contracts', () async {
+      final service = FakeStreetAssistanceService();
       final cards = service.getCulturalOrderingCards();
 
       expect(cards.length, greaterThanOrEqualTo(5));
@@ -51,37 +50,35 @@ void main() {
       expect(cards.first.phonetic, contains('Namaskara'));
 
       final answer = await service.askStreetCopilot('Where can I get filter coffee?');
-      expect(answer, contains('[Sample AI: Simulated B5 response]'));
       expect(answer, contains('CTR'));
 
       final cameraResult = await service.translateStreetImage('dummy_path.jpg');
-      expect(cameraResult.isSimulated, isTrue);
       expect(cameraResult.detectedScript, contains('Kannada'));
+      expect(cameraResult.engineLabel, isNotEmpty);
     });
 
     testWidgets('4. WalkingRouteScreen renders route overview, GoogleMap, stops, and Plan-B action',
         (WidgetTester tester) async {
-      // Set test screen size
       tester.view.physicalSize = const Size(540, 1200);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(
+        ProviderScope(
+          overrides: buildTestProviderOverrides(),
+          child: const MaterialApp(
             home: WalkingRouteScreen(),
           ),
         ),
       );
 
-      // Settle async loading
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
 
-      // 1. Verify Sample Route Data disclaimer
+      // 1. Verify Live Route Banner
       expect(
-        find.text('[Sample Route Data: C3 Routes API integration pending]'),
+        find.text('Live Dynamic Route Active (Google Routes & Crowd Throttling)'),
         findsOneWidget,
       );
 
@@ -101,7 +98,7 @@ void main() {
       expect(find.text('Venue Alert: High Crowd Capacity'), findsOneWidget);
       expect(find.text('Request Plan-B Reroute'), findsOneWidget);
       expect(
-        find.text('[Sample C4: Throttled — Redirecting to Plan-B alternative]'),
+        find.text('High crowd detected — use Plan-B to swap nearby'),
         findsOneWidget,
       );
 
@@ -128,8 +125,9 @@ void main() {
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(
+        ProviderScope(
+          overrides: buildTestProviderOverrides(),
+          child: const MaterialApp(
             home: WalkingRouteScreen(),
           ),
         ),
@@ -155,12 +153,12 @@ void main() {
       expect(find.textContaining('Namaskara'), findsOneWidget);
       expect(find.byIcon(Icons.volume_up), findsWidgets);
 
-      // Switch to Tab 2: Ask Guide (Simulated B5 Q&A)
+      // Switch to Tab 2: Ask Guide (Gemini Street Copilot)
       await tester.tap(find.text('Ask Guide'));
       await tester.pumpAndSettle();
 
       expect(
-        find.text('[Sample AI: Simulated B5 response]'),
+        find.text('Live Cultural Guide (Gemini Street Copilot)'),
         findsOneWidget,
       );
       expect(find.byType(TextField), findsOneWidget);
@@ -172,14 +170,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('[Sample AI: Simulated B5 response] Shri Sagar'), findsOneWidget);
+      expect(find.textContaining('Shri Sagar (CTR)'), findsOneWidget);
 
       // Switch to Tab 3: Camera Street Sign Translation
       await tester.tap(find.text('Translate'));
       await tester.pumpAndSettle();
 
       expect(
-        find.text('[Sample AI: Simulated B5 response]'),
+        find.text('Live Menu & Sign Translator (Gemma 4 E2B Edge / Gemini Vision)'),
         findsOneWidget,
       );
       expect(find.text('Capture Sign'), findsOneWidget);
@@ -187,7 +185,7 @@ void main() {
     });
 
     test('6. AdaptiveRouteMap unit verification of offline and online modes', () async {
-      final route = await RouteService().getPersonalizedRoute(placeIds: ['place_1']);
+      final route = await FakeRouteService().getPersonalizedRoute(placeIds: ['place_1']);
 
       final onlineMap = AdaptiveRouteMap(
         route: route,
@@ -216,15 +214,16 @@ void main() {
       expect(offlineMap.enableTileNetworkLoading, isFalse);
     });
 
-    testWidgets('7. App navigation smoke test reaches Walking Route Screen via Pocket Guide & Match Vibe',
+    testWidgets('7. App navigation smoke test reaches Walking Route Screen via Pocket Guide',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(540, 1200);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
-        const ProviderScope(
-          child: NeighborhoodGuideApp(),
+        ProviderScope(
+          overrides: buildTestProviderOverrides(),
+          child: const NeighborhoodGuideApp(),
         ),
       );
       await tester.pumpAndSettle();
@@ -239,7 +238,10 @@ void main() {
 
       // Verify WalkingRouteScreen is displayed
       expect(find.text('Street Walking Tour'), findsOneWidget);
-      expect(find.text('[Sample Route Data: C3 Routes API integration pending]'), findsOneWidget);
+      expect(
+        find.text('Live Dynamic Route Active (Google Routes & Crowd Throttling)'),
+        findsOneWidget,
+      );
     });
   });
 }

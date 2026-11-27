@@ -100,8 +100,8 @@ class _VoiceRecorderTileState extends State<VoiceRecorderTile> {
         if (!mounted) return;
         setState(() {
           _recordDurationSeconds++;
-          if (_recordDurationSeconds >= 90) {
-            _stopRecording(); // 90s max limit per Domain 04
+          if (_recordDurationSeconds >= 120) {
+            _stopRecording(); // Full 2-minute (120s) max limit per Stage 1 pitch deck promise
           }
         });
       });
@@ -214,7 +214,7 @@ class _VoiceRecorderTileState extends State<VoiceRecorderTile> {
                   _state == RecordingState.recorded ||
                   _state == RecordingState.playing)
                 Text(
-                  _formatDuration(_recordDurationSeconds),
+                  '${_formatDuration(_recordDurationSeconds)} / 02:00',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.bold,

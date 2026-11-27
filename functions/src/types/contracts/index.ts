@@ -220,10 +220,42 @@ export const PlaceCapacityStateSchema = z.object({
   lastUpdatedSlot: z.string(),
 });
 
+export const SafetyVerificationTierSchema = z.enum([
+  'UNVERIFIED',
+  'AI_EVIDENCE_CHECKED',
+  'COMMUNITY_VERIFIED',
+]);
+
+export const PlaceSafetyHygieneStateSchema = z.object({
+  verificationTier: SafetyVerificationTierSchema.default('UNVERIFIED'),
+  badges: z.array(z.string()).default([]),
+  endorsementCount: z.number().int().min(0).default(0),
+  hasExplicitConcerns: z.boolean().default(false),
+  observations: z.array(z.string()).default([]),
+  lastVerifiedAt: z.string().optional(),
+});
+
+export const CommunityDialectPhraseSchema = z.object({
+  language: z.string(),
+  script: z.string(),
+  transliteration: z.string(),
+  meaning: z.string().optional(),
+  verifiedByCount: z.number().int().min(1).default(1),
+});
+
+export const PlaceCommunitySignalsStateSchema = z.object({
+  dialectPhrases: z.array(CommunityDialectPhraseSchema).default([]),
+  latestCrowdLevel: CrowdLevelSchema.optional(),
+  latestCrowdUpdatedAt: z.string().optional(),
+  activeReportsCount: z.number().int().min(0).default(0),
+});
+
 export const CanonicalPlaceDocumentSchema = z.object({
   id: z.string().min(1),
   placeId: z.string().min(1),
+  googlePlaceId: z.string().optional(),
   spotName: z.string().min(1),
+  neighborhood: z.string().optional(),
   formattedAddress: z.string(),
   coordinate: NormalizedCoordinateSchema,
   mapsLink: z.string(),
@@ -233,6 +265,15 @@ export const CanonicalPlaceDocumentSchema = z.object({
   photoUrls: z.array(z.string()).default([]),
   openHours: z.string().default('Check Maps for hours'),
   isOpenNow: z.boolean().nullable().default(null),
+  rating: z.number().min(0).max(5).optional(),
+  userRatingCount: z.number().int().min(0).optional(),
+  reviewSentimentScore: z.number().min(0).max(1).optional(),
+  heritageContext: z.string().optional(),
+  safetyNotices: z.array(z.string()).optional(),
+  searchGroundingUrls: z.array(z.string()).optional(),
+  mustTryItems: z.array(z.string()).optional(),
+  safetyHygiene: PlaceSafetyHygieneStateSchema.optional(),
+  communitySignals: PlaceCommunitySignalsStateSchema.optional(),
   authenticity: PlaceAuthenticityEnrichmentSchema,
   capacity: PlaceCapacityStateSchema,
   contributorAttribution: z
@@ -248,6 +289,11 @@ export const CanonicalPlaceDocumentSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
+
+export type SafetyVerificationTier = z.infer<typeof SafetyVerificationTierSchema>;
+export type PlaceSafetyHygieneState = z.infer<typeof PlaceSafetyHygieneStateSchema>;
+export type CommunityDialectPhrase = z.infer<typeof CommunityDialectPhraseSchema>;
+export type PlaceCommunitySignalsState = z.infer<typeof PlaceCommunitySignalsStateSchema>;
 
 export type CrowdLevel = z.infer<typeof CrowdLevelSchema>;
 export type TouristTrapRisk = z.infer<typeof TouristTrapRiskSchema>;

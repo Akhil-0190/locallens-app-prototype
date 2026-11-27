@@ -18,7 +18,13 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import { randomUUID } from 'node:crypto';
+import { geminiApiKey, mapsApiKey } from '../../config/secrets.js';
 import { ApiSuccessResponse } from '../../types/contracts/index.js';
+
+const assistanceCallableOptions = {
+  secrets: [geminiApiKey, mapsApiKey],
+  memory: '512MiB' as const,
+};
 import {
   assertRateLimit,
   assertLiveSessionTokenIssuance,
@@ -79,7 +85,7 @@ function successEnvelope<T>(data: T, startMs: number): ApiSuccessResponse {
  * Callable: initializeLiveSession
  * Mints an ephemeral session token for Gemini 3.8 Live WebSocket connection.
  */
-export const initializeLiveSession = onCall(async (request) => {
+export const initializeLiveSession = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -107,7 +113,7 @@ export const initializeLiveSession = onCall(async (request) => {
  * Callable: askStreetCopilot
  * Interactive conversational Q&A for walking guidance.
  */
-export const askStreetCopilot = onCall(async (request) => {
+export const askStreetCopilot = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -135,7 +141,7 @@ export const askStreetCopilot = onCall(async (request) => {
  * Callable: translateText
  * Real-time translation between regional scripts and English.
  */
-export const translateText = onCall(async (request) => {
+export const translateText = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -164,7 +170,7 @@ export const translateText = onCall(async (request) => {
  * Returns cultural ordering cards for street vendors and eateries.
  * Public curated reference with strict payload bounds.
  */
-export const getOrderingPhrases = onCall(async (request) => {
+export const getOrderingPhrases = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   if (JSON.stringify(request.data || {}).length > 4096) {
     throw new HttpsError('invalid-argument', 'Payload exceeds maximum allowed size.');
@@ -189,7 +195,7 @@ export const getOrderingPhrases = onCall(async (request) => {
  * Explains contextual temple, dining, and market decorum.
  * Public curated reference with strict payload bounds.
  */
-export const getEtiquetteGuidance = onCall(async (request) => {
+export const getEtiquetteGuidance = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   if (JSON.stringify(request.data || {}).length > 4096) {
     throw new HttpsError('invalid-argument', 'Payload exceeds maximum allowed size.');
@@ -213,7 +219,7 @@ export const getEtiquetteGuidance = onCall(async (request) => {
  * Callable: translateCameraSignage
  * Multimodal image OCR & translation for signage and menus.
  */
-export const translateCameraSignage = onCall(async (request) => {
+export const translateCameraSignage = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -242,7 +248,7 @@ export const translateCameraSignage = onCall(async (request) => {
  * Generates spoken walking cues under 60 words for device TTS.
  * Externally billed AI operation: requires authentication.
  */
-export const generateAudioGuidance = onCall(async (request) => {
+export const generateAudioGuidance = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -271,7 +277,7 @@ export const generateAudioGuidance = onCall(async (request) => {
  * Explains dynamic walking reroutes using Developer C's PlanBExplanationContext.
  * Requires authenticated traveler session.
  */
-export const explainPlanBReroute = onCall(async (request) => {
+export const explainPlanBReroute = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -299,7 +305,7 @@ export const explainPlanBReroute = onCall(async (request) => {
  * Callable: formatGeminiHandoff
  * Exports traveler context for Continue in Gemini.
  */
-export const formatGeminiHandoff = onCall(async (request) => {
+export const formatGeminiHandoff = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;
@@ -327,7 +333,7 @@ export const formatGeminiHandoff = onCall(async (request) => {
  * Callable: generateTripPlan
  * Generates an uncrowded, personalized multi-day Gen Z trip plan with transit advice.
  */
-export const generateTripPlan = onCall(async (request) => {
+export const generateTripPlan = onCall(assistanceCallableOptions, async (request) => {
   const startMs = Date.now();
   checkAppCheckIfEnforced(request);
   const isGuest = (request.data as any)?.isGuestAccess === true;

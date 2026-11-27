@@ -12,6 +12,9 @@ import { z } from 'zod';
 import {
   ExtractedPracticalDetailsSchema,
 } from '../../types/contracts/index.js';
+import { getAIConfig } from '../config/env.js';
+import { GroundingService } from '../../maps/services/grounding.service.js';
+import { assessPlaceAuthenticity } from '../services/authenticity-assessment-service.js';
 
 export const GroundingEvidenceInputSchema = z.object({
   placeId: z.string().optional(),
@@ -72,6 +75,67 @@ export async function executeTrapFilteringSkill(
   input: TrapFilterSkillInput
 ): Promise<TrapFilterSkillOutput> {
   const parsedInput = TrapFilterSkillInputSchema.parse(input);
+  const aiConfig = getAIConfig();
+  const hasMapsKey = Boolean(process.env.MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY);
+
+  // Live Google Maps + Gemini 3.8 Flash Trap Filtering when live keys exist and caller did not inject unit-test evidence
+  if (!parsedInput.groundingEvidence && hasMapsKey && aiConfig.hasApiKey) {
+    try {
+      const grounding = new GroundingService({ allowMockFallback: false });
+      const grounded = await grounding.groundContributedPlace({
+        spotName: parsedInput.placeName,
+        neighborhoodHint: parsedInput.neighborhood,
+        infoParagraph:
+          parsedInput.voiceExtraction?.insiderTips?.join('. ') || parsedInput.placeName,
+      });
+
+      if (grounded.evidence.matchedPlace && !grounded.evidence.matchedPlace.isMockData) {
+        const assessment = await assessPlaceAuthenticity({
+          evidence: grounded.evidence,
+          contributorNarrative: parsedInput.voiceExtraction?.insiderTips?.join('. '),
+        });
+        const score = Math.round(assessment.overallAuthenticityScore);
+        const isTrap = assessment.isTouristTrap;
+        const trapScore = isTrap ? Math.max(65, 100 - score) : Math.max(10, 100 - score);
+        const badge =
+          score >= 85
+            ? 'HYPERLOCAL'
+            : score >= 75
+            ? 'EXPERT_CURATED'
+            : score >= 50
+            ? 'COMMUNITY_VERIFIED'
+            : 'UNDER_REVIEW';
+        const verdict = isTrap
+          ? 'FLAGGED_TOURIST_TRAP'
+          : score >= 80
+          ? 'STRONGLY_RECOMMENDED'
+          : score >= 50
+          ? 'RECOMMENDED_WITH_CAUTION'
+          : 'UNVERIFIED_PENDING_GROUNDING';
+
+        return {
+          success: true,
+          placeName: grounded.evidence.matchedPlace.name || parsedInput.placeName,
+          authenticityScore: score,
+          authenticityBadge: badge,
+          isTouristTrapRisk: isTrap,
+          touristTrapScore: trapScore,
+          trapIndicators: assessment.touristTrap.deductionFactors,
+          evidenceSynthesis: {
+            mapsEvidenceStatus: 'CONFIRMED_GROUNDED',
+            hasSpatialDiscrepancy: assessment.conflictSynthesis.hasFactualConflicts,
+            googleReviewCount: grounded.evidence.matchedPlace.reviewCount,
+            googleRating: grounded.evidence.matchedPlace.rating,
+          },
+          safetyDisclosures: assessment.safetyAndHygiene.observations,
+          recommendationVerdict: verdict,
+          curatorSummary: assessment.localSentimentSummary,
+        };
+      }
+    } catch {
+      // Fall through to honest MISSING_EVIDENCE handling below
+    }
+  }
 
   // Case 1: Missing Maps Grounding Evidence
   if (!parsedInput.groundingEvidence) {

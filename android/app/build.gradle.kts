@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -5,6 +7,13 @@ plugins {
     // END: FlutterFire Configuration
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -35,6 +44,7 @@ android {
         // If omitted, falls back to a non-functional placeholder solely to allow local build compilation without committing secrets.
         // WARNING: This placeholder is NOT a valid production key and will not authenticate with Google Maps servers.
         val mapsApiKeyProperty = (project.findProperty("MAPS_API_KEY") as String?)?.takeIf { it.isNotBlank() }
+            ?: localProperties.getProperty("MAPS_API_KEY")?.takeIf { it.isNotBlank() }
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKeyProperty ?: "PLACEHOLDER_DEV_KEY_NOT_FOR_PRODUCTION"
     }
 
@@ -43,6 +53,10 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
@@ -60,5 +74,7 @@ flutter {
 dependencies {
     implementation("com.google.mlkit:genai-prompt:1.0.0-beta5")
     implementation("com.google.mlkit:genai-summarization:1.0.0-beta1")
+    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 }

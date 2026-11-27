@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'native_platform_service.dart';
 
 /// Model representing regional cultural greetings and vendor interaction phrases.
 class OrderingCard {
@@ -12,6 +15,8 @@ class OrderingCard {
   final String englishMeaning;
   final String category; // 'GREETING', 'FOOD_ORDER', 'PRICING', 'DIETARY'
   final String usageTip;
+  final String? formalityLevel;
+  final String? contextSuitability;
 
   const OrderingCard({
     required this.phraseRegional,
@@ -19,6 +24,34 @@ class OrderingCard {
     required this.englishMeaning,
     required this.category,
     required this.usageTip,
+    this.formalityLevel,
+    this.contextSuitability,
+  });
+
+  factory OrderingCard.fromMap(Map<String, dynamic> map) {
+    return OrderingCard(
+      phraseRegional: map['phraseRegional']?.toString() ?? '',
+      phonetic: map['phonetic']?.toString() ?? '',
+      englishMeaning: map['englishMeaning']?.toString() ?? '',
+      category: map['category']?.toString() ?? 'FOOD_ORDER',
+      usageTip: map['usageTip']?.toString() ?? '',
+      formalityLevel: map['formalityLevel']?.toString(),
+      contextSuitability: map['contextSuitability']?.toString(),
+    );
+  }
+}
+
+class DynamicOrderingCardsResult {
+  final List<OrderingCard> cards;
+  final String targetLanguage;
+  final String modelUsed;
+  final bool isLiveAi;
+
+  const DynamicOrderingCardsResult({
+    required this.cards,
+    required this.targetLanguage,
+    required this.modelUsed,
+    required this.isLiveAi,
   });
 }
 
@@ -28,24 +61,22 @@ class CameraTranslationResult {
   final String originalText;
   final String translatedText;
   final String culturalContext;
-  final bool isSimulated;
+  final String engineLabel;
 
   const CameraTranslationResult({
     required this.detectedScript,
     required this.originalText,
     required this.translatedText,
     required this.culturalContext,
-    this.isSimulated = true,
+    this.engineLabel = 'Gemini 3.8 Flash Vision',
   });
 }
 
 /// Street-ready AI assistance, translation, and local audio guidance service.
 ///
-/// INTEGRATION BOUNDARY:
-/// - Developer B owns Gemini Live, conversational AI behavior, and camera translation (B5).
-/// - As B5 is not yet deployed, this service uses an isolated sample adapter.
-/// - Clearly discloses: [Sample AI: Simulated B5 response].
-/// - Text-to-Speech audio guidance runs locally via flutter_tts on the client device.
+/// Calls Cloud Functions `Assistance-*` online, or falls back to on-device
+/// Gemma 4 E2B (LiteRT-LM) / Google ML Kit offline translation when offline.
+/// Text-to-Speech audio guidance runs locally via `flutter_tts` on the client device.
 class StreetAssistanceService {
   final FlutterTts _tts = FlutterTts();
   bool _isSpeaking = false;
@@ -134,103 +165,278 @@ class StreetAssistanceService {
     ];
   }
 
-  /// Conversational Q&A adapter adhering to B5 dialogue schema.
-  Future<String> askStreetCopilot(String query) async {
+  /// Fetches dynamic spot-specific vendor ordering cards via `Assistance-getOrderingPhrases`
+  /// powered by Gemini 3.8 Flash (with Firestore cache per spot + language).
+  Future<DynamicOrderingCardsResult> fetchDynamicOrderingCards({
+    String? spotId,
+    String? spotName,
+    String neighborhood = 'Malleshwaram',
+    String targetLanguage = 'kn-IN',
+    String targetVendorType = 'GENERAL',
+    List<String>? menuHints,
+    List<String>? dietaryRestrictions,
+  }) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable('Assistance-askStreetCopilot');
-      final result = await callable.call<Map<String, dynamic>>({
-        'query': query,
-        'neighborhood': 'Malleshwaram',
-        'currentLatitude': 12.9982,
-        'currentLongitude': 77.5709,
-        'isGuestAccess': true,
-        'userId': 'guest_traveler',
+          .httpsCallable('Assistance-getOrderingPhrases');
+      final response = await callable.call<Map<String, dynamic>>({
+        'neighborhood': neighborhood,
+        'language': targetLanguage,
+        'targetLanguage': targetLanguage,
+        'targetVendorType': targetVendorType,
+        if (spotId != null && spotId.isNotEmpty) 'spotId': spotId,
+        if (spotName != null && spotName.isNotEmpty) 'spotName': spotName,
+        if (menuHints != null && menuHints.isNotEmpty) 'menuHints': menuHints,
+        if (dietaryRestrictions != null && dietaryRestrictions.isNotEmpty)
+          'dietaryRestrictions': dietaryRestrictions,
       });
-      final data = Map<String, dynamic>.from(result.data);
-      if (data.containsKey('answer') && data['answer'] != null) {
-        return data['answer'] as String;
-      } else if (data.containsKey('data') && data['data'] is Map) {
-        final subData = Map<String, dynamic>.from(data['data'] as Map);
-        if (subData.containsKey('answer')) return subData['answer'] as String;
-      }
-    } catch (_) {}
 
-    final q = query.toLowerCase();
+      final envelope = Map<String, dynamic>.from(response.data);
+      final data = envelope['data'] is Map
+          ? Map<String, dynamic>.from(envelope['data'] as Map)
+          : envelope;
+      final rawCards = data['cards'] as List<dynamic>? ?? const [];
+      final parsedCards = rawCards
+          .whereType<Map>()
+          .map((c) => OrderingCard.fromMap(Map<String, dynamic>.from(c)))
+          .where((c) => c.phraseRegional.isNotEmpty)
+          .toList();
 
-    if (q.contains('coffee') || q.contains('ctr') || q.contains('benne')) {
-      return '[Sample AI: Simulated B5 response] Shri Sagar (CTR) has been serving its signature benne dose since the 1950s. Order at the front register first, collect your token, and take a seat in the heritage wood-panel hall.';
-    } else if (q.contains('temple') || q.contains('dress') || q.contains('shoes')) {
-      return '[Sample AI: Simulated B5 response] For local temples, remove footwear at the courtyard gate before entering. Modest dress covering shoulders and knees is traditional.';
-    } else if (q.contains('rain') || q.contains('alley') || q.contains('water')) {
-      return '[Sample AI: Simulated B5 response] During heavy rains, inner stone alleyways can be slippery. Divert via main tree-lined avenues for covered pedestrian pathways.';
-    }
-
-    return '[Sample AI: Simulated B5 response] Welcome to your neighborhood exploration! Tap any spot to view verified crowd capacity, listen to local audio cues, or ask for vendor ordering cards.';
-  }
-
-  /// Visual translation adapter for captured street signage.
-  /// Uses Google ML Kit on-device Text Recognition when running on device,
-  /// with automatic fallback to curated heritage cultural translations.
-  Future<CameraTranslationResult> translateStreetImage(String imagePath) async {
-    String recognizedText = '';
-    bool isLiveOcr = false;
-
-    try {
-      if (imagePath.isNotEmpty && File(imagePath).existsSync()) {
-        final inputImage = InputImage.fromFilePath(imagePath);
-        final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-        final RecognizedText result = await textRecognizer.processImage(inputImage);
-        await textRecognizer.close();
-
-        if (result.text.trim().isNotEmpty) {
-          recognizedText = result.text.trim();
-          isLiveOcr = true;
-        }
+      if (parsedCards.isNotEmpty) {
+        final modelUsed = data['modelUsed']?.toString() ?? 'gemini-3.8-flash';
+        return DynamicOrderingCardsResult(
+          cards: parsedCards,
+          targetLanguage: data['targetLanguage']?.toString() ?? targetLanguage,
+          modelUsed: modelUsed,
+          isLiveAi: modelUsed != 'curated-cultural-repository',
+        );
       }
     } catch (_) {
-      // Graceful fallback for test harness or environments without native ML Kit C++ runtime
+      // Fall back to local offline phrase book when unreachable
     }
 
-    if (isLiveOcr && recognizedText.isNotEmpty) {
-      final sampleKannadaPhrases = {
-        'shri sagar': 'Shri Sagar (Central Tiffin Room) - Pure Ghee & Butter Dose',
-        'benne dose': 'Hot butter dose served with coconut chutney',
-        'coffee': 'South Indian slow-dripped chicory filter coffee',
-        'veena stores': 'Veena Stores - Legendary Malleshwaram breakfast counter',
-        'kadu malleshwara': 'Kadu Malleshwara Temple historic entrance',
-      };
+    return DynamicOrderingCardsResult(
+      cards: getCulturalOrderingCards(),
+      targetLanguage: targetLanguage,
+      modelUsed: 'offline-phrasebook-fallback',
+      isLiveAi: false,
+    );
+  }
 
-      String translatedText = 'Local Neighborhood Storefront Sign';
-      String culturalContext = 'Detected via Google ML Kit on-device text recognition.';
-      final lower = recognizedText.toLowerCase();
+  /// Conversational Q&A backed by Cloud Function `Assistance-askStreetCopilot`.
+  /// Throws an explicit error when unreachable so UI can offer on-device AI or retry.
+  Future<String> askStreetCopilot(
+    String query, {
+    String neighborhood = 'Malleshwaram',
+    String preferredLanguage = 'en-IN',
+  }) async {
+    String uid = 'guest_traveler';
+    try {
+      uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest_traveler';
+    } catch (_) {}
 
-      for (final entry in sampleKannadaPhrases.entries) {
-        if (lower.contains(entry.key)) {
-          translatedText = entry.value;
-          culturalContext = 'Heritage establishment in Malleshwaram verified via on-device ML Kit OCR.';
-          break;
-        }
+    final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+        .httpsCallable('Assistance-askStreetCopilot');
+    final result = await callable.call<Map<String, dynamic>>({
+      'query': query,
+      'travelerContext': {
+        'currentNeighborhood': neighborhood,
+        'preferredLanguage': preferredLanguage,
+      },
+      'isGuestAccess': true,
+      'userId': uid,
+    });
+    final data = Map<String, dynamic>.from(result.data);
+    if (data['answer'] is String && (data['answer'] as String).isNotEmpty) {
+      return data['answer'] as String;
+    }
+    if (data['data'] is Map) {
+      final subData = Map<String, dynamic>.from(data['data'] as Map);
+      if (subData['answer'] is String && (subData['answer'] as String).isNotEmpty) {
+        return subData['answer'] as String;
       }
+    }
+    throw Exception('Street Copilot returned an empty response. Please try again.');
+  }
 
-      return CameraTranslationResult(
-        detectedScript: 'On-Device ML Kit OCR (Latin / Regional)',
-        originalText: recognizedText,
-        translatedText: translatedText,
-        culturalContext: culturalContext,
-        isSimulated: false,
+  /// Real 2-Path Camera Sign & Menu Translation:
+  /// - Path A (Offline / Edge Vision): On-device Gemma 4 E2B Multimodal (LiteRT-LM) supporting 140+ languages directly from pixels.
+  /// - Path B (Online Cloud Vision): `Assistance-translateCameraSignage` powered by Gemini 3.8 Flash vision.
+  /// - Path C (Offline Fallback when Gemma 4 E2B isn't downloaded): Multi-script Google ML Kit OCR with honest status.
+  Future<CameraTranslationResult> translateStreetImage(
+    String imagePath, {
+    String targetLanguage = 'en',
+  }) async {
+    if (imagePath.isEmpty || !File(imagePath).existsSync()) {
+      return const CameraTranslationResult(
+        detectedScript: 'Unavailable',
+        originalText: '',
+        translatedText: 'No readable image file was captured.',
+        culturalContext: 'Capture a clear, well-lit photo of the storefront sign or menu.',
+        engineLabel: 'Capture Error',
       );
     }
 
-    // Curated fallback for sample fixtures or test environments
-    await Future.delayed(const Duration(milliseconds: 250));
+    final nativePlatform = NativePlatformService();
+    final networkStatus = await nativePlatform.getNetworkStatus();
+    final isOffline = networkStatus == DeviceNetworkStatus.offline;
+    final edgeSupport = await nativePlatform.checkEdgeDeviceSupport();
+
+    // PATH A: On-Device Gemma 4 E2B Multimodal Vision (140+ languages, zero internet required)
+    if (edgeSupport.gemmaE2bSupported &&
+        edgeSupport.gemmaModelDownloaded &&
+        (isOffline || edgeSupport.gemmaLoaded)) {
+      const prompt =
+          'Read every sign, menu item, and price in this street photo (any script/language). '
+          'Return strict JSON only: '
+          '{"detectedScript":"...","originalText":"...","translatedText":"...","culturalContext":"..."}';
+      final gen = await nativePlatform.runGemmaMultimodal(
+        prompt: prompt,
+        imagePath: imagePath,
+        modelPath: edgeSupport.gemmaModelPath,
+      );
+      if (gen.success && gen.text.isNotEmpty) {
+        try {
+          final cleaned = gen.text
+              .replaceAll(RegExp(r'^```json\s*', multiLine: true), '')
+              .replaceAll(RegExp(r'^```\s*', multiLine: true), '')
+              .replaceAll(RegExp(r'```\s*$', multiLine: true), '')
+              .trim();
+          final decoded = jsonDecode(cleaned);
+          if (decoded is Map<String, dynamic>) {
+            return CameraTranslationResult(
+              detectedScript: decoded['detectedScript']?.toString() ?? 'Detected On-Device',
+              originalText: decoded['originalText']?.toString() ?? '',
+              translatedText: decoded['translatedText']?.toString() ?? gen.text,
+              culturalContext: decoded['culturalContext']?.toString() ??
+                  'Translated 100% offline via on-device Gemma 4 E2B (${gen.backend}).',
+              engineLabel: 'On-Device Gemma 4 E2B (${gen.backend})',
+            );
+          }
+        } catch (_) {
+          // If model replied in natural prose instead of strict JSON, display it cleanly
+          return CameraTranslationResult(
+            detectedScript: 'Multimodal On-Device Vision',
+            originalText: '(Captured Street Signage)',
+            translatedText: gen.text,
+            culturalContext:
+                'Translated 100% offline via on-device Gemma 4 E2B (${gen.backend}, ${gen.tokensPerSec.toStringAsFixed(1)} tok/s).',
+            engineLabel: 'On-Device Gemma 4 E2B (${gen.backend})',
+          );
+        }
+      }
+    }
+
+    // PATH B: Online Cloud Gemini 3.8 Flash Vision (`Assistance-translateCameraSignage`)
+    if (!isOffline) {
+      try {
+        final bytes = await File(imagePath).readAsBytes();
+        final lowerPath = imagePath.toLowerCase();
+        final mimeType = lowerPath.endsWith('.png')
+            ? 'image/png'
+            : lowerPath.endsWith('.webp')
+                ? 'image/webp'
+                : 'image/jpeg';
+
+        String uid = 'guest_traveler';
+        try {
+          uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest_traveler';
+        } catch (_) {}
+
+        final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+            .httpsCallable('Assistance-translateCameraSignage');
+        final response = await callable.call<Map<String, dynamic>>({
+          'imagePayload': {
+            'base64Data': base64Encode(bytes),
+            'mimeType': mimeType,
+          },
+          'captureContext': 'MENU_BOARD',
+          'targetLanguage': targetLanguage,
+          'isGuestAccess': true,
+          'userId': uid,
+        });
+
+        final envelope = Map<String, dynamic>.from(response.data);
+        final data = envelope['data'] is Map
+            ? Map<String, dynamic>.from(envelope['data'] as Map)
+            : envelope;
+
+        final translated = data['translatedText']?.toString() ?? '';
+        final original = data['originalText']?.toString() ?? '';
+        final script = data['detectedScript']?.toString() ?? 'Detected Script';
+        final contextNote = data['culturalContext']?.toString() ?? '';
+        final modelUsed = data['modelUsed']?.toString() ?? 'gemini-3.8-flash';
+
+        final menuItems = data['menuItemsDetected'] as List<dynamic>? ?? const [];
+        final menuSummary = menuItems
+            .whereType<Map>()
+            .map((m) {
+              final name = m['itemName']?.toString() ?? '';
+              final price = m['priceDetected']?.toString();
+              return price != null && price.isNotEmpty ? '$name ($price)' : name;
+            })
+            .where((s) => s.isNotEmpty)
+            .join(', ');
+
+        if (translated.isNotEmpty || original.isNotEmpty) {
+          return CameraTranslationResult(
+            detectedScript: script,
+            originalText: original,
+            translatedText: menuSummary.isNotEmpty
+                ? '$translated\n\nMenu items: $menuSummary'
+                : translated,
+            culturalContext: contextNote.isNotEmpty
+                ? contextNote
+                : 'Translated online via Cloud Gemini 3.8 Flash Vision.',
+            engineLabel: 'Cloud Vision ($modelUsed)',
+          );
+        }
+      } catch (_) {
+        // Fall through cleanly to on-device ML Kit OCR
+      }
+    }
+
+    // PATH C: Honest On-Device ML Kit OCR Fallback (Latin + Devanagari)
+    String recognizedText = '';
+    String scriptDetected = 'On-Device ML Kit OCR';
+    try {
+      final inputImage = InputImage.fromFilePath(imagePath);
+      final latinRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final latinRes = await latinRecognizer.processImage(inputImage);
+      await latinRecognizer.close();
+
+      recognizedText = latinRes.text.trim();
+      if (recognizedText.isEmpty) {
+        final devanagariRecognizer =
+            TextRecognizer(script: TextRecognitionScript.devanagiri);
+        final devRes = await devanagariRecognizer.processImage(inputImage);
+        await devanagariRecognizer.close();
+        if (devRes.text.trim().isNotEmpty) {
+          recognizedText = devRes.text.trim();
+          scriptDetected = 'On-Device ML Kit OCR (Devanagari)';
+        }
+      }
+    } catch (_) {}
+
+    if (recognizedText.isNotEmpty) {
+      return CameraTranslationResult(
+        detectedScript: scriptDetected,
+        originalText: recognizedText,
+        translatedText: recognizedText,
+        culturalContext: edgeSupport.gemmaE2bSupported
+            ? 'Text extracted offline via ML Kit OCR. Download Gemma 4 E2B in Offline Packs for 140+ language offline translation.'
+            : 'Text extracted offline via ML Kit OCR (device RAM < 6 GB safety guard; reconnect for Cloud Gemini 3.8 Flash translation).',
+        engineLabel: 'On-Device ML Kit OCR',
+      );
+    }
+
     return const CameraTranslationResult(
-      detectedScript: 'Kannada (ಕನ್ನಡ)',
-      originalText: 'ಶ್ರೀ ಸಾಗರ್ ಉಪಹಾರ ಗೃಹ — ಶುದ್ಧ ತುಪ್ಪ ಮತ್ತು ಬೆಣ್ಣೆ ದೋಸೆ',
-      translatedText: 'Shri Sagar Refreshments — Pure Ghee & Butter Dose',
-      culturalContext:
-          'Heritage signage of Central Tiffin Room dating back to early 20th century Bengaluru.',
-      isSimulated: true,
+      detectedScript: 'Unreadable / Offline',
+      originalText: '',
+      translatedText:
+          'Could not read text offline without Gemma 4 E2B installed. Download Gemma 4 E2B over Wi-Fi or reconnect for Gemini 3.8 Flash Vision.',
+      culturalContext: 'Ensure good lighting and hold the camera steady over the sign.',
+      engineLabel: 'Offline (Model Not Downloaded)',
     );
   }
 

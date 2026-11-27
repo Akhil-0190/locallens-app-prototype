@@ -1,5 +1,3 @@
-// ignore: deprecated_member_use
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +6,7 @@ import '../models/spot_card.dart';
 import '../models/traveler_preferences.dart';
 import '../providers/spot_providers.dart';
 import '../providers/traveler_providers.dart';
+import '../services/group_capacity_service.dart';
 import '../widgets/app_async_states.dart';
 import '../widgets/spot_card_tile.dart';
 import '../widgets/traveler_preference_summary_card.dart';
@@ -161,10 +160,95 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
     );
   }
 
+  Future<void> _reserveHourlySlot(SpotCard spot) async {
+    final groupService = ref.read(groupCapacityServiceProvider);
+    final activeGroup = ref.read(activeGroupSessionProvider);
+    final partySize = activeGroup != null
+        ? activeGroup.members.length
+        : ref.read(groupSizeProvider);
+
+    try {
+      final visit = await groupService.bookHourlySlot(
+        placeId: spot.id,
+        partySize: partySize,
+        groupSessionId: activeGroup?.sessionId,
+        memberUserIds: activeGroup?.members.map((m) => m.userId).toList(),
+      );
+      final updated = Map<String, BookedVisitModel>.from(ref.read(bookedVisitsProvider));
+      updated[spot.id] = visit;
+      ref.read(bookedVisitsProvider.notifier).state = updated;
+      ref.invalidate(discoverySpotsProvider);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Reserved $partySize hourly slot(s) at ${spot.spotName} (${visit.slotId})',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not reserve slot: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _checkInSlot(SpotCard spot, BookedVisitModel visit) async {
+    try {
+      final checked = await ref.read(groupCapacityServiceProvider).checkInHourlySlot(
+            visitId: visit.visitId,
+            latitude: spot.latitude,
+            longitude: spot.longitude,
+          );
+      final updated = Map<String, BookedVisitModel>.from(ref.read(bookedVisitsProvider));
+      updated[spot.id] = checked;
+      ref.read(bookedVisitsProvider.notifier).state = updated;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Checked in at ${spot.spotName}!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Check-in failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelSlot(SpotCard spot, BookedVisitModel visit) async {
+    try {
+      await ref.read(groupCapacityServiceProvider).cancelHourlySlot(visit.visitId);
+      final updated = Map<String, BookedVisitModel>.from(ref.read(bookedVisitsProvider));
+      updated.remove(spot.id);
+      ref.read(bookedVisitsProvider.notifier).state = updated;
+      ref.invalidate(discoverySpotsProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Released hourly slot at ${spot.spotName}.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not cancel slot: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final discoveryAsync = ref.watch(discoverySpotsProvider);
     final selectedNeighborhood = ref.watch(selectedNeighborhoodFilterProvider);
+    final weatherContext = ref.watch(discoveryWeatherProvider);
+    final groupBlend = ref.watch(groupBlendSummaryProvider);
+    final bookedVisits = ref.watch(bookedVisitsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -185,32 +269,30 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // 1. Prominent Contract & Sample Data Disclosure Banner
+          // 1. Live & Grounded Cultural Discovery Banner
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
-              color: Platform.environment.containsKey('FLUTTER_TEST') ? Colors.amber.shade50 : const Color(0xFFCCFBF1),
+              color: const Color(0xFFCCFBF1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Platform.environment.containsKey('FLUTTER_TEST') ? Colors.amber.shade400 : const Color(0xFF14B8A6)),
+              border: Border.all(color: const Color(0xFF14B8A6)),
             ),
-            child: Row(
+            child: const Row(
               children: [
                 Icon(
-                  Platform.environment.containsKey('FLUTTER_TEST') ? Icons.info_outline : Icons.verified,
+                  Icons.verified,
                   size: 18,
-                  color: Platform.environment.containsKey('FLUTTER_TEST') ? Colors.amber.shade900 : const Color(0xFF0F766E),
+                  color: Color(0xFF0F766E),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    Platform.environment.containsKey('FLUTTER_TEST')
-                        ? '[Sample Discovery Data: Illustrative sample results — live integrations pending]'
-                        : 'Live & Verified Local Culture • Grounded via Google Maps & Everyday Insiders',
+                    'Live & Verified Local Culture • Grounded via Google Maps & Everyday Insiders',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
-                      color: Platform.environment.containsKey('FLUTTER_TEST') ? Colors.amber.shade900 : const Color(0xFF0F766E),
+                      color: Color(0xFF0F766E),
                     ),
                   ),
                 ),
@@ -241,7 +323,96 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
 
           // 2. Domain 02 Traveler Preference Summary Card
           const TravelerPreferenceSummaryCard(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+
+          // 2b. Live Google Weather Context Banner (Stage 2 Promise #10)
+          if (weatherContext != null && weatherContext.condition != 'UNAVAILABLE') ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: weatherContext.isWalkingImpaired
+                    ? Colors.orange.shade50
+                    : Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: weatherContext.isWalkingImpaired
+                      ? Colors.orange.shade300
+                      : Colors.blue.shade200,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    weatherContext.isWalkingImpaired ? Icons.thunderstorm : Icons.wb_sunny_outlined,
+                    size: 18,
+                    color: weatherContext.isWalkingImpaired
+                        ? Colors.orange.shade900
+                        : Colors.blue.shade800,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Live Weather: ${weatherContext.condition} (${weatherContext.temperatureCelsius.toStringAsFixed(0)}°C)'
+                      '${weatherContext.advisory != null ? ' • ${weatherContext.advisory}' : ''}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: weatherContext.isWalkingImpaired
+                            ? Colors.orange.shade900
+                            : Colors.blue.shade900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // 2c. Live Group Consensus Blend Banner (Stage 2 Promise #8)
+          if (groupBlend != null) ...[
+            Container(
+              padding: const EdgeInsets.all(10),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.indigo.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.indigo.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Squad ${groupBlend.sessionCode} • ${groupBlend.memberCount} Members • ${groupBlend.groupCohesionScore}% Cohesion',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.indigo.shade900,
+                    ),
+                  ),
+                  if (groupBlend.blendedVibeSummary.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      groupBlend.blendedVibeSummary,
+                      style: TextStyle(fontSize: 11, color: Colors.indigo.shade800),
+                    ),
+                  ],
+                  if (groupBlend.dietaryUnion.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Strict Dietary Union: ${groupBlend.dietaryUnion.join(', ')}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade900,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
 
           // 3. Segmented Navigation (Curated Spots vs Route Builder)
           SegmentedButton<int>(
@@ -360,12 +531,62 @@ class _MatchVibeScreenState extends ConsumerState<MatchVibeScreen> {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    ...spots.map(
-                      (spot) => SpotCardTile(
+                    ...spots.map((spot) {
+                      final booked = bookedVisits[spot.id];
+                      return SpotCardTile(
                         spot: spot,
                         onGreetingTap: () => _showGreetingDialog(spot),
-                      ),
-                    ),
+                        actions: [
+                          if (booked == null)
+                            FilledButton.tonalIcon(
+                              onPressed: spot.isThrottled ? null : () => _reserveHourlySlot(spot),
+                              icon: const Icon(Icons.event_available, size: 14),
+                              label: Text(
+                                spot.isThrottled ? 'Slot Full' : 'Reserve Hourly Slot',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              style: FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              ),
+                            )
+                          else if (booked.status != 'COMPLETED') ...[
+                            FilledButton.icon(
+                              onPressed: () => _checkInSlot(spot, booked),
+                              icon: const Icon(Icons.check_circle_outline, size: 14),
+                              label: const Text('Check In', style: TextStyle(fontSize: 12)),
+                              style: FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              ),
+                            ),
+                            OutlinedButton(
+                              onPressed: () => _cancelSlot(spot, booked),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              ),
+                              child: const Text('Cancel Slot', style: TextStyle(fontSize: 12)),
+                            ),
+                          ] else
+                            Chip(
+                              label: const Text('Checked In ✓', style: TextStyle(fontSize: 11)),
+                              backgroundColor: Colors.green.shade100,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          if (spot.mapsLink.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () => _openMapsLink(spot.mapsLink),
+                              icon: const Icon(Icons.map, size: 14),
+                              label: const Text('Maps', style: TextStyle(fontSize: 12)),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              ),
+                            ),
+                        ],
+                      );
+                    }),
                   ],
                 );
               },

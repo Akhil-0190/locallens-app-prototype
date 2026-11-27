@@ -28,6 +28,27 @@ export interface PlaceAddressComponent {
   languageCode: string;
 }
 
+export interface PlaceReviewRaw {
+  name?: string;
+  relativePublishTimeDescription?: string;
+  rating?: number;
+  text?: LocalizedText;
+  originalText?: LocalizedText;
+  authorAttribution?: {
+    displayName?: string;
+    uri?: string;
+  };
+  publishTime?: string;
+}
+
+export interface NormalizedPlaceReview {
+  rating: number;
+  text: string;
+  relativePublishTimeDescription?: string;
+  authorDisplayName?: string;
+  publishTime?: string;
+}
+
 export interface GooglePlaceNewRaw {
   id: string;
   name?: string; // Resource name format: places/PLACE_ID
@@ -42,7 +63,10 @@ export interface GooglePlaceNewRaw {
   userRatingCount?: number;
   regularOpeningHours?: PlaceOpeningHours;
   currentOpeningHours?: PlaceOpeningHours;
+  businessStatus?: string;
+  goodForGroups?: boolean;
   editorialSummary?: LocalizedText;
+  reviews?: PlaceReviewRaw[];
   priceLevel?: string;
   websiteUri?: string;
   googleMapsUri?: string;
@@ -104,6 +128,10 @@ export interface NormalizedPlace {
   reviewCount: number;
   isOpenNow: boolean | null;
   openingHoursDescriptions: string[];
+  businessStatus?: string;
+  priceLevel?: string;
+  goodForGroups?: boolean;
+  reviews?: NormalizedPlaceReview[];
   summary: string;
   mapsUrl: string;
   isMockData: boolean;

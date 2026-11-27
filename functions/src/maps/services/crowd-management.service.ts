@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { db } from '../../config/firebase.js';
 import {
   deriveSlotId,
   getHourlyCapacity as getBackendHourlyCapacity,
@@ -38,11 +39,7 @@ import type {
   CommunityCrowdSignal,
   ReportVenueCrowdResult,
 } from '../types/crowd.types.js';
-import {
-  SAMPLE_HOURLY_CAPACITIES_FIXTURE,
-  SAMPLE_FALLBACK_ALTERNATIVES_FIXTURE,
-  SAMPLE_COMMUNITY_CROWD_SIGNALS_FIXTURE,
-} from '../fixtures/sample-crowd.fixture.js';
+import { getMapsFixtures } from '../fixture-registry.js';
 
 export class CrowdManagementService {
   private static routesService = new RoutesService();
@@ -131,9 +128,9 @@ export class CrowdManagementService {
     }
 
     if (!baseEvaluation) {
-      // 2. Check Mock / Sample Fixture (if fallback enabled)
+      // 2. Check test-registered fixture (if fallback enabled)
       if (allowMockFallback) {
-        const placeFixtures = SAMPLE_HOURLY_CAPACITIES_FIXTURE[placeId];
+        const placeFixtures = getMapsFixtures().hourlyCapacities[placeId];
         if (placeFixtures && placeFixtures[slotId]) {
           baseEvaluation = CrowdManagementService.buildEvaluationFromDoc(
             placeFixtures[slotId],
@@ -303,6 +300,26 @@ export class CrowdManagementService {
     existing.unshift(signal);
     CrowdManagementService.liveCommunitySignalsStore.set(placeId, existing);
 
+    // Persist to Firestore community_signals collection & mirror latestCrowdLevel to places/spots
+    try {
+      await db.collection('community_signals').doc(reportId).set({
+        signalId: reportId,
+        signalType: 'CROWD',
+        ...signal,
+        createdAt: reportedAt,
+      });
+      const placeCrowdPatch = {
+        'communitySignals.latestCrowdLevel': crowdLevel,
+        'communitySignals.latestCrowdUpdatedAt': reportedAt,
+        'capacity.crowdLevel': crowdLevel,
+        updatedAt: reportedAt,
+      };
+      await db.collection('places').doc(placeId).update(placeCrowdPatch).catch(() => {});
+      await db.collection('spots').doc(placeId).update(placeCrowdPatch).catch(() => {});
+    } catch {
+      // Non-blocking if running in unit test environment without Firestore connection
+    }
+
     const synthesizedEvaluation = await CrowdManagementService.evaluateVenueCapacity({
       placeId,
       intendedVisitTime: reportedAt,
@@ -331,7 +348,7 @@ export class CrowdManagementService {
       return activeLive;
     }
 
-    const fixtureSignals = SAMPLE_COMMUNITY_CROWD_SIGNALS_FIXTURE[placeId] || [];
+    const fixtureSignals = getMapsFixtures().communitySignals[placeId] || [];
     return fixtureSignals.filter((s) => new Date(s.expiresAt).getTime() > nowMs);
   }
 
@@ -396,7 +413,7 @@ export class CrowdManagementService {
     }
 
     if (!doc && allowMockFallback) {
-      doc = SAMPLE_HOURLY_CAPACITIES_FIXTURE[placeId]?.[slotId] || null;
+      doc = getMapsFixtures().hourlyCapacities[placeId]?.[slotId] || null;
     }
 
     if (doc && doc.suggestedAlternatives && doc.suggestedAlternatives.length > 0) {
@@ -431,9 +448,9 @@ export class CrowdManagementService {
       }
     }
 
-    // 2. If no alternatives from doc and mock fallback allowed, check fallback fixture
+    // 2. If no alternatives from doc and mock fallback allowed, check test-registered fallback alternatives
     if (alternatives.length === 0 && allowMockFallback) {
-      const fixtureAlts = SAMPLE_FALLBACK_ALTERNATIVES_FIXTURE[placeId];
+      const fixtureAlts = getMapsFixtures().fallbackAlternatives[placeId];
       if (fixtureAlts) {
         alternatives.push(...fixtureAlts);
       }

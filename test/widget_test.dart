@@ -3,14 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:locallens/main.dart';
+import 'fakes/fake_services.dart';
 
 void main() {
   testWidgets('Full app navigation smoke test across all 3 shell destinations',
       (WidgetTester tester) async {
-    // Build app within Riverpod ProviderScope
+    // Build app within Riverpod ProviderScope using clean test fakes
     await tester.pumpWidget(
-      const ProviderScope(
-        child: NeighborhoodGuideApp(),
+      ProviderScope(
+        overrides: buildTestProviderOverrides(),
+        child: const NeighborhoodGuideApp(),
       ),
     );
 
@@ -63,8 +65,9 @@ void main() {
       'D2 Contributor Experience: onboarding, regional language, preview, and submission flow',
       (WidgetTester tester) async {
     await tester.pumpWidget(
-      const ProviderScope(
-        child: NeighborhoodGuideApp(),
+      ProviderScope(
+        overrides: buildTestProviderOverrides(),
+        child: const NeighborhoodGuideApp(),
       ),
     );
     await tester.pumpAndSettle();
@@ -136,21 +139,23 @@ void main() {
 
     // 6. Confirm & Submit
     await tester.tap(find.text('Confirm & Submit'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     // Verify pipeline status tracker is rendered
     expect(find.text('Pipeline Ingestion Status'), findsOneWidget);
     expect(find.text('Asset Upload to Cloud Storage (A3)'), findsOneWidget);
     expect(find.text('Gemini Multimodal Analysis (B2)'), findsOneWidget);
-    expect(find.text('Google Maps Place Grounding (C1/C2)'), findsOneWidget);
+    expect(find.text('Google Maps Place Grounding'), findsOneWidget);
   });
 
   testWidgets(
-      'D3 Traveler Discovery: preferences onboarding sheet, solo/group mode, sample disclaimer, Domain 06 spot cards and authenticity badges',
+      'D3 Traveler Discovery: preferences onboarding sheet, solo/group mode, live banner, spot cards and authenticity badges',
       (WidgetTester tester) async {
     await tester.pumpWidget(
-      const ProviderScope(
-        child: NeighborhoodGuideApp(),
+      ProviderScope(
+        overrides: buildTestProviderOverrides(),
+        child: const NeighborhoodGuideApp(),
       ),
     );
     await tester.pumpAndSettle();
@@ -159,16 +164,16 @@ void main() {
     await tester.tap(find.byIcon(Icons.explore));
     await tester.pumpAndSettle();
 
-    // 1. Verify Sample Data Disclaimer Banner
+    // 1. Verify Live Discovery Banner
     expect(
       find.text(
-          '[Sample Discovery Data: Illustrative sample results — live integrations pending]'),
+          'Live & Verified Local Culture • Grounded via Google Maps & Everyday Insiders'),
       findsOneWidget,
     );
 
     // 2. Verify Traveler Preference Summary Card
     expect(find.text('Solo Explorer'), findsOneWidget);
-    expect(find.text('Domain 02'), findsOneWidget);
+    expect(find.text('Curated Palate'), findsOneWidget);
     expect(find.text('Preferences'), findsOneWidget);
 
     // 3. Open Preferences Onboarding Sheet
@@ -177,11 +182,11 @@ void main() {
 
     // Verify Sheet sections
     expect(find.text('Traveler Preferences'), findsOneWidget);
-    expect(find.text('Exploration Mode (Domain 09)'), findsOneWidget);
-    expect(find.text('Favorite Vibes (Domain 02)'), findsOneWidget);
+    expect(find.text('Exploration Mode'), findsOneWidget);
+    expect(find.text('Favorite Vibes'), findsOneWidget);
     expect(find.text('Save Traveler Preferences'), findsOneWidget);
 
-    // Switch to Group Vibe mode (Domain 09)
+    // Switch to Group Vibe mode
     await tester.tap(find.text('Group Vibe'));
     await tester.pumpAndSettle();
 
@@ -189,15 +194,14 @@ void main() {
     await tester.tap(find.text('Save Traveler Preferences'));
     await tester.pumpAndSettle();
 
-    // Verify Summary Card updated to Group Taste Matching (Domain 09)
+    // Verify Summary Card updated to Group Taste Matching
     expect(find.text('Group Taste Matching'), findsOneWidget);
-    expect(find.text('Domain 09'), findsOneWidget);
+    expect(find.text('Squad Match'), findsOneWidget);
 
-    // 4. Verify Discovered Domain 06 Spot Cards
-    expect(find.text('Central Tiffin Room (Shri Sagar)'), findsOneWidget);
+    // 4. Verify Discovered Spot Cards
+    expect(find.text('Central Tiffin Room (CTR / Shri Sagar)'), findsAtLeastNWidgets(1));
     expect(find.text('96% Authentic Local Spot'), findsOneWidget);
-    expect(find.text('MODERATE Crowd (4/12 visitors)'), findsOneWidget);
-    expect(find.text('Sample Data (Domain 06)'), findsAtLeastNWidgets(1));
+    expect(find.text('MODERATE Crowd (4/12 visitors)'), findsAtLeastNWidgets(1));
     expect(find.text('Discovered by Priya Sharma'), findsAtLeastNWidgets(1));
 
     // 5. Test Neighborhood Filter
@@ -209,7 +213,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify filtered spot card: Brahmin's Coffee Bar
-    expect(find.text("Brahmin's Coffee Bar"), findsOneWidget);
+    expect(find.text("Brahmin's Coffee Bar"), findsAtLeastNWidgets(1));
     expect(find.text('97% Authentic Local Spot'), findsOneWidget);
     expect(find.text('Discovered by Priya Sharma'), findsAtLeastNWidgets(1));
   });

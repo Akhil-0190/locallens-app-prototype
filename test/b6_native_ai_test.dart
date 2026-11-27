@@ -1,18 +1,21 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:locallens/services/native_platform_service.dart';
 import 'package:locallens/services/offline_model_manager.dart';
+import 'fakes/fake_services.dart';
 
 void main() {
   group('Task B6 On-Device AI & Native Integration Test Suite', () {
-    test('OfflineModelManager metadata, path, and size constants conform to B6 contract', () {
+    test('OfflineModelManager metadata, path, and size constants conform to B6 LiteRT-LM contract', () {
+      expect(OfflineModelManager.litertModelFileName, 'gemma-4-E2B-it.litertlm');
+      expect(OfflineModelManager.litertApproxSizeBytes, 2600000000);
       expect(OfflineModelManager.modelFileName, 'gemma-4-E2B-it-Q4_K_M.gguf');
       expect(OfflineModelManager.expectedSizeBytes, 3344000000);
       expect(
         OfflineModelManager.expectedSha256,
         '740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8',
       );
-      expect(OfflineModelManager.minRequiredDiskSpaceMb, 5000);
+      expect(OfflineModelManager.minRequiredDiskSpaceMb, 4000);
+      expect(OfflineModelManager.minRequiredRamMb, 6000);
       expect(
         OfflineModelManager.downloadUrl,
         contains('90f9618340396838ee7ff5b0ba2da27da62953d3'),
@@ -31,8 +34,8 @@ void main() {
       await tempDir.delete(recursive: true);
     });
 
-    test('NativePlatformService returns honest provenance and fallback in test mode', () async {
-      final service = NativePlatformService(isTestMode: true);
+    test('FakeNativePlatformService returns honest provenance and unassisted fallback', () async {
+      final service = FakeNativePlatformService();
 
       final aiCoreResult = await service.checkAICoreAvailability();
       expect(aiCoreResult.isAvailable, isFalse);
@@ -78,7 +81,7 @@ void main() {
       expect(modelFile.parent.path, endsWith('models'));
 
       // Verify NativePlatformService can receive the validated path
-      final service = NativePlatformService(isTestMode: true);
+      final service = FakeNativePlatformService();
       final inferenceResult = await service.executeOfflineInference(
         prompt: 'Test prompt',
         engine: 'LLAMA_CPP',

@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/trip_plan.dart';
-import '../models/walking_route.dart';
 import '../services/trip_planner_service.dart';
 import '../providers/route_providers.dart';
+import '../providers/spot_providers.dart';
 
 final tripPlannerServiceProvider = Provider<TripPlannerService>((ref) {
   return TripPlannerService();
@@ -163,81 +163,62 @@ class _TripPlannerScreenState extends ConsumerState<TripPlannerScreen> {
     }
   }
 
-  void _startWalkingTour(TripDay day) {
+  Future<void> _startWalkingTour(TripDay day) async {
     if (day.stops.isEmpty) return;
 
-    // Build a walking route from the day's stops and load into activeRouteProvider
-    final firstStop = day.stops.first;
-    final lat = _currentLocationData['latitude'] as double? ?? 12.9756;
-    final lng = _currentLocationData['longitude'] as double? ?? 77.6066;
-    final originCoord = NormalizedCoordinate(
-      latitude: lat,
-      longitude: lng,
-      formatted: '$lat, $lng',
-    );
-    final destCoord = NormalizedCoordinate(
-      latitude: lat + 0.005,
-      longitude: lng + 0.005,
-      formatted: '${lat + 0.005}, ${lng + 0.005}',
-    );
-    final nowIso = DateTime.now().toIso8601String();
+    final destinationText = _destinationController.text.trim();
+    final neighborhoodQuery = destinationText.split(',').first.trim();
 
-    final route = WalkingRoute(
-      routeId: 'trip_plan_day_${day.dayNumber}_${DateTime.now().millisecondsSinceEpoch}',
-      title: day.theme,
-      neighborhood: _destinationController.text,
-      theme: 'CULTURAL_HERITAGE',
-      origin: originCoord,
-      destination: destCoord,
-      waypoints: [originCoord, destCoord],
-      waypointPlaceIds: ['stop_01', 'stop_02'],
-      optimizedWaypointOrder: [0, 1],
-      totalDistanceMeters: (day.stops.length * 600),
-      totalDurationSeconds: (day.stops.length * 15 * 60),
-      formattedDistance: '${((day.stops.length * 600) / 1000).toStringAsFixed(1)} km',
-      formattedDuration: '${day.stops.length * 15} mins',
-      encodedPolyline: '',
-      legs: [
-        RouteLeg(
-          distanceMeters: 600,
-          durationSeconds: 480,
-          startCoordinate: originCoord,
-          endCoordinate: destCoord,
-          steps: [
-            RouteStep(
-              instruction: 'Head towards ${firstStop.name} along the shaded heritage lane',
-              distanceMeters: 300,
-              durationSeconds: 240,
-              startCoordinate: originCoord,
-              endCoordinate: destCoord,
+    try {
+      final spots = await ref.read(spotServiceProvider).getVerifiedSpots(
+            neighborhood: neighborhoodQuery.isNotEmpty ? neighborhoodQuery : null,
+          );
+      final groundedSpots = spots
+          .where((s) => s.latitude != null && s.longitude != null)
+          .take(4)
+          .toList();
+
+      if (groundedSpots.length < 2) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Need at least 2 grounded neighborhood spots with verified coordinates to build a live walking route.',
             ),
-            RouteStep(
-              instruction: 'Turn into the courtyard entrance; look for brass signage',
-              distanceMeters: 300,
-              durationSeconds: 240,
-              startCoordinate: originCoord,
-              endCoordinate: destCoord,
-            ),
-          ],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+
+      final liveRoute = await ref.read(routeServiceProvider).getPersonalizedRoute(
+            placeIds: groundedSpots.map((s) => s.id).toList(),
+            spots: groundedSpots,
+            routeTitle: day.theme,
+            neighborhood: neighborhoodQuery.isNotEmpty ? neighborhoodQuery : destinationText,
+          );
+
+      ref.read(activeRouteProvider.notifier).setActiveRoute(liveRoute);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Loaded "${day.theme}" into Walking Tour!'),
+          backgroundColor: Colors.teal.shade800,
+          behavior: SnackBarBehavior.floating,
         ),
-      ],
-      isMockData: false, // LIVE dynamic route!
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    );
-
-    ref.read(activeRouteProvider.notifier).setActiveRoute(route);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Loaded "${day.theme}" into Walking Tour!'),
-        backgroundColor: Colors.teal.shade800,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-
-    // Switch to Walking Tour tab (index 3 in PocketGuideScreen or direct route)
-    Navigator.of(context).pop();
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not compute live walking tour: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override

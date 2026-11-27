@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
+import { SAMPLE_PLACES_FIXTURE } from './fixtures/register';
 import { PlacesService } from '../services/places.service';
-import { SAMPLE_PLACES_FIXTURE } from '../fixtures/sample-places.fixture';
 
 describe('PlacesService', () => {
   it('should fall back gracefully to labeled mock places when API key is missing', async () => {
