@@ -129,7 +129,9 @@ export class GroundingService {
     confidence: PlaceMatchConfidence;
     score: number;
   }> {
-    const parsedUrl = input.mapsLink ? MapsUrlParserService.parse(input.mapsLink) : null;
+    const parsedUrl = input.mapsLink
+      ? await MapsUrlParserService.parseAsync(input.mapsLink)
+      : null;
 
     // 1. Direct Place ID lookup if extracted from URL
     if (parsedUrl?.placeId) {
@@ -148,23 +150,30 @@ export class GroundingService {
       }
     }
 
-    // 2. Text Search using place name + neighborhood hint
+    // 2. Text Search using parsed Maps place query (if resolved from URL) or spot name + neighborhood hint
+    const primaryQuery = parsedUrl?.query || input.spotName;
+    const secondaryQuery =
+      parsedUrl?.query && input.spotName && parsedUrl.query.toLowerCase() !== input.spotName.toLowerCase()
+        ? undefined
+        : parsedUrl?.query;
     const searchTerms = [
-      input.spotName,
-      parsedUrl?.query,
+      primaryQuery,
+      secondaryQuery && secondaryQuery !== primaryQuery ? secondaryQuery : undefined,
       input.neighborhoodHint || 'Bengaluru',
     ]
       .filter(Boolean)
       .join(' ');
 
+    const effectiveCoord = input.contributorCoordinate || parsedUrl?.coordinates;
+
     let candidates: NormalizedPlace[] = [];
     try {
       candidates = await this.placesService.searchText({
         textQuery: searchTerms,
-        locationBias: input.contributorCoordinate
+        locationBias: effectiveCoord
           ? {
               circle: {
-                center: input.contributorCoordinate,
+                center: effectiveCoord,
                 radius: 1000,
               },
             }
@@ -188,12 +197,15 @@ export class GroundingService {
 
     // 3. Score candidates against contributed input
     const bestMatch = candidates[0]!;
-    const nameSimilarity = this.calculateNameSimilarity(input.spotName, bestMatch.name);
+    const nameSimilarity = Math.max(
+      this.calculateNameSimilarity(input.spotName, bestMatch.name),
+      parsedUrl?.query ? this.calculateNameSimilarity(parsedUrl.query, bestMatch.name) : 0
+    );
 
     let distanceMeters = 0;
-    if (input.contributorCoordinate && bestMatch.coordinate.isValid) {
+    if (effectiveCoord && bestMatch.coordinate.isValid) {
       const dist = NormalizationService.calculateDistance(
-        input.contributorCoordinate,
+        effectiveCoord,
         bestMatch.coordinate
       );
       distanceMeters = dist.meters;

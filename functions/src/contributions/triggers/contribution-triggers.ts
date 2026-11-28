@@ -233,6 +233,7 @@ export const onAssetCreated = onDocumentCreated(
             output.errorMessage || 'Voice note extraction failed.',
             leaseToken
           );
+          await runDownstreamSpotSynthesisPipeline(contributionId);
         }
       } else {
         const output = await extractPhotoDetails({
@@ -257,12 +258,19 @@ export const onAssetCreated = onDocumentCreated(
             output.errorMessage || 'Photo extraction failed.',
             leaseToken
           );
+          await runDownstreamSpotSynthesisPipeline(contributionId);
         }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error('Error during B2 extraction in onAssetCreated', { err, assetId });
+      logger.error('Error during B2 extraction in onAssetCreated', {
+        errorMessage,
+        stack: err instanceof Error ? err.stack : undefined,
+        assetId,
+        contributionId,
+      });
       await markAssetFailed(contributionId, assetId, errorMessage, leaseToken);
+      await runDownstreamSpotSynthesisPipeline(contributionId);
     }
   }
 );

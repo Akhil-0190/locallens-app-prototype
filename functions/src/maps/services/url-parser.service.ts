@@ -84,4 +84,49 @@ export class MapsUrlParserService {
 
     return result;
   }
+
+  /**
+   * Resolves Google Maps short links (maps.app.goo.gl / goo.gl/maps) by following
+   * HTTP redirects safely, then parses the canonical destination URL.
+   */
+  public static async parseAsync(urlOrQuery: string): Promise<ParsedMapsUrlResult> {
+    const initial = MapsUrlParserService.parse(urlOrQuery);
+    if (!initial.isShortLink) {
+      return initial;
+    }
+
+    try {
+      const parsed = new URL(initial.rawUrl);
+      const allowedHost =
+        parsed.protocol === 'https:' &&
+        (parsed.hostname === 'maps.app.goo.gl' || parsed.hostname === 'goo.gl');
+      if (!allowedHost) {
+        return initial;
+      }
+
+      const response = await fetch(parsed.toString(), {
+        method: 'GET',
+        redirect: 'follow',
+        signal: AbortSignal.timeout(4000),
+      });
+      // Drain/cancel body immediately so we don't hold open sockets
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Ignore stream cancellation errors
+      }
+
+      if (response.url && response.url !== initial.rawUrl) {
+        const expanded = MapsUrlParserService.parse(response.url);
+        return {
+          ...expanded,
+          isShortLink: true,
+        };
+      }
+    } catch {
+      // Non-fatal: fall back to the initial unexpanded parse result
+    }
+
+    return initial;
+  }
 }

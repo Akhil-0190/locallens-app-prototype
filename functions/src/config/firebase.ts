@@ -15,5 +15,10 @@ export function getFirebaseAdminApp() {
 
 export const adminApp = getFirebaseAdminApp();
 export const db = getFirestore(adminApp);
+try {
+  db.settings({ ignoreUndefinedProperties: true });
+} catch {
+  // Settings already applied in hot-reloaded or test runtime
+}
 export const storage = getStorage(adminApp);
 export const auth = getAuth(adminApp);
